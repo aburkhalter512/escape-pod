@@ -50,7 +50,7 @@ Supply the required variables — either export `TF_VAR_*` env vars, or
 create a gitignored `terraform.auto.tfvars`:
 
 ```hcl
-container_image        = "<account-id>.dkr.ecr.us-east-1.amazonaws.com/escape-pod-discord-bot:latest"
+container_image        = "<account-id>.dkr.ecr.us-west-2.amazonaws.com/escape-pod-discord-bot:latest"
 backend_url             = "http://<escape-pod-backend's alb_dns_name output>"
 discord_application_id = "..."   # Discord Developer Portal
 discord_public_key     = "..."   # Discord Developer Portal
@@ -65,9 +65,9 @@ until an image actually exists at that URI** — that's expected, not a
 bug. Build and push one after the first apply creates the ECR repo:
 
 ```bash
-docker build -t <account-id>.dkr.ecr.us-east-1.amazonaws.com/escape-pod-discord-bot:latest ..
-aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin <account-id>.dkr.ecr.us-east-1.amazonaws.com
-docker push <account-id>.dkr.ecr.us-east-1.amazonaws.com/escape-pod-discord-bot:latest
+docker build -t <account-id>.dkr.ecr.us-west-2.amazonaws.com/escape-pod-discord-bot:latest ..
+aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin <account-id>.dkr.ecr.us-west-2.amazonaws.com
+docker push <account-id>.dkr.ecr.us-west-2.amazonaws.com/escape-pod-discord-bot:latest
 ```
 
 Then:
