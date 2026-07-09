@@ -7,7 +7,7 @@ import type { CommandHandler } from './types.js'
 // on the command definition already restricts this to Manage Guild holders.
 export const subscribeGuild: CommandHandler = async ({ interaction, backend }) => {
   const guildId = interaction.guild_id
-  const invokerId = interaction.member?.user.id
+  const invokerId = interaction.member?.user?.id
 
   if (!guildId || !invokerId) {
     return ephemeral('This command must be run in a server.')

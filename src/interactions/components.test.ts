@@ -26,6 +26,14 @@ function fakeJwt(payload: Record<string, unknown>): string {
 const FUTURE_EXP = () => Math.floor(Date.now() / 1000) + 3600
 const PAST_EXP = () => Math.floor(Date.now() / 1000) - 3600
 
+// Discord's own type guarantees member.user is always present — this
+// simulates the malformed payload that guarantee rules out, to prove the
+// `?.` in components.ts's pod-signup: branch actually degrades gracefully
+// instead of throwing a TypeError (tasks/004).
+function memberWithoutUser(): APIInteractionGuildMember {
+  return { ...fakeMember(), user: undefined } as unknown as APIInteractionGuildMember
+}
+
 describe('extractTextInputValue', () => {
   it('finds a match inside a legacy ActionRow', () => {
     const components = [
@@ -362,6 +370,20 @@ describe('handleMessageComponent', () => {
 
       const response = await handleMessageComponent(
         interaction({ member: undefined }),
+        createFakeBackendClient({ recordSignup: recordSignupMock }),
+        createFakeDiscordRest()
+      )
+
+      expect(responseData(response).content).toMatch(/could not determine your discord identity/i)
+    })
+
+    it('degrades to the same response (not a thrown error) when member is present but member.user is missing', async () => {
+      const recordSignupMock = stub(async (_podRoundId: string, _discordId: string, _username: string, _sourceGuildId: string) => {
+        throw new Error('recordSignup should not have been called')
+      })
+
+      const response = await handleMessageComponent(
+        interaction({ member: memberWithoutUser() }),
         createFakeBackendClient({ recordSignup: recordSignupMock }),
         createFakeDiscordRest()
       )

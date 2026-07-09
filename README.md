@@ -47,9 +47,6 @@ recorded message id yet).
 Known gaps — see `../tasks/` for the full tracked list, most relevant
 here:
 
-- `../tasks/004-optional-chaining-crash-risk.md` — `member?.user.id`
-  chaining in a few places doesn't guard against `member.user` itself
-  being absent.
 - The cross-guild edit fan-out in `handleMessageComponent`'s `pod-signup:`
   branch is awaited inline before the interaction response is returned —
   fine at the scale this is designed for, but doesn't leave much headroom

@@ -91,8 +91,8 @@ export async function handleMessageComponent(
     // Both values come from custom_ids we generate ourselves
     // (podMessage.ts), but default to 'in' defensively rather than assume.
     const action: SignupAction = actionRaw === 'leave' ? 'leave' : 'in'
-    const discordId = interaction.member?.user.id ?? interaction.user?.id
-    const username = interaction.member?.user.username ?? interaction.user?.username
+    const discordId = interaction.member?.user?.id ?? interaction.user?.id
+    const username = interaction.member?.user?.username ?? interaction.user?.username
 
     if (!discordId || !username) {
       return ephemeral('Could not determine your Discord identity.')
