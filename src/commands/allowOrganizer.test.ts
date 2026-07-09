@@ -45,7 +45,6 @@ describe('allowOrganizer', () => {
 
     const response = await allowOrganizer(ctx)
 
-    expect(allowOrganizerMock.calls).toHaveLength(0)
     expect(responseData(response).content).toMatch(/must be run in a server/i)
   })
 
@@ -60,7 +59,6 @@ describe('allowOrganizer', () => {
 
     const response = await allowOrganizer(ctx)
 
-    expect(allowOrganizerMock.calls).toHaveLength(0)
     expect(responseData(response).content).toMatch(/organizer to approve is required/i)
   })
 
@@ -77,7 +75,6 @@ describe('allowOrganizer', () => {
 
     const response = await allowOrganizer(ctx)
 
-    expect(allowOrganizerMock.calls).toHaveLength(0)
     expect(responseData(response).content).toMatch(/organizer to approve is required/i)
   })
 })

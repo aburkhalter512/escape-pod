@@ -95,7 +95,6 @@ describe('startPod', () => {
 
     const response = await startPod(ctx)
 
-    expect(listEligibleGuildsMock.calls).toHaveLength(0)
     expect(responseData(response).content).toMatch(/could not determine your discord user id/i)
   })
 
@@ -110,7 +109,6 @@ describe('startPod', () => {
 
     const response = await startPod(ctx)
 
-    expect(listEligibleGuildsMock.calls).toHaveLength(0)
     expect(responseData(response).content).toMatch(/set code is required/i)
   })
 

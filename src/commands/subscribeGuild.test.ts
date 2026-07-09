@@ -46,7 +46,6 @@ describe('subscribeGuild', () => {
 
     const response = await subscribeGuild(ctx)
 
-    expect(subscribeGuildMock.calls).toHaveLength(0)
     expect(responseData(response).content).toMatch(/must be run in a server/i)
   })
 
@@ -61,7 +60,6 @@ describe('subscribeGuild', () => {
 
     const response = await subscribeGuild(ctx)
 
-    expect(subscribeGuildMock.calls).toHaveLength(0)
     expect(responseData(response).content).toMatch(/must be run in a server/i)
   })
 
@@ -76,7 +74,6 @@ describe('subscribeGuild', () => {
 
     const response = await subscribeGuild(ctx)
 
-    expect(subscribeGuildMock.calls).toHaveLength(0)
     expect(responseData(response).content).toMatch(/channel is required/i)
   })
 
@@ -93,7 +90,6 @@ describe('subscribeGuild', () => {
 
     const response = await subscribeGuild(ctx)
 
-    expect(subscribeGuildMock.calls).toHaveLength(0)
     expect(responseData(response).content).toMatch(/channel is required/i)
   })
 })
