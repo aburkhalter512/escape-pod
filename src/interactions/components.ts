@@ -137,7 +137,8 @@ function ephemeral(content: string): APIInteractionResponse {
 // Modal submissions can wrap a text input in either a legacy ActionRow or a
 // newer Label component (Discord's "Components v2"), so walk both shapes
 // rather than assuming one. TextDisplay components carry no value.
-function extractTextInputValue(
+// Exported for direct unit testing of both shapes — see components.test.ts.
+export function extractTextInputValue(
   components: APIModalSubmissionComponent[],
   customId: string
 ): string | undefined {
