@@ -10,6 +10,7 @@ import {
   type RESTPostAPIChannelMessageResult,
 } from 'discord-api-types/v10'
 import { extractTextInputValue, handleMessageComponent, handleModalSubmit } from './components.js'
+import type { SignupAction } from '../backendClient.js'
 import { createFakeBackendClient } from '../testUtils/fakeBackendClient.js'
 import { createFakeDiscordRest } from '../testUtils/fakeDiscordRest.js'
 import { fakeMember, fakeMessageComponentInteraction, fakeModalSubmitInteraction, fakeUser } from '../testUtils/fakeInteraction.js'
@@ -202,9 +203,9 @@ describe('handleMessageComponent', () => {
   })
 
   describe('pod-signup:', () => {
-    function interaction(overrides: { member?: APIInteractionGuildMember } = {}) {
+    function interaction(overrides: { member?: APIInteractionGuildMember; customId?: string } = {}) {
       return fakeMessageComponentInteraction({
-        data: { custom_id: 'pod-signup:round-1:in', component_type: ComponentType.Button },
+        data: { custom_id: overrides.customId ?? 'pod-signup:round-1:in', component_type: ComponentType.Button },
         guild_id: 'guild-1',
         member: 'member' in overrides ? overrides.member : fakeMember({ user: fakeUser({ id: 'player-1', username: 'PlayerOne' }) }),
       })
@@ -226,9 +227,10 @@ describe('handleMessageComponent', () => {
     }
 
     it('records the signup and returns an UpdateMessage with the new embed', async () => {
-      const recordSignupMock = stub(async (podRoundId: string, discordId: string, username: string, sourceGuildId: string) => {
-        const valid = podRoundId === 'round-1' && discordId === 'player-1' && username === 'PlayerOne' && sourceGuildId === 'guild-1'
-        if (!valid) throw new Error(`unexpected recordSignup args: ${podRoundId} ${discordId} ${username} ${sourceGuildId}`)
+      const recordSignupMock = stub(async (podRoundId: string, discordId: string, username: string, sourceGuildId: string, action: SignupAction) => {
+        const valid =
+          podRoundId === 'round-1' && discordId === 'player-1' && username === 'PlayerOne' && sourceGuildId === 'guild-1' && action === 'in'
+        if (!valid) throw new Error(`unexpected recordSignup args: ${podRoundId} ${discordId} ${username} ${sourceGuildId} ${action}`)
         return signupResult()
       })
 
@@ -245,6 +247,26 @@ describe('handleMessageComponent', () => {
       expect(response.type).toBe(InteractionResponseType.UpdateMessage)
       expect(responseData(response).content).toBeUndefined() // embeds/components now, not plain content
       expect(responseData(response).components?.[0]).toBeDefined()
+    })
+
+    it('passes action: leave through to the backend when the Leave button is clicked (tasks/002)', async () => {
+      const recordSignupMock = stub(async (podRoundId: string, discordId: string, username: string, sourceGuildId: string, action: SignupAction) => {
+        const valid =
+          podRoundId === 'round-1' && discordId === 'player-1' && username === 'PlayerOne' && sourceGuildId === 'guild-1' && action === 'leave'
+        if (!valid) throw new Error(`unexpected recordSignup args: ${podRoundId} ${discordId} ${username} ${sourceGuildId} ${action}`)
+        return signupResult({ count: 4 })
+      })
+
+      const response = await handleMessageComponent(
+        interaction({ customId: 'pod-signup:round-1:leave' }),
+        createFakeBackendClient({ recordSignup: recordSignupMock }),
+        createFakeDiscordRest({
+          editMessage: stub(async (_channelId: string, _messageId: string, _body: RESTPatchAPIChannelMessageJSONBody) => ({}) as RESTPatchAPIChannelMessageResult),
+        })
+      )
+
+      expect(recordSignupMock.calls).toHaveLength(1)
+      expect(response.type).toBe(InteractionResponseType.UpdateMessage)
     })
 
     it("edits every OTHER target guild's message, but not the one the click came from", async () => {

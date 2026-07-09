@@ -9,7 +9,7 @@ import {
   type APIInteractionResponse,
 } from 'discord-api-types/v10'
 import type { DiscordRestClient } from '../discord/rest.js'
-import type { BackendClient } from '../backendClient.js'
+import type { BackendClient, SignupAction } from '../backendClient.js'
 import { buildPodRoundMessage } from '../discord/podMessage.js'
 import { decodeJwtPayloadUnverified } from '../util/jwt.js'
 
@@ -87,7 +87,10 @@ export async function handleMessageComponent(
   }
 
   if (customId.startsWith('pod-signup:')) {
-    const [, podRoundId, action] = customId.split(':')
+    const [, podRoundId, actionRaw] = customId.split(':')
+    // Both values come from custom_ids we generate ourselves
+    // (podMessage.ts), but default to 'in' defensively rather than assume.
+    const action: SignupAction = actionRaw === 'leave' ? 'leave' : 'in'
     const discordId = interaction.member?.user.id ?? interaction.user?.id
     const username = interaction.member?.user.username ?? interaction.user?.username
 
@@ -95,8 +98,7 @@ export async function handleMessageComponent(
       return ephemeral('Could not determine your Discord identity.')
     }
 
-    const result = await backend.recordSignup(podRoundId, discordId, username, interaction.guild_id ?? '')
-    void action // 'in' | 'leave' — branch not yet implemented in backend.recordSignup (see tasks/002)
+    const result = await backend.recordSignup(podRoundId, discordId, username, interaction.guild_id ?? '', action)
 
     const body = buildPodRoundMessage({
       podRoundId,

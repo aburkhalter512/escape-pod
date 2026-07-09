@@ -8,6 +8,11 @@ export interface BackendClientConfig {
   apiKey: string
 }
 
+// The RSVP button's two states (§7.3) — see podMessage.ts for where the
+// custom_id encoding this comes from, and components.ts for where it's
+// decoded back out.
+export type SignupAction = 'in' | 'leave'
+
 // The contract commands/handlers depend on. Real calls happen in
 // HttpBackendClient below; tests get a hand-written stub via
 // testUtils/fakeBackendClient.ts that fully satisfies this interface, no
@@ -28,7 +33,8 @@ export interface BackendClient {
     podRoundId: string,
     discordId: string,
     username: string,
-    sourceGuildId: string
+    sourceGuildId: string,
+    action: SignupAction
   ): Promise<{
     count: number
     threshold: number
@@ -117,7 +123,8 @@ export class HttpBackendClient implements BackendClient {
     podRoundId: string,
     discordId: string,
     username: string,
-    sourceGuildId: string
+    sourceGuildId: string,
+    action: SignupAction
   ): Promise<{
     count: number
     threshold: number
@@ -129,7 +136,7 @@ export class HttpBackendClient implements BackendClient {
   }> {
     return this.request(`/pods/${podRoundId}/signup`, {
       method: 'POST',
-      body: JSON.stringify({ discordId, username, sourceGuildId }),
+      body: JSON.stringify({ discordId, username, sourceGuildId, action }),
     })
   }
 

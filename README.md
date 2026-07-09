@@ -47,9 +47,6 @@ recorded message id yet).
 Known gaps — see `../tasks/` for the full tracked list, most relevant
 here:
 
-- `../tasks/002-leave-button-not-wired.md` — the "Leave" button's `action`
-  is parsed but not sent to the backend, so it currently behaves the same
-  as "I'm in."
 - `../tasks/004-optional-chaining-crash-risk.md` — `member?.user.id`
   chaining in a few places doesn't guard against `member.user` itself
   being absent.

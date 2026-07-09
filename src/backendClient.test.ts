@@ -86,4 +86,21 @@ describe('HttpBackendClient', () => {
     expect(init?.method).toBe('POST')
     expect(init?.body).toBe(JSON.stringify({ messageId: 'msg-1' }))
   })
+
+  it('recordSignup includes the action (in/leave) in the request body (tasks/002)', async () => {
+    const fetchStub = stubFetchCapturing(
+      new Response(JSON.stringify({ count: 1, threshold: 8, setCode: 'JTL', thresholdReached: false, podCreated: false, targets: [] }), {
+        status: 200,
+      })
+    )
+    globalThis.fetch = fetchStub
+
+    await client().recordSignup('round-1', 'discord-1', 'PlayerOne', 'guild-1', 'leave')
+
+    const [url, init] = fetchStub.calls[0]
+    expect(url).toBe('http://backend.local/pods/round-1/signup')
+    expect(init?.body).toBe(
+      JSON.stringify({ discordId: 'discord-1', username: 'PlayerOne', sourceGuildId: 'guild-1', action: 'leave' })
+    )
+  })
 })
