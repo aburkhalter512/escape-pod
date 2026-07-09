@@ -57,23 +57,43 @@ export class BackendClient {
     return this.request(`/organizers/${organizerDiscordId}/eligible-guilds`)
   }
 
-  // TODO(§7.5): create the round + fan out; backend owns PodRoundTarget rows.
+  // §7.5 steps 1-2: creates the round + PodRoundTarget rows. Returns each
+  // target's resolved channel so the caller can actually post there.
   startPod(params: {
     organizerDiscordId: string
     setCode: string
     threshold: number
     guildIds: string[]
-  }): Promise<{ podRoundId: string }> {
+  }): Promise<{ podRoundId: string; targets: Array<{ guildId: string; channelId: string }> }> {
     return this.request('/pods/start', { method: 'POST', body: JSON.stringify(params) })
   }
 
-  // TODO(§7.5 step 3): record a signup, backend returns the updated shared count.
+  // §7.5 step 2: persists the Discord message ID for one target guild once
+  // it's been posted, so a later signup's fan-out (step 3) knows what to edit.
+  recordMessagePosted(podRoundId: string, guildId: string, messageId: string): Promise<void> {
+    return this.request(`/pods/${podRoundId}/targets/${guildId}/message`, {
+      method: 'POST',
+      body: JSON.stringify({ messageId }),
+    })
+  }
+
+  // §7.5 step 4: record a signup; backend returns the updated shared count,
+  // whether the pod was just created, and every target (for the caller to
+  // fan the update out to guilds other than the one this signup came from).
   recordSignup(
     podRoundId: string,
     discordId: string,
     username: string,
     sourceGuildId: string
-  ): Promise<{ count: number; threshold: number; thresholdReached: boolean }> {
+  ): Promise<{
+    count: number
+    threshold: number
+    setCode: string
+    thresholdReached: boolean
+    podCreated: boolean
+    shareUrl?: string
+    targets: Array<{ guildId: string; channelId: string; messageId: string | null }>
+  }> {
     return this.request(`/pods/${podRoundId}/signup`, {
       method: 'POST',
       body: JSON.stringify({ discordId, username, sourceGuildId }),

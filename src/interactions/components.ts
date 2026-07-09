@@ -8,12 +8,16 @@ import {
   type APIModalSubmissionComponent,
   type APIInteractionResponse,
 } from 'discord-api-types/v10'
+import type { REST } from '@discordjs/rest'
 import type { BackendClient } from '../backendClient.js'
+import { buildPodRoundMessage } from '../discord/podMessage.js'
+import { editMessage, postMessage } from '../discord/rest.js'
 import { decodeJwtPayloadUnverified } from '../util/jwt.js'
 
 export async function handleMessageComponent(
   interaction: APIMessageComponentInteraction,
-  backend: BackendClient
+  backend: BackendClient,
+  discordRest: REST
 ): Promise<APIInteractionResponse> {
   const customId = interaction.data.custom_id
 
@@ -52,13 +56,35 @@ export async function handleMessageComponent(
       return ephemeral('Could not determine your Discord user ID.')
     }
 
-    // TODO(§7.5 steps 1-2): backend creates the PodRound + PodRoundTarget
-    // rows and returns identifiers; a follow-up step (not yet built) then
-    // uses src/discord/rest.ts to post the RSVP embed + buttons into each
-    // target guild's configured channel.
-    await backend.startPod({ organizerDiscordId: organizerId, setCode, threshold, guildIds })
+    // §7.5 steps 1-2: backend creates the PodRound + PodRoundTarget rows and
+    // returns each target's resolved channel; this posts the actual RSVP
+    // message into each one and records the resulting message ID so a
+    // later signup's fan-out (step 3) knows what to edit.
+    const { podRoundId, targets } = await backend.startPod({
+      organizerDiscordId: organizerId,
+      setCode,
+      threshold,
+      guildIds,
+    })
 
-    return ephemeral(`Round started for ${setCode} (threshold ${threshold}) across ${guildIds.length} server(s).`)
+    const postOutcomes = await Promise.allSettled(
+      targets.map(async (target) => {
+        const body = buildPodRoundMessage({ podRoundId, setCode, threshold, count: 0 })
+        const message = await postMessage(discordRest, target.channelId, {
+          embeds: body.embeds,
+          components: body.components,
+        })
+        await backend.recordMessagePosted(podRoundId, target.guildId, message.id)
+      })
+    )
+    const failureCount = postOutcomes.filter((outcome) => outcome.status === 'rejected').length
+
+    return ephemeral(
+      `Round started for ${setCode} (threshold ${threshold}) across ${targets.length} server(s).` +
+        (failureCount > 0
+          ? ` ${failureCount} server(s) failed to post — check the bot has permission in their channel.`
+          : '')
+    )
   }
 
   if (customId.startsWith('pod-signup:')) {
@@ -70,17 +96,41 @@ export async function handleMessageComponent(
       return ephemeral('Could not determine your Discord identity.')
     }
 
-    // TODO(§7.5 step 3): only handles the message the click happened on.
-    // Syncing the shared count to every OTHER target guild's message needs
-    // a REST call per message via src/discord/rest.ts — not wired up yet.
     const result = await backend.recordSignup(podRoundId, discordId, username, interaction.guild_id ?? '')
-    void action // 'in' | 'leave' — branch not yet implemented in backend.recordSignup
+    void action // 'in' | 'leave' — branch not yet implemented in backend.recordSignup (see tasks/002)
+
+    const body = buildPodRoundMessage({
+      podRoundId,
+      setCode: result.setCode,
+      threshold: result.threshold,
+      count: result.count,
+      shareUrl: result.shareUrl,
+    })
+
+    // Fan the same update out to every OTHER target guild's message — the
+    // interaction response below already updates the one this click came
+    // from. §7.5 step 3's shared counter only feels shared if every server
+    // sees it move. Skips targets with no recorded messageId (either the
+    // initial post to that guild failed, or it just hasn't landed yet).
+    // Awaited inline (not backgrounded) to keep this simple, which trades
+    // away some headroom against Discord's 3-second interaction-response
+    // budget as the guild count grows — fine at the scale this is designed
+    // for (a handful of sister communities), worth revisiting if rounds
+    // start fanning out to dozens of guilds.
+    await Promise.allSettled(
+      result.targets
+        .filter((target) => target.guildId !== interaction.guild_id && target.messageId)
+        .map((target) =>
+          editMessage(discordRest, target.channelId, target.messageId as string, {
+            embeds: body.embeds,
+            components: body.components,
+          })
+        )
+    )
 
     return {
       type: InteractionResponseType.UpdateMessage,
-      data: {
-        content: `${result.count}/${result.threshold} confirmed${result.thresholdReached ? ' — pod full!' : ''}`,
-      },
+      data: { embeds: body.embeds, components: body.components },
     }
   }
 

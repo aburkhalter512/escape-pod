@@ -1,8 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ComponentType, InteractionResponseType, TextInputStyle } from 'discord-api-types/v10'
+import type { REST } from '@discordjs/rest'
 import { extractTextInputValue, handleMessageComponent, handleModalSubmit } from './components.js'
 import type { BackendClient } from '../backendClient.js'
 import { responseData } from '../testUtils/responseData.js'
+
+function fakeRest() {
+  return { post: vi.fn(), patch: vi.fn() } as unknown as REST & {
+    post: ReturnType<typeof vi.fn>
+    patch: ReturnType<typeof vi.fn>
+  }
+}
 
 function fakeJwt(payload: Record<string, unknown>): string {
   const encode = (obj: Record<string, unknown>) => Buffer.from(JSON.stringify(obj)).toString('base64url')
@@ -66,99 +74,254 @@ describe('extractTextInputValue', () => {
 describe('handleMessageComponent', () => {
   it('opens the connect-ptp modal on the paste-token button', async () => {
     const interaction = { data: { custom_id: 'connect-ptp:open-modal' } }
-    const response = await handleMessageComponent(interaction as never, {} as BackendClient)
+    const response = await handleMessageComponent(interaction as never, {} as BackendClient, fakeRest())
 
     expect(response.type).toBe(InteractionResponseType.Modal)
     expect(responseData(response).custom_id).toBe('connect-ptp:submit')
   })
 
-  it('starts a pod round from a guild-select submission, packing guildIds from values', async () => {
-    const startPodMock = vi.fn().mockResolvedValue({ podRoundId: 'round-1' })
-    const interaction = {
-      data: {
-        custom_id: 'start-pod:select-guilds:JTL:8',
-        component_type: ComponentType.StringSelect,
-        values: ['g1', 'g2'],
-      },
-      member: { user: { id: 'organizer-1' } },
+  describe('start-pod:select-guilds:', () => {
+    function interaction(overrides: Record<string, unknown> = {}) {
+      return {
+        data: {
+          custom_id: 'start-pod:select-guilds:JTL:8',
+          component_type: ComponentType.StringSelect,
+          values: ['g1', 'g2'],
+        },
+        member: { user: { id: 'organizer-1' } },
+        ...overrides,
+      }
     }
 
-    const response = await handleMessageComponent(interaction as never, {
-      startPod: startPodMock,
-    } as unknown as BackendClient)
+    it('starts the round, posts the RSVP message to every target, and records each message id', async () => {
+      const startPodMock = vi.fn().mockResolvedValue({
+        podRoundId: 'round-1',
+        targets: [
+          { guildId: 'g1', channelId: 'channel-1' },
+          { guildId: 'g2', channelId: 'channel-2' },
+        ],
+      })
+      const recordMessagePostedMock = vi.fn()
+      const rest = fakeRest()
+      rest.post.mockResolvedValueOnce({ id: 'msg-1' }).mockResolvedValueOnce({ id: 'msg-2' })
 
-    expect(startPodMock).toHaveBeenCalledWith({
-      organizerDiscordId: 'organizer-1',
-      setCode: 'JTL',
-      threshold: 8,
-      guildIds: ['g1', 'g2'],
+      const response = await handleMessageComponent(
+        interaction() as never,
+        { startPod: startPodMock, recordMessagePosted: recordMessagePostedMock } as unknown as BackendClient,
+        rest
+      )
+
+      expect(startPodMock).toHaveBeenCalledWith({
+        organizerDiscordId: 'organizer-1',
+        setCode: 'JTL',
+        threshold: 8,
+        guildIds: ['g1', 'g2'],
+      })
+
+      expect(rest.post).toHaveBeenCalledTimes(2)
+      expect(rest.post).toHaveBeenCalledWith('/channels/channel-1/messages', expect.anything())
+      expect(rest.post).toHaveBeenCalledWith('/channels/channel-2/messages', expect.anything())
+
+      expect(recordMessagePostedMock).toHaveBeenCalledWith('round-1', 'g1', 'msg-1')
+      expect(recordMessagePostedMock).toHaveBeenCalledWith('round-1', 'g2', 'msg-2')
+
+      expect(responseData(response).content).toContain('2 server(s)')
+      expect(responseData(response).content).not.toMatch(/failed to post/i)
     })
-    expect(responseData(response).content).toContain('2 server(s)')
+
+    it('posts an initial embed showing 0 signups with I\'m in / Leave buttons, not the count directly', async () => {
+      const startPodMock = vi
+        .fn()
+        .mockResolvedValue({ podRoundId: 'round-1', targets: [{ guildId: 'g1', channelId: 'channel-1' }] })
+      const rest = fakeRest()
+      rest.post.mockResolvedValue({ id: 'msg-1' })
+
+      await handleMessageComponent(
+        interaction({ data: { ...interaction().data, values: ['g1'] } }) as never,
+        { startPod: startPodMock, recordMessagePosted: vi.fn() } as unknown as BackendClient,
+        rest
+      )
+
+      const [, postInit] = rest.post.mock.calls[0]
+      expect(postInit.body.embeds[0].description).toContain('0/8 confirmed')
+      const buttonCustomIds = postInit.body.components[0].components.map((c: { custom_id: string }) => c.custom_id)
+      expect(buttonCustomIds).toEqual(['pod-signup:round-1:in', 'pod-signup:round-1:leave'])
+    })
+
+    it('reports a partial-failure count when one target fails to post, without dropping the others', async () => {
+      const startPodMock = vi.fn().mockResolvedValue({
+        podRoundId: 'round-1',
+        targets: [
+          { guildId: 'g1', channelId: 'channel-1' },
+          { guildId: 'g2', channelId: 'channel-2' },
+        ],
+      })
+      const rest = fakeRest()
+      rest.post
+        .mockResolvedValueOnce({ id: 'msg-1' })
+        .mockRejectedValueOnce(new Error('Missing Access'))
+      const recordMessagePostedMock = vi.fn()
+
+      const response = await handleMessageComponent(
+        interaction() as never,
+        { startPod: startPodMock, recordMessagePosted: recordMessagePostedMock } as unknown as BackendClient,
+        rest
+      )
+
+      // The failing guild never got recordMessagePosted called for it, but
+      // the successful one still did — one bad guild shouldn't roll back
+      // the rest (Promise.allSettled, not Promise.all).
+      expect(recordMessagePostedMock).toHaveBeenCalledTimes(1)
+      expect(recordMessagePostedMock).toHaveBeenCalledWith('round-1', 'g1', 'msg-1')
+      expect(responseData(response).content).toMatch(/1 server\(s\) failed to post/i)
+    })
+
+    it('rejects a guild-select submission when the organizer id cannot be determined', async () => {
+      const startPodMock = vi.fn()
+
+      const response = await handleMessageComponent(
+        interaction({ member: undefined }) as never,
+        { startPod: startPodMock } as unknown as BackendClient,
+        fakeRest()
+      )
+
+      expect(startPodMock).not.toHaveBeenCalled()
+      expect(responseData(response).content).toMatch(/could not determine your discord user id/i)
+    })
   })
 
-  it('rejects a guild-select submission when the organizer id cannot be determined', async () => {
-    const startPodMock = vi.fn()
-    const interaction = {
-      data: { custom_id: 'start-pod:select-guilds:JTL:8', component_type: ComponentType.StringSelect, values: [] },
+  describe('pod-signup:', () => {
+    function interaction(overrides: Record<string, unknown> = {}) {
+      return {
+        data: { custom_id: 'pod-signup:round-1:in' },
+        member: { user: { id: 'player-1', username: 'PlayerOne' } },
+        guild_id: 'guild-1',
+        ...overrides,
+      }
     }
 
-    const response = await handleMessageComponent(interaction as never, {
-      startPod: startPodMock,
-    } as unknown as BackendClient)
-
-    expect(startPodMock).not.toHaveBeenCalled()
-    expect(responseData(response).content).toMatch(/could not determine your discord user id/i)
-  })
-
-  it('records a signup and reports the shared count via UpdateMessage', async () => {
-    const recordSignupMock = vi
-      .fn()
-      .mockResolvedValue({ count: 5, threshold: 8, thresholdReached: false })
-    const interaction = {
-      data: { custom_id: 'pod-signup:round-1:in' },
-      member: { user: { id: 'player-1', username: 'PlayerOne' } },
-      guild_id: 'guild-1',
+    function signupResult(overrides: Record<string, unknown> = {}) {
+      return {
+        count: 5,
+        threshold: 8,
+        setCode: 'JTL',
+        thresholdReached: false,
+        podCreated: false,
+        targets: [
+          { guildId: 'guild-1', channelId: 'channel-1', messageId: 'msg-1' },
+          { guildId: 'guild-2', channelId: 'channel-2', messageId: 'msg-2' },
+        ],
+        ...overrides,
+      }
     }
 
-    const response = await handleMessageComponent(interaction as never, {
-      recordSignup: recordSignupMock,
-    } as unknown as BackendClient)
+    it('records the signup and returns an UpdateMessage with the new embed', async () => {
+      const recordSignupMock = vi.fn().mockResolvedValue(signupResult())
 
-    expect(recordSignupMock).toHaveBeenCalledWith('round-1', 'player-1', 'PlayerOne', 'guild-1')
-    expect(response.type).toBe(InteractionResponseType.UpdateMessage)
-    expect(responseData(response).content).toBe('5/8 confirmed')
-  })
+      const response = await handleMessageComponent(
+        interaction() as never,
+        { recordSignup: recordSignupMock } as unknown as BackendClient,
+        fakeRest()
+      )
 
-  it('announces "pod full" once the signup pushes the count to threshold', async () => {
-    const recordSignupMock = vi.fn().mockResolvedValue({ count: 8, threshold: 8, thresholdReached: true })
-    const interaction = {
-      data: { custom_id: 'pod-signup:round-1:in' },
-      member: { user: { id: 'player-1', username: 'PlayerOne' } },
-      guild_id: 'guild-1',
-    }
+      expect(recordSignupMock).toHaveBeenCalledWith('round-1', 'player-1', 'PlayerOne', 'guild-1')
+      expect(response.type).toBe(InteractionResponseType.UpdateMessage)
+      expect(responseData(response).content).toBeUndefined() // embeds/components now, not plain content
+      expect(responseData(response).components?.[0]).toBeDefined()
+    })
 
-    const response = await handleMessageComponent(interaction as never, {
-      recordSignup: recordSignupMock,
-    } as unknown as BackendClient)
+    it('edits every OTHER target guild\'s message, but not the one the click came from', async () => {
+      const recordSignupMock = vi.fn().mockResolvedValue(signupResult())
+      const rest = fakeRest()
 
-    expect(responseData(response).content).toBe('8/8 confirmed — pod full!')
-  })
+      await handleMessageComponent(
+        interaction() as never, // guild_id: 'guild-1'
+        { recordSignup: recordSignupMock } as unknown as BackendClient,
+        rest
+      )
 
-  it('rejects a signup click when the Discord identity cannot be determined', async () => {
-    const recordSignupMock = vi.fn()
-    const interaction = { data: { custom_id: 'pod-signup:round-1:in' } }
+      // Only guild-2's message should be REST-edited — guild-1's is handled
+      // by the UpdateMessage interaction response itself (§7.5 step 3).
+      expect(rest.patch).toHaveBeenCalledTimes(1)
+      expect(rest.patch).toHaveBeenCalledWith('/channels/channel-2/messages/msg-2', expect.anything())
+    })
 
-    const response = await handleMessageComponent(interaction as never, {
-      recordSignup: recordSignupMock,
-    } as unknown as BackendClient)
+    it('skips targets with no recorded messageId yet', async () => {
+      const recordSignupMock = vi.fn().mockResolvedValue(
+        signupResult({
+          targets: [
+            { guildId: 'guild-1', channelId: 'channel-1', messageId: 'msg-1' },
+            { guildId: 'guild-2', channelId: 'channel-2', messageId: null },
+          ],
+        })
+      )
+      const rest = fakeRest()
 
-    expect(recordSignupMock).not.toHaveBeenCalled()
-    expect(responseData(response).content).toMatch(/could not determine your discord identity/i)
+      await handleMessageComponent(
+        interaction() as never,
+        { recordSignup: recordSignupMock } as unknown as BackendClient,
+        rest
+      )
+
+      expect(rest.patch).not.toHaveBeenCalled()
+    })
+
+    it('one guild\'s edit failing does not throw or block the interaction response', async () => {
+      const recordSignupMock = vi.fn().mockResolvedValue(signupResult())
+      const rest = fakeRest()
+      rest.patch.mockRejectedValue(new Error('Unknown Message'))
+
+      const response = await handleMessageComponent(
+        interaction() as never,
+        { recordSignup: recordSignupMock } as unknown as BackendClient,
+        rest
+      )
+
+      expect(response.type).toBe(InteractionResponseType.UpdateMessage)
+    })
+
+    it('shows the pod-full embed with a join link once threshold is reached and the pod is created', async () => {
+      const recordSignupMock = vi.fn().mockResolvedValue(
+        signupResult({
+          count: 8,
+          thresholdReached: true,
+          podCreated: true,
+          shareUrl: 'https://www.protectthepod.com/draft/share-1',
+        })
+      )
+
+      const response = await handleMessageComponent(
+        interaction() as never,
+        { recordSignup: recordSignupMock } as unknown as BackendClient,
+        fakeRest()
+      )
+
+      const data = responseData(response)
+      const buttons = (data.components?.[0] as { components: unknown[] }).components
+      expect(buttons).toEqual([
+        expect.objectContaining({ url: 'https://www.protectthepod.com/draft/share-1' }),
+      ])
+      // §7.5 step 4: no more "I'm in"/"Leave" buttons once the pod is full.
+      expect((buttons[0] as { custom_id?: string }).custom_id).toBeUndefined()
+    })
+
+    it('rejects a signup click when the Discord identity cannot be determined', async () => {
+      const recordSignupMock = vi.fn()
+
+      const response = await handleMessageComponent(
+        interaction({ member: undefined }) as never,
+        { recordSignup: recordSignupMock } as unknown as BackendClient,
+        fakeRest()
+      )
+
+      expect(recordSignupMock).not.toHaveBeenCalled()
+      expect(responseData(response).content).toMatch(/could not determine your discord identity/i)
+    })
   })
 
   it('falls back to a generic message for an unrecognized custom_id', async () => {
     const interaction = { data: { custom_id: 'something-unexpected' } }
-    const response = await handleMessageComponent(interaction as never, {} as BackendClient)
+    const response = await handleMessageComponent(interaction as never, {} as BackendClient, fakeRest())
     expect(responseData(response).content).toMatch(/unrecognized interaction/i)
   })
 })

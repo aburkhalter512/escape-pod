@@ -1,6 +1,7 @@
 import Fastify from 'fastify'
 import type { APIInteraction } from 'discord-api-types/v10'
 import { BackendClient } from './backendClient.js'
+import { createDiscordRest } from './discord/rest.js'
 import { verifyDiscordSignature } from './interactions/verify.js'
 import { routeInteraction } from './interactions/router.js'
 
@@ -9,6 +10,7 @@ const backend = new BackendClient({
   baseUrl: requireEnv('BACKEND_URL'),
   apiKey: requireEnv('BACKEND_API_KEY'),
 })
+const discordRest = createDiscordRest(requireEnv('DISCORD_BOT_TOKEN'))
 
 const app = Fastify()
 
@@ -28,7 +30,7 @@ app.post('/interactions', async (request, reply) => {
   if (!isValid) return // verifyDiscordSignature already sent the 401
 
   const interaction = request.body as APIInteraction
-  const response = await routeInteraction(interaction, backend)
+  const response = await routeInteraction(interaction, { backend, discordRest })
   return reply.send(response)
 })
 

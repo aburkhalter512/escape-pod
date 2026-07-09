@@ -36,9 +36,25 @@ deployed) needs to be registered in the Discord Developer Portal under
 
 ## Status
 
-Scaffolding only — command/component handlers are wired to a
-`BackendClient` whose methods currently point at backend routes that are
-themselves stubs. See TODO comments in `src/commands/` and
-`src/interactions/components.ts` for what's not yet implemented, most
-notably the cross-guild message-sync step described in INTEGRATIONS.md
-§7.5 step 3.
+Core loop implemented and tested (§7.5): `/start-pod` posts the RSVP embed
++ buttons into every eligible target guild (`src/discord/rest.ts`,
+`src/discord/podMessage.ts`) and records each message id back to the
+backend; a signup click updates the clicking guild's message via the
+interaction response itself and fans the same update out to every other
+target guild's message via REST edit (skipping any target with no
+recorded message id yet).
+
+Known gaps — see `../tasks/` for the full tracked list, most relevant
+here:
+
+- `../tasks/002-leave-button-not-wired.md` — the "Leave" button's `action`
+  is parsed but not sent to the backend, so it currently behaves the same
+  as "I'm in."
+- `../tasks/004-optional-chaining-crash-risk.md` — `member?.user.id`
+  chaining in a few places doesn't guard against `member.user` itself
+  being absent.
+- The cross-guild edit fan-out in `handleMessageComponent`'s `pod-signup:`
+  branch is awaited inline before the interaction response is returned —
+  fine at the scale this is designed for, but doesn't leave much headroom
+  against Discord's 3-second response budget if a round ever fans out to
+  dozens of guilds (see the comment in `src/interactions/components.ts`).

@@ -68,4 +68,15 @@ describe('BackendClient', () => {
     expect(url).toBe('http://backend.local/organizers/discord-1/eligible-guilds')
     expect(init.body).toBeUndefined()
   })
+
+  it('recordMessagePosted posts the messageId to the round+guild-scoped path', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+
+    await client().recordMessagePosted('round-1', 'guild-1', 'msg-1')
+
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('http://backend.local/pods/round-1/targets/guild-1/message')
+    expect(init.method).toBe('POST')
+    expect(init.body).toBe(JSON.stringify({ messageId: 'msg-1' }))
+  })
 })
