@@ -4,7 +4,7 @@ import {
   type APIInteraction,
   type APIInteractionResponse,
 } from 'discord-api-types/v10'
-import type { REST } from '@discordjs/rest'
+import type { DiscordRestClient } from '../discord/rest.js'
 import type { BackendClient } from '../backendClient.js'
 import { commandHandlers } from '../commands/index.js'
 import { handleMessageComponent, handleModalSubmit } from './components.js'
@@ -15,7 +15,7 @@ export interface RouterDeps {
   // posting/editing messages in guilds other than the one an interaction
   // occurred in needs the bot token, which the interaction response itself
   // can't do (§7.5 step 3).
-  discordRest: REST
+  discordRest: DiscordRestClient
 }
 
 export async function routeInteraction(

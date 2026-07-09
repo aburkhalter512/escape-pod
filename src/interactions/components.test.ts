@@ -1,16 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ComponentType, InteractionResponseType, TextInputStyle } from 'discord-api-types/v10'
-import type { REST } from '@discordjs/rest'
 import { extractTextInputValue, handleMessageComponent, handleModalSubmit } from './components.js'
-import type { BackendClient } from '../backendClient.js'
+import { createFakeBackendClient } from '../testUtils/fakeBackendClient.js'
+import { createFakeDiscordRest } from '../testUtils/fakeDiscordRest.js'
 import { responseData } from '../testUtils/responseData.js'
-
-function fakeRest() {
-  return { post: vi.fn(), patch: vi.fn() } as unknown as REST & {
-    post: ReturnType<typeof vi.fn>
-    patch: ReturnType<typeof vi.fn>
-  }
-}
 
 function fakeJwt(payload: Record<string, unknown>): string {
   const encode = (obj: Record<string, unknown>) => Buffer.from(JSON.stringify(obj)).toString('base64url')
@@ -74,7 +67,7 @@ describe('extractTextInputValue', () => {
 describe('handleMessageComponent', () => {
   it('opens the connect-ptp modal on the paste-token button', async () => {
     const interaction = { data: { custom_id: 'connect-ptp:open-modal' } }
-    const response = await handleMessageComponent(interaction as never, {} as BackendClient, fakeRest())
+    const response = await handleMessageComponent(interaction as never, createFakeBackendClient(), createFakeDiscordRest())
 
     expect(response.type).toBe(InteractionResponseType.Modal)
     expect(responseData(response).custom_id).toBe('connect-ptp:submit')
@@ -102,13 +95,12 @@ describe('handleMessageComponent', () => {
         ],
       })
       const recordMessagePostedMock = vi.fn()
-      const rest = fakeRest()
-      rest.post.mockResolvedValueOnce({ id: 'msg-1' }).mockResolvedValueOnce({ id: 'msg-2' })
+      const post = vi.fn().mockResolvedValueOnce({ id: 'msg-1' }).mockResolvedValueOnce({ id: 'msg-2' })
 
       const response = await handleMessageComponent(
         interaction() as never,
-        { startPod: startPodMock, recordMessagePosted: recordMessagePostedMock } as unknown as BackendClient,
-        rest
+        createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: recordMessagePostedMock }),
+        createFakeDiscordRest({ post })
       )
 
       expect(startPodMock).toHaveBeenCalledWith({
@@ -118,9 +110,9 @@ describe('handleMessageComponent', () => {
         guildIds: ['g1', 'g2'],
       })
 
-      expect(rest.post).toHaveBeenCalledTimes(2)
-      expect(rest.post).toHaveBeenCalledWith('/channels/channel-1/messages', expect.anything())
-      expect(rest.post).toHaveBeenCalledWith('/channels/channel-2/messages', expect.anything())
+      expect(post).toHaveBeenCalledTimes(2)
+      expect(post).toHaveBeenCalledWith('/channels/channel-1/messages', expect.anything())
+      expect(post).toHaveBeenCalledWith('/channels/channel-2/messages', expect.anything())
 
       expect(recordMessagePostedMock).toHaveBeenCalledWith('round-1', 'g1', 'msg-1')
       expect(recordMessagePostedMock).toHaveBeenCalledWith('round-1', 'g2', 'msg-2')
@@ -133,16 +125,15 @@ describe('handleMessageComponent', () => {
       const startPodMock = vi
         .fn()
         .mockResolvedValue({ podRoundId: 'round-1', targets: [{ guildId: 'g1', channelId: 'channel-1' }] })
-      const rest = fakeRest()
-      rest.post.mockResolvedValue({ id: 'msg-1' })
+      const post = vi.fn().mockResolvedValue({ id: 'msg-1' })
 
       await handleMessageComponent(
         interaction({ data: { ...interaction().data, values: ['g1'] } }) as never,
-        { startPod: startPodMock, recordMessagePosted: vi.fn() } as unknown as BackendClient,
-        rest
+        createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: vi.fn() }),
+        createFakeDiscordRest({ post })
       )
 
-      const [, postInit] = rest.post.mock.calls[0]
+      const [, postInit] = post.mock.calls[0]
       expect(postInit.body.embeds[0].description).toContain('0/8 confirmed')
       const buttonCustomIds = postInit.body.components[0].components.map((c: { custom_id: string }) => c.custom_id)
       expect(buttonCustomIds).toEqual(['pod-signup:round-1:in', 'pod-signup:round-1:leave'])
@@ -156,16 +147,13 @@ describe('handleMessageComponent', () => {
           { guildId: 'g2', channelId: 'channel-2' },
         ],
       })
-      const rest = fakeRest()
-      rest.post
-        .mockResolvedValueOnce({ id: 'msg-1' })
-        .mockRejectedValueOnce(new Error('Missing Access'))
+      const post = vi.fn().mockResolvedValueOnce({ id: 'msg-1' }).mockRejectedValueOnce(new Error('Missing Access'))
       const recordMessagePostedMock = vi.fn()
 
       const response = await handleMessageComponent(
         interaction() as never,
-        { startPod: startPodMock, recordMessagePosted: recordMessagePostedMock } as unknown as BackendClient,
-        rest
+        createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: recordMessagePostedMock }),
+        createFakeDiscordRest({ post })
       )
 
       // The failing guild never got recordMessagePosted called for it, but
@@ -181,8 +169,8 @@ describe('handleMessageComponent', () => {
 
       const response = await handleMessageComponent(
         interaction({ member: undefined }) as never,
-        { startPod: startPodMock } as unknown as BackendClient,
-        fakeRest()
+        createFakeBackendClient({ startPod: startPodMock }),
+        createFakeDiscordRest()
       )
 
       expect(startPodMock).not.toHaveBeenCalled()
@@ -220,8 +208,8 @@ describe('handleMessageComponent', () => {
 
       const response = await handleMessageComponent(
         interaction() as never,
-        { recordSignup: recordSignupMock } as unknown as BackendClient,
-        fakeRest()
+        createFakeBackendClient({ recordSignup: recordSignupMock }),
+        createFakeDiscordRest()
       )
 
       expect(recordSignupMock).toHaveBeenCalledWith('round-1', 'player-1', 'PlayerOne', 'guild-1')
@@ -232,18 +220,18 @@ describe('handleMessageComponent', () => {
 
     it('edits every OTHER target guild\'s message, but not the one the click came from', async () => {
       const recordSignupMock = vi.fn().mockResolvedValue(signupResult())
-      const rest = fakeRest()
+      const patch = vi.fn()
 
       await handleMessageComponent(
         interaction() as never, // guild_id: 'guild-1'
-        { recordSignup: recordSignupMock } as unknown as BackendClient,
-        rest
+        createFakeBackendClient({ recordSignup: recordSignupMock }),
+        createFakeDiscordRest({ patch })
       )
 
       // Only guild-2's message should be REST-edited — guild-1's is handled
       // by the UpdateMessage interaction response itself (§7.5 step 3).
-      expect(rest.patch).toHaveBeenCalledTimes(1)
-      expect(rest.patch).toHaveBeenCalledWith('/channels/channel-2/messages/msg-2', expect.anything())
+      expect(patch).toHaveBeenCalledTimes(1)
+      expect(patch).toHaveBeenCalledWith('/channels/channel-2/messages/msg-2', expect.anything())
     })
 
     it('skips targets with no recorded messageId yet', async () => {
@@ -255,26 +243,25 @@ describe('handleMessageComponent', () => {
           ],
         })
       )
-      const rest = fakeRest()
+      const patch = vi.fn()
 
       await handleMessageComponent(
         interaction() as never,
-        { recordSignup: recordSignupMock } as unknown as BackendClient,
-        rest
+        createFakeBackendClient({ recordSignup: recordSignupMock }),
+        createFakeDiscordRest({ patch })
       )
 
-      expect(rest.patch).not.toHaveBeenCalled()
+      expect(patch).not.toHaveBeenCalled()
     })
 
     it('one guild\'s edit failing does not throw or block the interaction response', async () => {
       const recordSignupMock = vi.fn().mockResolvedValue(signupResult())
-      const rest = fakeRest()
-      rest.patch.mockRejectedValue(new Error('Unknown Message'))
+      const patch = vi.fn().mockRejectedValue(new Error('Unknown Message'))
 
       const response = await handleMessageComponent(
         interaction() as never,
-        { recordSignup: recordSignupMock } as unknown as BackendClient,
-        rest
+        createFakeBackendClient({ recordSignup: recordSignupMock }),
+        createFakeDiscordRest({ patch })
       )
 
       expect(response.type).toBe(InteractionResponseType.UpdateMessage)
@@ -292,8 +279,8 @@ describe('handleMessageComponent', () => {
 
       const response = await handleMessageComponent(
         interaction() as never,
-        { recordSignup: recordSignupMock } as unknown as BackendClient,
-        fakeRest()
+        createFakeBackendClient({ recordSignup: recordSignupMock }),
+        createFakeDiscordRest()
       )
 
       const data = responseData(response)
@@ -310,8 +297,8 @@ describe('handleMessageComponent', () => {
 
       const response = await handleMessageComponent(
         interaction({ member: undefined }) as never,
-        { recordSignup: recordSignupMock } as unknown as BackendClient,
-        fakeRest()
+        createFakeBackendClient({ recordSignup: recordSignupMock }),
+        createFakeDiscordRest()
       )
 
       expect(recordSignupMock).not.toHaveBeenCalled()
@@ -321,7 +308,7 @@ describe('handleMessageComponent', () => {
 
   it('falls back to a generic message for an unrecognized custom_id', async () => {
     const interaction = { data: { custom_id: 'something-unexpected' } }
-    const response = await handleMessageComponent(interaction as never, {} as BackendClient, fakeRest())
+    const response = await handleMessageComponent(interaction as never, createFakeBackendClient(), createFakeDiscordRest())
     expect(responseData(response).content).toMatch(/unrecognized interaction/i)
   })
 })
@@ -351,9 +338,7 @@ describe('handleModalSubmit', () => {
       member: { user: { id: 'user-1' } },
     }
 
-    const response = await handleModalSubmit(interaction as never, {
-      linkOrganizer: linkOrganizerMock,
-    } as unknown as BackendClient)
+    const response = await handleModalSubmit(interaction as never, createFakeBackendClient({ linkOrganizer: linkOrganizerMock }))
 
     expect(linkOrganizerMock).toHaveBeenCalledWith('user-1', token)
     expect(responseData(response).content).toContain('Linked as **PlayerOne**')
@@ -361,13 +346,13 @@ describe('handleModalSubmit', () => {
 
   it('ignores modals with an unrelated custom_id', async () => {
     const interaction = { data: { custom_id: 'some-other-modal', components: [] } }
-    const response = await handleModalSubmit(interaction as never, {} as BackendClient)
+    const response = await handleModalSubmit(interaction as never, createFakeBackendClient())
     expect(responseData(response).content).toMatch(/unrecognized modal/i)
   })
 
   it('rejects when the Discord user id cannot be determined', async () => {
     const interaction = { data: { custom_id: 'connect-ptp:submit', components: [] } }
-    const response = await handleModalSubmit(interaction as never, {} as BackendClient)
+    const response = await handleModalSubmit(interaction as never, createFakeBackendClient())
     expect(responseData(response).content).toMatch(/could not determine your discord user id/i)
   })
 
@@ -376,7 +361,7 @@ describe('handleModalSubmit', () => {
       data: { custom_id: 'connect-ptp:submit', components: actionRowWithToken('') },
       member: { user: { id: 'user-1' } },
     }
-    const response = await handleModalSubmit(interaction as never, {} as BackendClient)
+    const response = await handleModalSubmit(interaction as never, createFakeBackendClient())
     expect(responseData(response).content).toMatch(/no token was submitted/i)
   })
 
@@ -387,9 +372,7 @@ describe('handleModalSubmit', () => {
       member: { user: { id: 'user-1' } },
     }
 
-    const response = await handleModalSubmit(interaction as never, {
-      linkOrganizer: linkOrganizerMock,
-    } as unknown as BackendClient)
+    const response = await handleModalSubmit(interaction as never, createFakeBackendClient({ linkOrganizer: linkOrganizerMock }))
 
     expect(linkOrganizerMock).not.toHaveBeenCalled()
     expect(responseData(response).content).toMatch(/doesn't look like a valid token/i)
@@ -403,9 +386,7 @@ describe('handleModalSubmit', () => {
       member: { user: { id: 'user-1' } },
     }
 
-    const response = await handleModalSubmit(interaction as never, {
-      linkOrganizer: linkOrganizerMock,
-    } as unknown as BackendClient)
+    const response = await handleModalSubmit(interaction as never, createFakeBackendClient({ linkOrganizer: linkOrganizerMock }))
 
     expect(linkOrganizerMock).not.toHaveBeenCalled()
     expect(responseData(response).content).toMatch(/different discord account/i)
@@ -419,9 +400,7 @@ describe('handleModalSubmit', () => {
       member: { user: { id: 'user-1' } },
     }
 
-    const response = await handleModalSubmit(interaction as never, {
-      linkOrganizer: linkOrganizerMock,
-    } as unknown as BackendClient)
+    const response = await handleModalSubmit(interaction as never, createFakeBackendClient({ linkOrganizer: linkOrganizerMock }))
 
     expect(linkOrganizerMock).not.toHaveBeenCalled()
     expect(responseData(response).content).toMatch(/already expired/i)
@@ -435,9 +414,7 @@ describe('handleModalSubmit', () => {
       member: { user: { id: 'user-1' } },
     }
 
-    const response = await handleModalSubmit(interaction as never, {
-      linkOrganizer: linkOrganizerMock,
-    } as unknown as BackendClient)
+    const response = await handleModalSubmit(interaction as never, createFakeBackendClient({ linkOrganizer: linkOrganizerMock }))
 
     expect(responseData(response).content).toMatch(/didn't accept that token/i)
   })
@@ -457,9 +434,7 @@ describe('handleModalSubmit', () => {
       member: { user: { id: 'user-1' } },
     }
 
-    const response = await handleModalSubmit(interaction as never, {
-      linkOrganizer: linkOrganizerMock,
-    } as unknown as BackendClient)
+    const response = await handleModalSubmit(interaction as never, createFakeBackendClient({ linkOrganizer: linkOrganizerMock }))
 
     expect(linkOrganizerMock).toHaveBeenCalledWith('user-1', token)
     expect(responseData(response).content).toContain('Linked as **NoDiscordLink**')

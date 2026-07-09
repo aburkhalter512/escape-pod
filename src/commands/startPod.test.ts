@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { ApplicationCommandOptionType, ComponentType } from 'discord-api-types/v10'
 import { startPod } from './startPod.js'
 import type { CommandContext } from './types.js'
-import type { BackendClient } from '../backendClient.js'
+import { createFakeBackendClient } from '../testUtils/fakeBackendClient.js'
 import { responseData } from '../testUtils/responseData.js'
 
 function makeInteraction(overrides: Record<string, unknown> = {}) {
@@ -39,7 +39,7 @@ describe('startPod', () => {
           ],
         },
       }),
-      backend: { listEligibleGuilds: listEligibleGuildsMock } as unknown as BackendClient,
+      backend: createFakeBackendClient({ listEligibleGuilds: listEligibleGuildsMock }),
     } as unknown as CommandContext
 
     const response = await startPod(ctx)
@@ -59,7 +59,7 @@ describe('startPod', () => {
     const listEligibleGuildsMock = vi.fn().mockResolvedValue([{ guildId: 'g1', name: 'Alpha' }])
     const ctx = {
       interaction: makeInteraction(),
-      backend: { listEligibleGuilds: listEligibleGuildsMock } as unknown as BackendClient,
+      backend: createFakeBackendClient({ listEligibleGuilds: listEligibleGuildsMock }),
     } as unknown as CommandContext
 
     const response = await startPod(ctx)
@@ -72,7 +72,7 @@ describe('startPod', () => {
     const listEligibleGuildsMock = vi.fn().mockResolvedValue([{ guildId: 'g1', name: 'Alpha' }])
     const ctx = {
       interaction: makeInteraction({ member: undefined, user: { id: 'dm-organizer' } }),
-      backend: { listEligibleGuilds: listEligibleGuildsMock } as unknown as BackendClient,
+      backend: createFakeBackendClient({ listEligibleGuilds: listEligibleGuildsMock }),
     } as unknown as CommandContext
 
     await startPod(ctx)
@@ -84,7 +84,7 @@ describe('startPod', () => {
     const listEligibleGuildsMock = vi.fn()
     const ctx = {
       interaction: makeInteraction({ member: undefined }),
-      backend: { listEligibleGuilds: listEligibleGuildsMock } as unknown as BackendClient,
+      backend: createFakeBackendClient({ listEligibleGuilds: listEligibleGuildsMock }),
     } as unknown as CommandContext
 
     const response = await startPod(ctx)
@@ -97,7 +97,7 @@ describe('startPod', () => {
     const listEligibleGuildsMock = vi.fn()
     const ctx = {
       interaction: makeInteraction({ data: { options: [] } }),
-      backend: { listEligibleGuilds: listEligibleGuildsMock } as unknown as BackendClient,
+      backend: createFakeBackendClient({ listEligibleGuilds: listEligibleGuildsMock }),
     } as unknown as CommandContext
 
     const response = await startPod(ctx)
@@ -110,7 +110,7 @@ describe('startPod', () => {
     const listEligibleGuildsMock = vi.fn().mockResolvedValue([])
     const ctx = {
       interaction: makeInteraction(),
-      backend: { listEligibleGuilds: listEligibleGuildsMock } as unknown as BackendClient,
+      backend: createFakeBackendClient({ listEligibleGuilds: listEligibleGuildsMock }),
     } as unknown as CommandContext
 
     const response = await startPod(ctx)
@@ -124,7 +124,7 @@ describe('startPod', () => {
     const listEligibleGuildsMock = vi.fn().mockResolvedValue(manyGuilds)
     const ctx = {
       interaction: makeInteraction(),
-      backend: { listEligibleGuilds: listEligibleGuildsMock } as unknown as BackendClient,
+      backend: createFakeBackendClient({ listEligibleGuilds: listEligibleGuildsMock }),
     } as unknown as CommandContext
 
     const response = await startPod(ctx)

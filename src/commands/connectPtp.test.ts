@@ -2,11 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { InteractionResponseType, MessageFlags, ComponentType, ButtonStyle } from 'discord-api-types/v10'
 import { connectPtp } from './connectPtp.js'
 import type { CommandContext } from './types.js'
+import { createFakeBackendClient } from '../testUtils/fakeBackendClient.js'
 import { responseData } from '../testUtils/responseData.js'
 
 describe('connectPtp', () => {
   it('responds ephemerally with sign-in/token links and a modal-opening button', async () => {
-    const ctx = { interaction: {}, backend: {} } as unknown as CommandContext
+    const ctx = { interaction: {}, backend: createFakeBackendClient() } as unknown as CommandContext
 
     const response = await connectPtp(ctx)
 
@@ -28,9 +29,10 @@ describe('connectPtp', () => {
 
   it('never touches the backend — this step is entirely local', async () => {
     // §8.1: PTP has no third-party OAuth, so this step can't call PTP or
-    // our backend yet — it's just instructions. Passing an empty backend
-    // object and having the handler still succeed proves it's not called.
-    const ctx = { interaction: {}, backend: {} } as unknown as CommandContext
+    // our backend yet — it's just instructions. Every fake method defaults
+    // to an unimplemented vi.fn(); the handler succeeding without calling
+    // any of them proves this step never touches the backend.
+    const ctx = { interaction: {}, backend: createFakeBackendClient() } as unknown as CommandContext
     await expect(connectPtp(ctx)).resolves.toBeDefined()
   })
 })

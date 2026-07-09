@@ -8,7 +8,40 @@ export interface BackendClientConfig {
   apiKey: string
 }
 
-export class BackendClient {
+// The contract commands/handlers depend on. Real calls happen in
+// HttpBackendClient below; tests get a hand-written stub via
+// testUtils/fakeBackendClient.ts that fully satisfies this interface, no
+// `as unknown as` needed.
+export interface BackendClient {
+  linkOrganizer(discordId: string, token: string): Promise<{ username: string }>
+  subscribeGuild(guildId: string, channelId: string, installedBy: string): Promise<void>
+  allowOrganizer(guildId: string, organizerDiscordId: string, approvedBy: string): Promise<void>
+  listEligibleGuilds(organizerDiscordId: string): Promise<Array<{ guildId: string; name: string }>>
+  startPod(params: {
+    organizerDiscordId: string
+    setCode: string
+    threshold: number
+    guildIds: string[]
+  }): Promise<{ podRoundId: string; targets: Array<{ guildId: string; channelId: string }> }>
+  recordMessagePosted(podRoundId: string, guildId: string, messageId: string): Promise<void>
+  recordSignup(
+    podRoundId: string,
+    discordId: string,
+    username: string,
+    sourceGuildId: string
+  ): Promise<{
+    count: number
+    threshold: number
+    setCode: string
+    thresholdReached: boolean
+    podCreated: boolean
+    shareUrl?: string
+    targets: Array<{ guildId: string; channelId: string; messageId: string | null }>
+  }>
+  cancelPod(podRoundId: string, requestedBy: string): Promise<void>
+}
+
+export class HttpBackendClient implements BackendClient {
   constructor(private readonly config: BackendClientConfig) {}
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -28,7 +61,7 @@ export class BackendClient {
     return (await response.json()) as T
   }
 
-  // TODO(§8.2): submit a pasted PTP token for validation + storage.
+  // §8.2: submit a pasted PTP token for validation + storage.
   linkOrganizer(discordId: string, token: string): Promise<{ username: string }> {
     return this.request('/organizers/link', {
       method: 'POST',
@@ -36,7 +69,7 @@ export class BackendClient {
     })
   }
 
-  // TODO(§7.2): register/update a guild's broadcast subscription.
+  // §7.2: register/update a guild's broadcast subscription.
   subscribeGuild(guildId: string, channelId: string, installedBy: string): Promise<void> {
     return this.request('/guilds/subscribe', {
       method: 'POST',
@@ -44,7 +77,7 @@ export class BackendClient {
     })
   }
 
-  // TODO(§7.2): allow-list an organizer for a guild with `allowlist` policy.
+  // §7.2: allow-list an organizer for a guild with `allowlist` policy.
   allowOrganizer(guildId: string, organizerDiscordId: string, approvedBy: string): Promise<void> {
     return this.request('/guilds/allow-organizer', {
       method: 'POST',
@@ -52,7 +85,7 @@ export class BackendClient {
     })
   }
 
-  // TODO(§7.5): start a round; backend returns eligible target guilds.
+  // §7.5: start a round; backend returns eligible target guilds.
   listEligibleGuilds(organizerDiscordId: string): Promise<Array<{ guildId: string; name: string }>> {
     return this.request(`/organizers/${organizerDiscordId}/eligible-guilds`)
   }
@@ -100,7 +133,7 @@ export class BackendClient {
     })
   }
 
-  // TODO(§7.5 step 5): cancel a round.
+  // §7.5 step 5: cancel a round.
   cancelPod(podRoundId: string, requestedBy: string): Promise<void> {
     return this.request(`/pods/${podRoundId}/cancel`, {
       method: 'POST',

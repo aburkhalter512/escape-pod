@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { ApplicationCommandOptionType } from 'discord-api-types/v10'
 import { allowOrganizer } from './allowOrganizer.js'
 import type { CommandContext } from './types.js'
-import type { BackendClient } from '../backendClient.js'
+import { createFakeBackendClient } from '../testUtils/fakeBackendClient.js'
 import { responseData } from '../testUtils/responseData.js'
 
 function makeInteraction(overrides: Record<string, unknown> = {}) {
@@ -21,7 +21,7 @@ describe('allowOrganizer', () => {
     const allowOrganizerMock = vi.fn().mockResolvedValue(undefined)
     const ctx = {
       interaction: makeInteraction(),
-      backend: { allowOrganizer: allowOrganizerMock } as unknown as BackendClient,
+      backend: createFakeBackendClient({ allowOrganizer: allowOrganizerMock }),
     } as unknown as CommandContext
 
     const response = await allowOrganizer(ctx)
@@ -34,7 +34,7 @@ describe('allowOrganizer', () => {
     const allowOrganizerMock = vi.fn()
     const ctx = {
       interaction: makeInteraction({ guild_id: undefined }),
-      backend: { allowOrganizer: allowOrganizerMock } as unknown as BackendClient,
+      backend: createFakeBackendClient({ allowOrganizer: allowOrganizerMock }),
     } as unknown as CommandContext
 
     const response = await allowOrganizer(ctx)
@@ -47,7 +47,7 @@ describe('allowOrganizer', () => {
     const allowOrganizerMock = vi.fn()
     const ctx = {
       interaction: makeInteraction({ data: { options: [] } }),
-      backend: { allowOrganizer: allowOrganizerMock } as unknown as BackendClient,
+      backend: createFakeBackendClient({ allowOrganizer: allowOrganizerMock }),
     } as unknown as CommandContext
 
     const response = await allowOrganizer(ctx)
@@ -62,7 +62,7 @@ describe('allowOrganizer', () => {
       interaction: makeInteraction({
         data: { options: [{ name: 'organizer', type: ApplicationCommandOptionType.String, value: 'oops' }] },
       }),
-      backend: { allowOrganizer: allowOrganizerMock } as unknown as BackendClient,
+      backend: createFakeBackendClient({ allowOrganizer: allowOrganizerMock }),
     } as unknown as CommandContext
 
     const response = await allowOrganizer(ctx)

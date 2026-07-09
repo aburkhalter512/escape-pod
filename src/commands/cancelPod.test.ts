@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { cancelPod } from './cancelPod.js'
 import type { CommandContext } from './types.js'
+import { createFakeBackendClient } from '../testUtils/fakeBackendClient.js'
 import { responseData } from '../testUtils/responseData.js'
 
 describe('cancelPod', () => {
   it('resolves the organizer id from member.user.id when present', async () => {
     const ctx = {
       interaction: { member: { user: { id: 'organizer-1' } } },
-      backend: {},
+      backend: createFakeBackendClient(),
     } as unknown as CommandContext
 
     const response = await cancelPod(ctx)
@@ -19,7 +20,7 @@ describe('cancelPod', () => {
   })
 
   it('rejects when neither member nor user is present', async () => {
-    const ctx = { interaction: {}, backend: {} } as unknown as CommandContext
+    const ctx = { interaction: {}, backend: createFakeBackendClient() } as unknown as CommandContext
 
     const response = await cancelPod(ctx)
 

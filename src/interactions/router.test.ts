@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { InteractionResponseType, InteractionType } from 'discord-api-types/v10'
-import type { REST } from '@discordjs/rest'
 import { routeInteraction, type RouterDeps } from './router.js'
-import type { BackendClient } from '../backendClient.js'
+import { createFakeBackendClient } from '../testUtils/fakeBackendClient.js'
+import { createFakeDiscordRest } from '../testUtils/fakeDiscordRest.js'
 import { responseData } from '../testUtils/responseData.js'
 
 function deps(): RouterDeps {
-  return { backend: {} as BackendClient, discordRest: {} as REST }
+  return { backend: createFakeBackendClient(), discordRest: createFakeDiscordRest() }
 }
 
 describe('routeInteraction', () => {

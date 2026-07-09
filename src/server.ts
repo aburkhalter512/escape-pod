@@ -1,12 +1,12 @@
 import Fastify from 'fastify'
 import type { APIInteraction } from 'discord-api-types/v10'
-import { BackendClient } from './backendClient.js'
+import { HttpBackendClient } from './backendClient.js'
 import { createDiscordRest } from './discord/rest.js'
 import { verifyDiscordSignature } from './interactions/verify.js'
 import { routeInteraction } from './interactions/router.js'
 
 const publicKey = requireEnv('DISCORD_PUBLIC_KEY')
-const backend = new BackendClient({
+const backend = new HttpBackendClient({
   baseUrl: requireEnv('BACKEND_URL'),
   apiKey: requireEnv('BACKEND_API_KEY'),
 })

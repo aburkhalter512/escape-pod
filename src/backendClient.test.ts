@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { BackendClient } from './backendClient.js'
+import { HttpBackendClient } from './backendClient.js'
 
-describe('BackendClient', () => {
+describe('HttpBackendClient', () => {
   const fetchMock = vi.fn()
 
   beforeEach(() => {
@@ -14,7 +14,7 @@ describe('BackendClient', () => {
   })
 
   function client() {
-    return new BackendClient({ baseUrl: 'http://backend.local', apiKey: 'secret-key' })
+    return new HttpBackendClient({ baseUrl: 'http://backend.local', apiKey: 'secret-key' })
   }
 
   it('sends the Bearer API key and JSON content-type on every request', async () => {

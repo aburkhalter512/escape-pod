@@ -8,7 +8,7 @@ import {
   type APIModalSubmissionComponent,
   type APIInteractionResponse,
 } from 'discord-api-types/v10'
-import type { REST } from '@discordjs/rest'
+import type { DiscordRestClient } from '../discord/rest.js'
 import type { BackendClient } from '../backendClient.js'
 import { buildPodRoundMessage } from '../discord/podMessage.js'
 import { editMessage, postMessage } from '../discord/rest.js'
@@ -17,7 +17,7 @@ import { decodeJwtPayloadUnverified } from '../util/jwt.js'
 export async function handleMessageComponent(
   interaction: APIMessageComponentInteraction,
   backend: BackendClient,
-  discordRest: REST
+  discordRest: DiscordRestClient
 ): Promise<APIInteractionResponse> {
   const customId = interaction.data.custom_id
 
