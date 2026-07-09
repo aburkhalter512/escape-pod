@@ -34,6 +34,12 @@ The interactions endpoint URL (`POST /interactions` on wherever this is
 deployed) needs to be registered in the Discord Developer Portal under
 "Interactions Endpoint URL" for the application.
 
+## CI
+
+`.github/workflows/ci.yml` runs on every push to `main` and every PR:
+`npm ci`, typecheck, lint, test, build. No live Discord/PTP calls — same
+checks as running them locally, automated.
+
 ## Status
 
 Core loop implemented and tested (§7.5): `/start-pod` posts the RSVP embed
