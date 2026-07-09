@@ -1,0 +1,33 @@
+{
+  "name": "draft-pod-discord-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Discord-facing edge service: verifies interactions, handles slash commands/buttons, forwards business logic to the backend.",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "register-commands": "tsx scripts/register-commands.ts",
+    "lint": "eslint src scripts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@discordjs/rest": "^2.4.0",
+    "discord-api-types": "^0.38.49",
+    "discord-interactions": "^4.1.0",
+    "fastify": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "eslint": "^9.14.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  },
+  "overrides": {
+    "undici": "6.27.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
