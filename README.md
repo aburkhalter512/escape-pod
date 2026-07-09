@@ -5,9 +5,10 @@ Discord interactions (slash commands, buttons, modals) over a stateless HTTP
 endpoint, and forwards all business logic and state to the
 [backend](../backend) service.
 
-Design rationale lives in [`../INTEGRATIONS.md`](../INTEGRATIONS.md) — start
-with the "Summary" section at the top, then §7 (bot install & RSVP flow) and
-§8 (PTP account-linking flow) for the details this repo implements.
+Design rationale lives in [`INTEGRATIONS.md`](https://github.com/aburkhalter512/escape-pod/blob/main/INTEGRATIONS.md) —
+start with the "Summary" section at the top, then §7 (bot install & RSVP
+flow) and §8 (PTP account-linking flow) for the details this repo
+implements.
 
 ## Why a separate repo from the backend
 
