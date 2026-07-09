@@ -3,17 +3,16 @@ import { ApplicationCommandOptionType } from 'discord-api-types/v10'
 import { startPod } from './startPod.js'
 import type { CommandContext } from './types.js'
 import { createFakeBackendClient } from '../testUtils/fakeBackendClient.js'
+import { fakeChatInputInteraction, fakeMember, fakeUser } from '../testUtils/fakeInteraction.js'
 import { responseData } from '../testUtils/responseData.js'
 import { stub } from '../testUtils/stub.js'
 
-function makeInteraction(overrides: Record<string, unknown> = {}) {
-  return {
-    member: { user: { id: 'organizer-1' } },
-    data: {
-      options: [{ name: 'set', type: ApplicationCommandOptionType.String, value: 'JTL' }],
-    },
+function interaction(overrides: Parameters<typeof fakeChatInputInteraction>[0] = {}) {
+  return fakeChatInputInteraction({
+    member: fakeMember({ user: fakeUser({ id: 'organizer-1' }) }),
+    options: [{ name: 'set', type: ApplicationCommandOptionType.String, value: 'JTL' }],
     ...overrides,
-  }
+  })
 }
 
 function selectComponent(response: Awaited<ReturnType<typeof startPod>>) {
@@ -32,17 +31,15 @@ describe('startPod', () => {
       if (organizerDiscordId !== 'organizer-1') throw new Error(`unexpected organizerDiscordId: ${organizerDiscordId}`)
       return [{ guildId: 'g1', name: 'Alpha' }, { guildId: 'g2', name: 'Beta' }]
     })
-    const ctx = {
-      interaction: makeInteraction({
-        data: {
-          options: [
-            { name: 'set', type: ApplicationCommandOptionType.String, value: 'JTL' },
-            { name: 'threshold', type: ApplicationCommandOptionType.Integer, value: 7 },
-          ],
-        },
+    const ctx: CommandContext = {
+      interaction: interaction({
+        options: [
+          { name: 'set', type: ApplicationCommandOptionType.String, value: 'JTL' },
+          { name: 'threshold', type: ApplicationCommandOptionType.Integer, value: 7 },
+        ],
       }),
       backend: createFakeBackendClient({ listEligibleGuilds: listEligibleGuildsMock }),
-    } as unknown as CommandContext
+    }
 
     const response = await startPod(ctx)
 
@@ -58,10 +55,10 @@ describe('startPod', () => {
 
   it('defaults the threshold to 8 when not provided', async () => {
     const listEligibleGuildsMock = stub(async (_organizerDiscordId: string) => [{ guildId: 'g1', name: 'Alpha' }])
-    const ctx = {
-      interaction: makeInteraction(),
+    const ctx: CommandContext = {
+      interaction: interaction(),
       backend: createFakeBackendClient({ listEligibleGuilds: listEligibleGuildsMock }),
-    } as unknown as CommandContext
+    }
 
     const response = await startPod(ctx)
 
@@ -74,10 +71,14 @@ describe('startPod', () => {
       if (organizerDiscordId !== 'dm-organizer') throw new Error(`unexpected organizerDiscordId: ${organizerDiscordId}`)
       return [{ guildId: 'g1', name: 'Alpha' }]
     })
-    const ctx = {
-      interaction: makeInteraction({ member: undefined, user: { id: 'dm-organizer' } }),
+    const ctx: CommandContext = {
+      interaction: interaction({
+        guild_id: undefined,
+        member: undefined,
+        user: fakeUser({ id: 'dm-organizer' }),
+      }),
       backend: createFakeBackendClient({ listEligibleGuilds: listEligibleGuildsMock }),
-    } as unknown as CommandContext
+    }
 
     const response = await startPod(ctx)
 
@@ -88,10 +89,10 @@ describe('startPod', () => {
     const listEligibleGuildsMock = stub(async (_organizerDiscordId: string) => {
       throw new Error('listEligibleGuilds should not have been called')
     })
-    const ctx = {
-      interaction: makeInteraction({ member: undefined }),
+    const ctx: CommandContext = {
+      interaction: interaction({ guild_id: undefined, member: undefined }),
       backend: createFakeBackendClient({ listEligibleGuilds: listEligibleGuildsMock }),
-    } as unknown as CommandContext
+    }
 
     const response = await startPod(ctx)
 
@@ -102,10 +103,10 @@ describe('startPod', () => {
     const listEligibleGuildsMock = stub(async (_organizerDiscordId: string) => {
       throw new Error('listEligibleGuilds should not have been called')
     })
-    const ctx = {
-      interaction: makeInteraction({ data: { options: [] } }),
+    const ctx: CommandContext = {
+      interaction: interaction({ options: [] }),
       backend: createFakeBackendClient({ listEligibleGuilds: listEligibleGuildsMock }),
-    } as unknown as CommandContext
+    }
 
     const response = await startPod(ctx)
 
@@ -114,10 +115,10 @@ describe('startPod', () => {
 
   it('tells the organizer plainly when they have no eligible guilds yet', async () => {
     const listEligibleGuildsMock = stub(async (_organizerDiscordId: string) => [])
-    const ctx = {
-      interaction: makeInteraction(),
+    const ctx: CommandContext = {
+      interaction: interaction(),
       backend: createFakeBackendClient({ listEligibleGuilds: listEligibleGuildsMock }),
-    } as unknown as CommandContext
+    }
 
     const response = await startPod(ctx)
 
@@ -128,10 +129,10 @@ describe('startPod', () => {
   it('caps the select menu at 25 options even when more guilds are eligible (Discord limit)', async () => {
     const manyGuilds = Array.from({ length: 30 }, (_, i) => ({ guildId: `g${i}`, name: `Guild ${i}` }))
     const listEligibleGuildsMock = stub(async (_organizerDiscordId: string) => manyGuilds)
-    const ctx = {
-      interaction: makeInteraction(),
+    const ctx: CommandContext = {
+      interaction: interaction(),
       backend: createFakeBackendClient({ listEligibleGuilds: listEligibleGuildsMock }),
-    } as unknown as CommandContext
+    }
 
     const response = await startPod(ctx)
     const select = selectComponent(response)

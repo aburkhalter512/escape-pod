@@ -3,31 +3,28 @@ import { ApplicationCommandOptionType } from 'discord-api-types/v10'
 import { allowOrganizer } from './allowOrganizer.js'
 import type { CommandContext } from './types.js'
 import { createFakeBackendClient } from '../testUtils/fakeBackendClient.js'
+import { fakeChatInputInteraction } from '../testUtils/fakeInteraction.js'
 import { responseData } from '../testUtils/responseData.js'
 import { stub } from '../testUtils/stub.js'
 
-function makeInteraction(overrides: Record<string, unknown> = {}) {
-  return {
-    guild_id: 'guild-1',
-    member: { user: { id: 'admin-1' } },
-    data: {
-      options: [{ name: 'organizer', type: ApplicationCommandOptionType.User, value: 'organizer-1' }],
-    },
+function interaction(overrides: Parameters<typeof fakeChatInputInteraction>[0] = {}) {
+  return fakeChatInputInteraction({
+    options: [{ name: 'organizer', type: ApplicationCommandOptionType.User, value: 'organizer-1' }],
     ...overrides,
-  }
+  })
 }
 
 describe('allowOrganizer', () => {
   it('approves the organizer and mentions them in the confirmation', async () => {
     const allowOrganizerMock = stub(async (guildId: string, organizerDiscordId: string, approvedBy: string) => {
-      if (guildId !== 'guild-1' || organizerDiscordId !== 'organizer-1' || approvedBy !== 'admin-1') {
+      if (guildId !== 'guild-1' || organizerDiscordId !== 'organizer-1' || approvedBy !== 'user-1') {
         throw new Error(`unexpected allowOrganizer args: ${guildId} ${organizerDiscordId} ${approvedBy}`)
       }
     })
-    const ctx = {
-      interaction: makeInteraction(),
+    const ctx: CommandContext = {
+      interaction: interaction(),
       backend: createFakeBackendClient({ allowOrganizer: allowOrganizerMock }),
-    } as unknown as CommandContext
+    }
 
     const response = await allowOrganizer(ctx)
 
@@ -38,10 +35,10 @@ describe('allowOrganizer', () => {
     const allowOrganizerMock = stub(async (_guildId: string, _organizerDiscordId: string, _approvedBy: string) => {
       throw new Error('allowOrganizer should not have been called')
     })
-    const ctx = {
-      interaction: makeInteraction({ guild_id: undefined }),
+    const ctx: CommandContext = {
+      interaction: interaction({ guild_id: undefined, member: undefined }),
       backend: createFakeBackendClient({ allowOrganizer: allowOrganizerMock }),
-    } as unknown as CommandContext
+    }
 
     const response = await allowOrganizer(ctx)
 
@@ -52,10 +49,10 @@ describe('allowOrganizer', () => {
     const allowOrganizerMock = stub(async (_guildId: string, _organizerDiscordId: string, _approvedBy: string) => {
       throw new Error('allowOrganizer should not have been called')
     })
-    const ctx = {
-      interaction: makeInteraction({ data: { options: [] } }),
+    const ctx: CommandContext = {
+      interaction: interaction({ options: [] }),
       backend: createFakeBackendClient({ allowOrganizer: allowOrganizerMock }),
-    } as unknown as CommandContext
+    }
 
     const response = await allowOrganizer(ctx)
 
@@ -66,12 +63,12 @@ describe('allowOrganizer', () => {
     const allowOrganizerMock = stub(async (_guildId: string, _organizerDiscordId: string, _approvedBy: string) => {
       throw new Error('allowOrganizer should not have been called')
     })
-    const ctx = {
-      interaction: makeInteraction({
-        data: { options: [{ name: 'organizer', type: ApplicationCommandOptionType.String, value: 'oops' }] },
+    const ctx: CommandContext = {
+      interaction: interaction({
+        options: [{ name: 'organizer', type: ApplicationCommandOptionType.String, value: 'oops' }],
       }),
       backend: createFakeBackendClient({ allowOrganizer: allowOrganizerMock }),
-    } as unknown as CommandContext
+    }
 
     const response = await allowOrganizer(ctx)
 

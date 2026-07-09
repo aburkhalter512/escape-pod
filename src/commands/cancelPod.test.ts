@@ -2,14 +2,15 @@ import { describe, expect, it } from 'vitest'
 import { cancelPod } from './cancelPod.js'
 import type { CommandContext } from './types.js'
 import { createFakeBackendClient } from '../testUtils/fakeBackendClient.js'
+import { fakeChatInputInteraction, fakeMember, fakeUser } from '../testUtils/fakeInteraction.js'
 import { responseData } from '../testUtils/responseData.js'
 
 describe('cancelPod', () => {
   it('resolves the organizer id from member.user.id when present', async () => {
-    const ctx = {
-      interaction: { member: { user: { id: 'organizer-1' } } },
+    const ctx: CommandContext = {
+      interaction: fakeChatInputInteraction({ member: fakeMember({ user: fakeUser({ id: 'organizer-1' }) }) }),
       backend: createFakeBackendClient(),
-    } as unknown as CommandContext
+    }
 
     const response = await cancelPod(ctx)
 
@@ -20,7 +21,10 @@ describe('cancelPod', () => {
   })
 
   it('rejects when neither member nor user is present', async () => {
-    const ctx = { interaction: {}, backend: createFakeBackendClient() } as unknown as CommandContext
+    const ctx: CommandContext = {
+      interaction: fakeChatInputInteraction({ guild_id: undefined, member: undefined }),
+      backend: createFakeBackendClient(),
+    }
 
     const response = await cancelPod(ctx)
 

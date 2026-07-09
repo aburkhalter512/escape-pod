@@ -3,31 +3,28 @@ import { ApplicationCommandOptionType } from 'discord-api-types/v10'
 import { subscribeGuild } from './subscribeGuild.js'
 import type { CommandContext } from './types.js'
 import { createFakeBackendClient } from '../testUtils/fakeBackendClient.js'
+import { fakeChatInputInteraction } from '../testUtils/fakeInteraction.js'
 import { responseData } from '../testUtils/responseData.js'
 import { stub } from '../testUtils/stub.js'
 
-function makeInteraction(overrides: Record<string, unknown> = {}) {
-  return {
-    guild_id: 'guild-1',
-    member: { user: { id: 'admin-1' } },
-    data: {
-      options: [{ name: 'channel', type: ApplicationCommandOptionType.Channel, value: 'channel-1' }],
-    },
+function interaction(overrides: Parameters<typeof fakeChatInputInteraction>[0] = {}) {
+  return fakeChatInputInteraction({
+    options: [{ name: 'channel', type: ApplicationCommandOptionType.Channel, value: 'channel-1' }],
     ...overrides,
-  }
+  })
 }
 
 describe('subscribeGuild', () => {
   it('subscribes the guild and confirms the channel', async () => {
     const subscribeGuildMock = stub(async (guildId: string, channelId: string, installedBy: string) => {
-      if (guildId !== 'guild-1' || channelId !== 'channel-1' || installedBy !== 'admin-1') {
+      if (guildId !== 'guild-1' || channelId !== 'channel-1' || installedBy !== 'user-1') {
         throw new Error(`unexpected subscribeGuild args: ${guildId} ${channelId} ${installedBy}`)
       }
     })
-    const ctx = {
-      interaction: makeInteraction(),
+    const ctx: CommandContext = {
+      interaction: interaction(),
       backend: createFakeBackendClient({ subscribeGuild: subscribeGuildMock }),
-    } as unknown as CommandContext
+    }
 
     const response = await subscribeGuild(ctx)
 
@@ -39,10 +36,10 @@ describe('subscribeGuild', () => {
     const subscribeGuildMock = stub(async (_guildId: string, _channelId: string, _installedBy: string) => {
       throw new Error('subscribeGuild should not have been called')
     })
-    const ctx = {
-      interaction: makeInteraction({ guild_id: undefined }),
+    const ctx: CommandContext = {
+      interaction: interaction({ guild_id: undefined, member: undefined }),
       backend: createFakeBackendClient({ subscribeGuild: subscribeGuildMock }),
-    } as unknown as CommandContext
+    }
 
     const response = await subscribeGuild(ctx)
 
@@ -53,10 +50,10 @@ describe('subscribeGuild', () => {
     const subscribeGuildMock = stub(async (_guildId: string, _channelId: string, _installedBy: string) => {
       throw new Error('subscribeGuild should not have been called')
     })
-    const ctx = {
-      interaction: makeInteraction({ member: undefined }),
+    const ctx: CommandContext = {
+      interaction: interaction({ member: undefined }),
       backend: createFakeBackendClient({ subscribeGuild: subscribeGuildMock }),
-    } as unknown as CommandContext
+    }
 
     const response = await subscribeGuild(ctx)
 
@@ -67,10 +64,10 @@ describe('subscribeGuild', () => {
     const subscribeGuildMock = stub(async (_guildId: string, _channelId: string, _installedBy: string) => {
       throw new Error('subscribeGuild should not have been called')
     })
-    const ctx = {
-      interaction: makeInteraction({ data: { options: [] } }),
+    const ctx: CommandContext = {
+      interaction: interaction({ options: [] }),
       backend: createFakeBackendClient({ subscribeGuild: subscribeGuildMock }),
-    } as unknown as CommandContext
+    }
 
     const response = await subscribeGuild(ctx)
 
@@ -81,12 +78,12 @@ describe('subscribeGuild', () => {
     const subscribeGuildMock = stub(async (_guildId: string, _channelId: string, _installedBy: string) => {
       throw new Error('subscribeGuild should not have been called')
     })
-    const ctx = {
-      interaction: makeInteraction({
-        data: { options: [{ name: 'channel', type: ApplicationCommandOptionType.String, value: 'oops' }] },
+    const ctx: CommandContext = {
+      interaction: interaction({
+        options: [{ name: 'channel', type: ApplicationCommandOptionType.String, value: 'oops' }],
       }),
       backend: createFakeBackendClient({ subscribeGuild: subscribeGuildMock }),
-    } as unknown as CommandContext
+    }
 
     const response = await subscribeGuild(ctx)
 

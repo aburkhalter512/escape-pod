@@ -3,11 +3,12 @@ import { InteractionResponseType, MessageFlags, ComponentType, ButtonStyle } fro
 import { connectPtp } from './connectPtp.js'
 import type { CommandContext } from './types.js'
 import { createFakeBackendClient } from '../testUtils/fakeBackendClient.js'
+import { fakeChatInputInteraction } from '../testUtils/fakeInteraction.js'
 import { responseData } from '../testUtils/responseData.js'
 
 describe('connectPtp', () => {
   it('responds ephemerally with sign-in/token links and a modal-opening button', async () => {
-    const ctx = { interaction: {}, backend: createFakeBackendClient() } as unknown as CommandContext
+    const ctx: CommandContext = { interaction: fakeChatInputInteraction(), backend: createFakeBackendClient() }
 
     const response = await connectPtp(ctx)
 
@@ -32,7 +33,7 @@ describe('connectPtp', () => {
     // our backend yet — it's just instructions. Every fake method defaults
     // to a stub that throws if called; the handler succeeding without
     // calling any of them proves this step never touches the backend.
-    const ctx = { interaction: {}, backend: createFakeBackendClient() } as unknown as CommandContext
+    const ctx: CommandContext = { interaction: fakeChatInputInteraction(), backend: createFakeBackendClient() }
     await expect(connectPtp(ctx)).resolves.toBeDefined()
   })
 })

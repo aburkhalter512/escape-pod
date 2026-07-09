@@ -1,7 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest'
-import type { FastifyReply, FastifyRequest } from 'fastify'
 import type { webcrypto } from 'node:crypto'
-import { verifyDiscordSignature } from './verify.js'
+import { verifyDiscordSignature, type MinimalFastifyReply, type MinimalFastifyRequest } from './verify.js'
 
 // Mirrors exactly what discord-interactions' verifyKey does internally
 // (node_modules/discord-interactions/dist/util.js): Ed25519 over
@@ -20,23 +19,23 @@ async function sign(timestamp: string, body: string): Promise<string> {
   return Buffer.from(signature).toString('hex')
 }
 
-function fakeRequest(headers: Record<string, string | undefined>, rawBody: string): FastifyRequest {
-  return { headers, rawBody } as unknown as FastifyRequest
+function fakeRequest(headers: MinimalFastifyRequest['headers'], rawBody?: string): MinimalFastifyRequest {
+  return { headers, rawBody }
 }
 
 function fakeReply() {
   const calls: { code?: number; sent?: unknown } = {}
-  const reply = {
-    code(status: number) {
+  const reply: MinimalFastifyReply = {
+    code(status) {
       calls.code = status
       return reply
     },
-    send(payload: unknown) {
+    send(payload) {
       calls.sent = payload
       return reply
     },
   }
-  return { reply: reply as unknown as FastifyReply, calls }
+  return { reply, calls }
 }
 
 beforeAll(async () => {
@@ -130,10 +129,8 @@ describe('verifyDiscordSignature', () => {
   })
 
   it('rejects when the raw body is missing (e.g. body parsing stripped it)', async () => {
-    const request = fakeRequest(
-      { 'x-signature-ed25519': 'deadbeef', 'x-signature-timestamp': '1700000000' },
-      undefined as unknown as string
-    )
+    const request = fakeRequest({ 'x-signature-ed25519': 'deadbeef', 'x-signature-timestamp': '1700000000' })
+
     const { reply, calls } = fakeReply()
 
     expect(await verifyDiscordSignature(request, reply, publicKeyHex)).toBe(false)
