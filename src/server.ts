@@ -16,10 +16,20 @@ const app = Fastify()
 
 // Signature verification needs the exact raw request body, so capture it
 // before Fastify's default JSON parsing discards it (INTEGRATIONS.md §7.1).
+// Fastify's own types can't narrow `body` to `string` from `{ parseAs:
+// 'string' }` alone (its generic + conditional-type constraint isn't
+// inferred backward from the literal) — a runtime guard gets the same
+// narrowing without an unchecked cast, and is correct even if that ever
+// changes.
 app.addContentTypeParser('application/json', { parseAs: 'string' }, (request, body, done) => {
-  ;(request as unknown as { rawBody: string }).rawBody = body as string
+  if (typeof body !== 'string') {
+    done(new Error('Expected a string body'), undefined)
+    return
+  }
+
+  request.rawBody = body
   try {
-    done(null, JSON.parse(body as string))
+    done(null, JSON.parse(body))
   } catch (err) {
     done(err as Error, undefined)
   }

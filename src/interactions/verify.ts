@@ -11,7 +11,7 @@ export async function verifyDiscordSignature(
 ): Promise<boolean> {
   const signature = request.headers['x-signature-ed25519']
   const timestamp = request.headers['x-signature-timestamp']
-  const rawBody = (request as FastifyRequest & { rawBody?: string }).rawBody
+  const rawBody = request.rawBody
 
   if (typeof signature !== 'string' || typeof timestamp !== 'string' || !rawBody) {
     reply.code(401).send({ error: 'Missing signature headers' })
