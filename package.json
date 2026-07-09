@@ -1,5 +1,5 @@
 {
-  "name": "draft-pod-discord-bot",
+  "name": "escape-pod",
   "version": "0.1.0",
   "private": true,
   "description": "Discord-facing edge service: verifies interactions, handles slash commands/buttons, forwards business logic to the backend.",

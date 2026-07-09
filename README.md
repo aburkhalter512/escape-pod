@@ -1,8 +1,9 @@
-# draft-pod-discord-bot
+# escape-pod
 
-Discord-facing edge service for the draft pod notifier. Verifies and routes
-Discord interactions (slash commands, buttons, modals) over a stateless HTTP
-endpoint, and forwards all business logic and state to the
+Discord-facing edge service for Escape Pod, a Star Wars: Unlimited draft
+pod notifier. Verifies and routes Discord interactions (slash commands,
+buttons, modals) over a stateless HTTP endpoint, and forwards all
+business logic and state to the
 [backend](https://github.com/aburkhalter512/escape-pod-backend) service.
 
 Design rationale lives in [`INTEGRATIONS.md`](https://github.com/aburkhalter512/escape-pod/blob/main/INTEGRATIONS.md) —

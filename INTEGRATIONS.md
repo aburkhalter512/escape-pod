@@ -1,4 +1,4 @@
-# Draft Pod Notifier — Integration Research
+# Escape Pod — Integration Research
 
 Status: **Core loop implemented.** `discord-bot/` and `backend/` (sibling
 repos, see §3.4) both exist with the RSVP → cross-guild sync → PTP
