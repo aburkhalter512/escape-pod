@@ -9,6 +9,24 @@ jobs:
   verify:
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: draft_pod
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/draft_pod
+
     steps:
       - uses: actions/checkout@v4
 
@@ -26,6 +44,13 @@ jobs:
       - run: npm test
 
       - run: npm run build
+
+      # Catches a schema change that was never turned into a migration, or
+      # a migration that doesn't actually apply cleanly — the same check
+      # a real deploy would run (prisma migrate deploy), against a
+      # throwaway Postgres instance.
+      - name: Verify Prisma migrations apply cleanly
+        run: npm run prisma:deploy
 
       # Build-only — catches a broken Dockerfile before merge. Doesn't
       # push anywhere; no registry is configured.

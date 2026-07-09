@@ -29,16 +29,34 @@ variable "route53_zone_id" {
   default     = ""
 }
 
-variable "backend_url" {
-  description = <<-EOT
-    escape-pod-backend's URL — that stack's `alb_dns_name` output
-    (http://..., or its alb_https_url once it has a domain), copied by
-    hand. No cross-repo Terraform remote-state data source by design
-    (per-repo infra ownership) — the backend stack must be applied
-    first, then its output fed in here. No default; this is a required
-    manual step, not an oversight.
-  EOT
+variable "ptp_base_url" {
+  description = "Protect the Pod base URL. Not secret."
   type        = string
+  default     = "https://www.protectthepod.com"
+}
+
+variable "db_instance_class" {
+  description = "RDS instance class."
+  type        = string
+  default     = "db.t4g.micro"
+}
+
+variable "db_allocated_storage" {
+  description = "RDS allocated storage, in GB."
+  type        = number
+  default     = 20
+}
+
+variable "db_name" {
+  description = "Postgres database name."
+  type        = string
+  default     = "draft_pod"
+}
+
+variable "db_username" {
+  description = "Postgres master username. Not secret by itself (the password is what's sensitive), but kept as a variable alongside it for symmetry."
+  type        = string
+  default     = "postgres"
 }
 
 variable "container_image" {
@@ -89,8 +107,20 @@ variable "discord_bot_token" {
   sensitive   = true
 }
 
-variable "backend_api_key" {
-  description = "Shared secret this service authenticates to the backend with. Must match the bot_api_key value supplied to escape-pod-backend's infra apply."
+variable "bot_api_key" {
+  description = "Shared secret protecting this service's own internal HTTP API (/organizers/*, /guilds/*, /pods/*) — nothing external calls it now that Discord interaction handlers call the same logic in-process, but it's kept as a bearer-protected debug/admin surface."
+  type        = string
+  sensitive   = true
+}
+
+variable "db_password" {
+  description = "RDS master password."
+  type        = string
+  sensitive   = true
+}
+
+variable "token_encryption_key" {
+  description = "AES-256-GCM key (32-byte hex) for encrypting PTP tokens at rest. Generate with: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\""
   type        = string
   sensitive   = true
 }

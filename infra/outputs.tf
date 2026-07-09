@@ -19,3 +19,8 @@ output "ecs_cluster_name" {
 output "ecs_service_name" {
   value = aws_ecs_service.discord_bot.name
 }
+
+output "rds_endpoint" {
+  description = "Hostname:port — not a credential, safe to output plainly."
+  value       = aws_db_instance.postgres.endpoint
+}

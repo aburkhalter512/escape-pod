@@ -1,0 +1,134 @@
+// Data model from INTEGRATIONS.md §7.3. Field names/entities mirror the doc
+// directly so the two stay easy to cross-reference.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum PostingPolicy {
+  ALLOWLIST
+  OPEN
+}
+
+enum PodRoundStatus {
+  COLLECTING
+  THRESHOLD_REACHED
+  POD_CREATED
+  CANCELLED
+  EXPIRED
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum SignupStatus {
+  IN
+  LEFT
+}
+
+// §3.1 Option B: an organizer who has linked their own PTP account.
+model Organizer {
+  discordId      String   @id @map("discord_id")
+  username       String
+  // AES-256-GCM ciphertext (see src/crypto/tokenCrypto.ts) — §8.5, never
+  // stored in plaintext.
+  encryptedToken String   @map("encrypted_token")
+  expiresAt      DateTime @map("expires_at")
+  linkedAt       DateTime @default(now()) @map("linked_at")
+
+  podRounds PodRound[]
+
+  @@map("organizers")
+}
+
+// §7.2: a guild's own admin opts their server in, independent of any
+// specific organizer.
+model GuildSubscription {
+  guildId            String        @id @map("guild_id")
+  installedByDiscordId String      @map("installed_by_discord_id")
+  broadcastChannelId String        @map("broadcast_channel_id")
+  postingPolicy      PostingPolicy @default(ALLOWLIST) @map("posting_policy")
+  installedAt        DateTime      @default(now()) @map("installed_at")
+
+  allowlist GuildOrganizerAllowlist[]
+  targets   PodRoundTarget[]
+
+  @@map("guild_subscriptions")
+}
+
+// §7.2: only consulted when the guild's policy is ALLOWLIST.
+model GuildOrganizerAllowlist {
+  guildId            String   @map("guild_id")
+  organizerDiscordId String   @map("organizer_discord_id")
+  approvedBy         String   @map("approved_by")
+  approvedAt         DateTime @default(now()) @map("approved_at")
+
+  guild GuildSubscription @relation(fields: [guildId], references: [guildId], onDelete: Cascade)
+
+  @@id([guildId, organizerDiscordId])
+  @@map("guild_organizer_allowlist")
+}
+
+// §3.3/§7.3: one RSVP round. Lives entirely outside PTP until threshold is
+// hit — PTP has no concept of a pre-commitment interest poll.
+model PodRound {
+  id                String         @id @default(uuid())
+  organizerDiscordId String        @map("organizer_discord_id")
+  setCode           String         @map("set_code")
+  threshold         Int
+  status            PodRoundStatus @default(COLLECTING)
+  // Set once POST /api/draft succeeds (§4.1.1).
+  ptpPodShareId     String?        @map("ptp_pod_share_id")
+  createdAt         DateTime       @default(now()) @map("created_at")
+
+  organizer Organizer         @relation(fields: [organizerDiscordId], references: [discordId])
+  targets   PodRoundTarget[]
+  signups   PodRoundSignup[]
+
+  @@map("pod_rounds")
+}
+
+// §7.3/§7.5: which guilds a round was fanned out to, one row per (round, guild).
+model PodRoundTarget {
+  podRoundId       String          @map("pod_round_id")
+  guildId          String          @map("guild_id")
+  channelId        String          @map("channel_id")
+  // Discord message ID for the RSVP embed posted in this guild — needed to
+  // edit the shared count across every target guild (§7.5 step 3).
+  messageId        String?         @map("message_id")
+  approvalStatus   ApprovalStatus? @map("approval_status")
+  postedAt         DateTime        @default(now()) @map("posted_at")
+
+  round PodRound          @relation(fields: [podRoundId], references: [id], onDelete: Cascade)
+  guild GuildSubscription @relation(fields: [guildId], references: [guildId])
+
+  @@id([podRoundId, guildId])
+  @@map("pod_round_targets")
+}
+
+// §7.3 key invariant: threshold counts DISTINCT discordId with status IN
+// across the WHOLE round, not per guild — a signup from one guild message
+// still satisfies the shared counter.
+model PodRoundSignup {
+  podRoundId      String       @map("pod_round_id")
+  discordId       String       @map("discord_id")
+  usernameSnapshot String      @map("username_snapshot")
+  // Which guild's button they clicked — stats only, not authoritative for
+  // identity (a user could click from any target guild's message).
+  sourceGuildId   String       @map("source_guild_id")
+  status          SignupStatus @default(IN)
+  signedUpAt      DateTime     @default(now()) @map("signed_up_at")
+
+  round PodRound @relation(fields: [podRoundId], references: [id], onDelete: Cascade)
+
+  @@id([podRoundId, discordId])
+  @@map("pod_round_signups")
+}

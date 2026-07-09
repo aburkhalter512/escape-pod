@@ -1,7 +1,6 @@
 // Unverified decode only — we don't have PTP's JWT_SECRET and shouldn't try
-// to obtain it. This is for the anti-mistake discord_id check and display
-// purposes only (INTEGRATIONS.md §8.2b). Real trust comes from the token
-// actually working against PTP's live API (§8.2d), which the backend checks.
+// to obtain it (INTEGRATIONS.md §8.2b, §8.5). Real trust comes from the
+// token actually working against PTP's live API (PtpClient.validateToken).
 export interface UnverifiedPtpTokenPayload {
   id: string
   discord_id?: string

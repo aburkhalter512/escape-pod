@@ -33,12 +33,14 @@ resource "aws_ecs_task_definition" "discord_bot" {
         { name = "PORT", value = "3000" },
         { name = "DISCORD_APPLICATION_ID", value = var.discord_application_id },
         { name = "DISCORD_PUBLIC_KEY", value = var.discord_public_key },
-        { name = "BACKEND_URL", value = var.backend_url },
+        { name = "PTP_BASE_URL", value = var.ptp_base_url },
       ]
 
       secrets = [
         { name = "DISCORD_BOT_TOKEN", valueFrom = aws_ssm_parameter.discord_bot_token.arn },
-        { name = "BACKEND_API_KEY", valueFrom = aws_ssm_parameter.backend_api_key.arn },
+        { name = "BOT_API_KEY", valueFrom = aws_ssm_parameter.bot_api_key.arn },
+        { name = "DATABASE_URL", valueFrom = aws_ssm_parameter.database_url.arn },
+        { name = "TOKEN_ENCRYPTION_KEY", valueFrom = aws_ssm_parameter.token_encryption_key.arn },
       ]
 
       logConfiguration = {

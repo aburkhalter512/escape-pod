@@ -2,7 +2,7 @@
 // `.calls` and delegates to `impl` for the return value. No argument-
 // matching or assertion magic beyond a plain array — each call site decides
 // what "correct arguments" means and returns real vs. invalid data itself
-// (see e.g. testUtils/fakeBackendClient.ts and its test overrides).
+// (see e.g. testUtils/fakePtpClient.ts and its test overrides).
 export interface Stub<Args extends unknown[], Result> {
   (...args: Args): Result
   readonly calls: Args[]
