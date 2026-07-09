@@ -26,3 +26,8 @@ jobs:
       - run: npm test
 
       - run: npm run build
+
+      # Build-only — catches a broken Dockerfile before merge. Doesn't
+      # push anywhere; no registry is configured.
+      - name: Build container image
+        run: docker build -t escape-pod:ci .

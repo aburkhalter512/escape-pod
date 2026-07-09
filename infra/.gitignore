@@ -1,0 +1,10 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+*.auto.tfvars
+*.auto.tfvars.json
+crash.log
+crash.*.log
+
+# .terraform.lock.hcl is deliberately NOT ignored — commit it for
+# reproducible provider version resolution.

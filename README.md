@@ -34,13 +34,42 @@ npm run dev
 
 The interactions endpoint URL (`POST /interactions` on wherever this is
 deployed) needs to be registered in the Discord Developer Portal under
-"Interactions Endpoint URL" for the application.
+"Interactions Endpoint URL" for the application — Discord requires a
+real, CA-signed HTTPS endpoint here (no self-signed certs, and no AWS
+default `*.elb.amazonaws.com` hostname, since ACM can't issue a cert for
+a domain this account doesn't own). See `infra/README.md` for how that
+constraint shapes the AWS setup.
+
+## Container
+
+`Dockerfile` is a two-stage build, same pattern as the backend's: the
+`build` stage installs full deps and compiles TypeScript; the `runtime`
+stage copies over only the pruned (`--omit=dev`) `node_modules` and
+`dist/`, and runs as the image's built-in non-root `node` user.
+
+```bash
+docker build -t escape-pod .
+docker run --rm -p 3000:3000 \
+  -e DISCORD_APPLICATION_ID=... -e DISCORD_PUBLIC_KEY=... -e DISCORD_BOT_TOKEN=... \
+  -e BACKEND_URL=... -e BACKEND_API_KEY=... \
+  escape-pod
+```
+
+## Infrastructure
+
+`infra/` has the OpenTofu (Terraform-compatible) configuration for
+running this on AWS — ECS Fargate, an ALB, ECR, SSM Parameter Store for
+secrets. See `infra/README.md` for the full picture, including why
+`domain_name` is currently unset (no domain registered yet, so the
+HTTPS listener/ACM cert/Route53 record don't exist until it is) and the
+apply ordering relative to `escape-pod-backend`'s own `infra/`.
 
 ## CI
 
 `.github/workflows/ci.yml` runs on every push to `main` and every PR:
-`npm ci`, typecheck, lint, test, build. No live Discord/PTP calls — same
-checks as running them locally, automated.
+`npm ci`, typecheck, lint, test, build, then a Docker build of the image
+above (build-only — no registry configured, nothing pushed). No live
+Discord/PTP calls — same checks as running them locally, automated.
 
 ## Status
 
