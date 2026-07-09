@@ -3,7 +3,7 @@
 Discord-facing edge service for the draft pod notifier. Verifies and routes
 Discord interactions (slash commands, buttons, modals) over a stateless HTTP
 endpoint, and forwards all business logic and state to the
-[backend](../backend) service.
+[backend](https://github.com/aburkhalter512/escape-pod-backend) service.
 
 Design rationale lives in [`INTEGRATIONS.md`](https://github.com/aburkhalter512/escape-pod/blob/main/INTEGRATIONS.md) —
 start with the "Summary" section at the top, then §7 (bot install & RSVP
