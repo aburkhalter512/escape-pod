@@ -1,9 +1,19 @@
-import { describe, expect, it, vi } from 'vitest'
-import { ComponentType, InteractionResponseType, TextInputStyle } from 'discord-api-types/v10'
+import { describe, expect, it } from 'vitest'
+import {
+  ComponentType,
+  InteractionResponseType,
+  TextInputStyle,
+  type RESTPatchAPIChannelMessageJSONBody,
+  type RESTPatchAPIChannelMessageResult,
+  type RESTPostAPIChannelMessageJSONBody,
+  type RESTPostAPIChannelMessageResult,
+} from 'discord-api-types/v10'
 import { extractTextInputValue, handleMessageComponent, handleModalSubmit } from './components.js'
 import { createFakeBackendClient } from '../testUtils/fakeBackendClient.js'
 import { createFakeDiscordRest } from '../testUtils/fakeDiscordRest.js'
 import { responseData } from '../testUtils/responseData.js'
+import { stub } from '../testUtils/stub.js'
+import { deepEqual } from '../testUtils/deepEqual.js'
 
 function fakeJwt(payload: Record<string, unknown>): string {
   const encode = (obj: Record<string, unknown>) => Buffer.from(JSON.stringify(obj)).toString('base64url')
@@ -87,85 +97,96 @@ describe('handleMessageComponent', () => {
     }
 
     it('starts the round, posts the RSVP message to every target, and records each message id', async () => {
-      const startPodMock = vi.fn().mockResolvedValue({
-        podRoundId: 'round-1',
-        targets: [
-          { guildId: 'g1', channelId: 'channel-1' },
-          { guildId: 'g2', channelId: 'channel-2' },
-        ],
+      const startPodMock = stub(async (params: { organizerDiscordId: string; setCode: string; threshold: number; guildIds: string[] }) => {
+        const expected = { organizerDiscordId: 'organizer-1', setCode: 'JTL', threshold: 8, guildIds: ['g1', 'g2'] }
+        if (!deepEqual(params, expected)) throw new Error(`unexpected startPod args: ${JSON.stringify(params)}`)
+        return {
+          podRoundId: 'round-1',
+          targets: [
+            { guildId: 'g1', channelId: 'channel-1' },
+            { guildId: 'g2', channelId: 'channel-2' },
+          ],
+        }
       })
-      const recordMessagePostedMock = vi.fn()
-      const post = vi.fn().mockResolvedValueOnce({ id: 'msg-1' }).mockResolvedValueOnce({ id: 'msg-2' })
+      const recordMessagePostedMock = stub(async (podRoundId: string, guildId: string, messageId: string) => {
+        const valid =
+          (guildId === 'g1' && podRoundId === 'round-1' && messageId === 'msg-1') ||
+          (guildId === 'g2' && podRoundId === 'round-1' && messageId === 'msg-2')
+        if (!valid) throw new Error(`unexpected recordMessagePosted args: ${podRoundId} ${guildId} ${messageId}`)
+      })
+      const postMessage = stub(async (channelId: string, _body: RESTPostAPIChannelMessageJSONBody) => {
+        if (channelId === 'channel-1') return { id: 'msg-1' } as RESTPostAPIChannelMessageResult
+        if (channelId === 'channel-2') return { id: 'msg-2' } as RESTPostAPIChannelMessageResult
+        throw new Error(`unexpected postMessage channelId: ${channelId}`)
+      })
 
       const response = await handleMessageComponent(
         interaction() as never,
         createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: recordMessagePostedMock }),
-        createFakeDiscordRest({ post })
+        createFakeDiscordRest({ postMessage })
       )
 
-      expect(startPodMock).toHaveBeenCalledWith({
-        organizerDiscordId: 'organizer-1',
-        setCode: 'JTL',
-        threshold: 8,
-        guildIds: ['g1', 'g2'],
-      })
-
-      expect(post).toHaveBeenCalledTimes(2)
-      expect(post).toHaveBeenCalledWith('/channels/channel-1/messages', expect.anything())
-      expect(post).toHaveBeenCalledWith('/channels/channel-2/messages', expect.anything())
-
-      expect(recordMessagePostedMock).toHaveBeenCalledWith('round-1', 'g1', 'msg-1')
-      expect(recordMessagePostedMock).toHaveBeenCalledWith('round-1', 'g2', 'msg-2')
-
+      expect(postMessage.calls).toHaveLength(2)
+      expect(recordMessagePostedMock.calls).toHaveLength(2)
       expect(responseData(response).content).toContain('2 server(s)')
       expect(responseData(response).content).not.toMatch(/failed to post/i)
     })
 
-    it('posts an initial embed showing 0 signups with I\'m in / Leave buttons, not the count directly', async () => {
-      const startPodMock = vi
-        .fn()
-        .mockResolvedValue({ podRoundId: 'round-1', targets: [{ guildId: 'g1', channelId: 'channel-1' }] })
-      const post = vi.fn().mockResolvedValue({ id: 'msg-1' })
+    it("posts an initial embed showing 0 signups with I'm in / Leave buttons, not the count directly", async () => {
+      const startPodMock = stub(async (_params: unknown) => ({
+        podRoundId: 'round-1',
+        targets: [{ guildId: 'g1', channelId: 'channel-1' }],
+      }))
+      const postMessage = stub(
+        async (_channelId: string, _body: RESTPostAPIChannelMessageJSONBody) => ({ id: 'msg-1' }) as RESTPostAPIChannelMessageResult
+      )
 
       await handleMessageComponent(
         interaction({ data: { ...interaction().data, values: ['g1'] } }) as never,
-        createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: vi.fn() }),
-        createFakeDiscordRest({ post })
+        createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: stub(async () => undefined) }),
+        createFakeDiscordRest({ postMessage })
       )
 
-      const [, postInit] = post.mock.calls[0]
-      expect(postInit.body.embeds[0].description).toContain('0/8 confirmed')
-      const buttonCustomIds = postInit.body.components[0].components.map((c: { custom_id: string }) => c.custom_id)
+      const [, postBody] = postMessage.calls[0]
+      const embeds = postBody.embeds as Array<{ description: string }>
+      expect(embeds[0].description).toContain('0/8 confirmed')
+      const components = postBody.components as Array<{ components: Array<{ custom_id: string }> }>
+      const buttonCustomIds = components[0].components.map((c) => c.custom_id)
       expect(buttonCustomIds).toEqual(['pod-signup:round-1:in', 'pod-signup:round-1:leave'])
     })
 
     it('reports a partial-failure count when one target fails to post, without dropping the others', async () => {
-      const startPodMock = vi.fn().mockResolvedValue({
+      const startPodMock = stub(async (_params: unknown) => ({
         podRoundId: 'round-1',
         targets: [
           { guildId: 'g1', channelId: 'channel-1' },
           { guildId: 'g2', channelId: 'channel-2' },
         ],
+      }))
+      const recordMessagePostedMock = stub(async (_podRoundId: string, _guildId: string, _messageId: string) => undefined)
+      const postMessage = stub(async (channelId: string, _body: RESTPostAPIChannelMessageJSONBody) => {
+        if (channelId === 'channel-1') return { id: 'msg-1' } as RESTPostAPIChannelMessageResult
+        throw new Error('Missing Access')
       })
-      const post = vi.fn().mockResolvedValueOnce({ id: 'msg-1' }).mockRejectedValueOnce(new Error('Missing Access'))
-      const recordMessagePostedMock = vi.fn()
 
       const response = await handleMessageComponent(
         interaction() as never,
         createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: recordMessagePostedMock }),
-        createFakeDiscordRest({ post })
+        createFakeDiscordRest({ postMessage })
       )
 
       // The failing guild never got recordMessagePosted called for it, but
       // the successful one still did — one bad guild shouldn't roll back
       // the rest (Promise.allSettled, not Promise.all).
-      expect(recordMessagePostedMock).toHaveBeenCalledTimes(1)
-      expect(recordMessagePostedMock).toHaveBeenCalledWith('round-1', 'g1', 'msg-1')
+      expect(recordMessagePostedMock.calls).toHaveLength(1)
+      expect(recordMessagePostedMock.calls[0]).toEqual(['round-1', 'g1', 'msg-1'])
       expect(responseData(response).content).toMatch(/1 server\(s\) failed to post/i)
     })
 
     it('rejects a guild-select submission when the organizer id cannot be determined', async () => {
-      const startPodMock = vi.fn()
+      const startPodMock = stub(async (_params: unknown) => {
+        throw new Error('startPod should not have been called')
+      })
 
       const response = await handleMessageComponent(
         interaction({ member: undefined }) as never,
@@ -173,7 +194,7 @@ describe('handleMessageComponent', () => {
         createFakeDiscordRest()
       )
 
-      expect(startPodMock).not.toHaveBeenCalled()
+      expect(startPodMock.calls).toHaveLength(0)
       expect(responseData(response).content).toMatch(/could not determine your discord user id/i)
     })
   })
@@ -204,38 +225,51 @@ describe('handleMessageComponent', () => {
     }
 
     it('records the signup and returns an UpdateMessage with the new embed', async () => {
-      const recordSignupMock = vi.fn().mockResolvedValue(signupResult())
+      const recordSignupMock = stub(async (podRoundId: string, discordId: string, username: string, sourceGuildId: string) => {
+        const valid = podRoundId === 'round-1' && discordId === 'player-1' && username === 'PlayerOne' && sourceGuildId === 'guild-1'
+        if (!valid) throw new Error(`unexpected recordSignup args: ${podRoundId} ${discordId} ${username} ${sourceGuildId}`)
+        return signupResult()
+      })
 
       const response = await handleMessageComponent(
         interaction() as never,
         createFakeBackendClient({ recordSignup: recordSignupMock }),
-        createFakeDiscordRest()
+        // signupResult()'s default targets include guild-2, which triggers a
+        // cross-guild edit fan-out (§7.5 step 3) irrelevant to this test.
+        createFakeDiscordRest({
+          editMessage: stub(async (_channelId: string, _messageId: string, _body: RESTPatchAPIChannelMessageJSONBody) => ({}) as RESTPatchAPIChannelMessageResult),
+        })
       )
 
-      expect(recordSignupMock).toHaveBeenCalledWith('round-1', 'player-1', 'PlayerOne', 'guild-1')
       expect(response.type).toBe(InteractionResponseType.UpdateMessage)
       expect(responseData(response).content).toBeUndefined() // embeds/components now, not plain content
       expect(responseData(response).components?.[0]).toBeDefined()
     })
 
-    it('edits every OTHER target guild\'s message, but not the one the click came from', async () => {
-      const recordSignupMock = vi.fn().mockResolvedValue(signupResult())
-      const patch = vi.fn()
+    it("edits every OTHER target guild's message, but not the one the click came from", async () => {
+      const recordSignupMock = stub(async (_podRoundId: string, _discordId: string, _username: string, _sourceGuildId: string) =>
+        signupResult()
+      )
+      const editMessage = stub(async (channelId: string, messageId: string, _body: RESTPatchAPIChannelMessageJSONBody) => {
+        if (channelId !== 'channel-2' || messageId !== 'msg-2') {
+          throw new Error(`unexpected editMessage args: ${channelId} ${messageId}`)
+        }
+        return { id: messageId } as RESTPatchAPIChannelMessageResult
+      })
 
       await handleMessageComponent(
         interaction() as never, // guild_id: 'guild-1'
         createFakeBackendClient({ recordSignup: recordSignupMock }),
-        createFakeDiscordRest({ patch })
+        createFakeDiscordRest({ editMessage })
       )
 
       // Only guild-2's message should be REST-edited — guild-1's is handled
       // by the UpdateMessage interaction response itself (§7.5 step 3).
-      expect(patch).toHaveBeenCalledTimes(1)
-      expect(patch).toHaveBeenCalledWith('/channels/channel-2/messages/msg-2', expect.anything())
+      expect(editMessage.calls).toHaveLength(1)
     })
 
     it('skips targets with no recorded messageId yet', async () => {
-      const recordSignupMock = vi.fn().mockResolvedValue(
+      const recordSignupMock = stub(async (_podRoundId: string, _discordId: string, _username: string, _sourceGuildId: string) =>
         signupResult({
           targets: [
             { guildId: 'guild-1', channelId: 'channel-1', messageId: 'msg-1' },
@@ -243,32 +277,38 @@ describe('handleMessageComponent', () => {
           ],
         })
       )
-      const patch = vi.fn()
+      const editMessage = stub(async (_channelId: string, _messageId: string, _body: RESTPatchAPIChannelMessageJSONBody) => {
+        throw new Error('editMessage should not have been called')
+      })
 
       await handleMessageComponent(
         interaction() as never,
         createFakeBackendClient({ recordSignup: recordSignupMock }),
-        createFakeDiscordRest({ patch })
+        createFakeDiscordRest({ editMessage })
       )
 
-      expect(patch).not.toHaveBeenCalled()
+      expect(editMessage.calls).toHaveLength(0)
     })
 
     it('one guild\'s edit failing does not throw or block the interaction response', async () => {
-      const recordSignupMock = vi.fn().mockResolvedValue(signupResult())
-      const patch = vi.fn().mockRejectedValue(new Error('Unknown Message'))
+      const recordSignupMock = stub(async (_podRoundId: string, _discordId: string, _username: string, _sourceGuildId: string) =>
+        signupResult()
+      )
+      const editMessage = stub(async (_channelId: string, _messageId: string, _body: RESTPatchAPIChannelMessageJSONBody) => {
+        throw new Error('Unknown Message')
+      })
 
       const response = await handleMessageComponent(
         interaction() as never,
         createFakeBackendClient({ recordSignup: recordSignupMock }),
-        createFakeDiscordRest({ patch })
+        createFakeDiscordRest({ editMessage })
       )
 
       expect(response.type).toBe(InteractionResponseType.UpdateMessage)
     })
 
     it('shows the pod-full embed with a join link once threshold is reached and the pod is created', async () => {
-      const recordSignupMock = vi.fn().mockResolvedValue(
+      const recordSignupMock = stub(async (_podRoundId: string, _discordId: string, _username: string, _sourceGuildId: string) =>
         signupResult({
           count: 8,
           thresholdReached: true,
@@ -280,20 +320,24 @@ describe('handleMessageComponent', () => {
       const response = await handleMessageComponent(
         interaction() as never,
         createFakeBackendClient({ recordSignup: recordSignupMock }),
-        createFakeDiscordRest()
+        // signupResult()'s default targets include guild-2, which triggers a
+        // cross-guild edit fan-out (§7.5 step 3) irrelevant to this test.
+        createFakeDiscordRest({
+          editMessage: stub(async (_channelId: string, _messageId: string, _body: RESTPatchAPIChannelMessageJSONBody) => ({}) as RESTPatchAPIChannelMessageResult),
+        })
       )
 
       const data = responseData(response)
       const buttons = (data.components?.[0] as { components: unknown[] }).components
-      expect(buttons).toEqual([
-        expect.objectContaining({ url: 'https://www.protectthepod.com/draft/share-1' }),
-      ])
+      expect(buttons).toEqual([expect.objectContaining({ url: 'https://www.protectthepod.com/draft/share-1' })])
       // §7.5 step 4: no more "I'm in"/"Leave" buttons once the pod is full.
       expect((buttons[0] as { custom_id?: string }).custom_id).toBeUndefined()
     })
 
     it('rejects a signup click when the Discord identity cannot be determined', async () => {
-      const recordSignupMock = vi.fn()
+      const recordSignupMock = stub(async (_podRoundId: string, _discordId: string, _username: string, _sourceGuildId: string) => {
+        throw new Error('recordSignup should not have been called')
+      })
 
       const response = await handleMessageComponent(
         interaction({ member: undefined }) as never,
@@ -301,7 +345,7 @@ describe('handleMessageComponent', () => {
         createFakeDiscordRest()
       )
 
-      expect(recordSignupMock).not.toHaveBeenCalled()
+      expect(recordSignupMock.calls).toHaveLength(0)
       expect(responseData(response).content).toMatch(/could not determine your discord identity/i)
     })
   })
@@ -332,7 +376,10 @@ describe('handleModalSubmit', () => {
 
   it('links the organizer on a valid, matching, unexpired token', async () => {
     const token = fakeJwt({ discord_id: 'user-1', username: 'PlayerOne', exp: FUTURE_EXP() })
-    const linkOrganizerMock = vi.fn().mockResolvedValue({ username: 'PlayerOne' })
+    const linkOrganizerMock = stub(async (discordId: string, t: string) => {
+      if (discordId !== 'user-1' || t !== token) throw new Error(`unexpected linkOrganizer args: ${discordId} ${t}`)
+      return { username: 'PlayerOne' }
+    })
     const interaction = {
       data: { custom_id: 'connect-ptp:submit', components: actionRowWithToken(token) },
       member: { user: { id: 'user-1' } },
@@ -340,7 +387,6 @@ describe('handleModalSubmit', () => {
 
     const response = await handleModalSubmit(interaction as never, createFakeBackendClient({ linkOrganizer: linkOrganizerMock }))
 
-    expect(linkOrganizerMock).toHaveBeenCalledWith('user-1', token)
     expect(responseData(response).content).toContain('Linked as **PlayerOne**')
   })
 
@@ -366,7 +412,9 @@ describe('handleModalSubmit', () => {
   })
 
   it('rejects a structurally malformed token before calling the backend', async () => {
-    const linkOrganizerMock = vi.fn()
+    const linkOrganizerMock = stub(async (_discordId: string, _t: string) => {
+      throw new Error('linkOrganizer should not have been called')
+    })
     const interaction = {
       data: { custom_id: 'connect-ptp:submit', components: actionRowWithToken('not-a-jwt') },
       member: { user: { id: 'user-1' } },
@@ -374,13 +422,15 @@ describe('handleModalSubmit', () => {
 
     const response = await handleModalSubmit(interaction as never, createFakeBackendClient({ linkOrganizer: linkOrganizerMock }))
 
-    expect(linkOrganizerMock).not.toHaveBeenCalled()
+    expect(linkOrganizerMock.calls).toHaveLength(0)
     expect(responseData(response).content).toMatch(/doesn't look like a valid token/i)
   })
 
   it('rejects a token whose embedded discord_id belongs to a different account', async () => {
     const token = fakeJwt({ discord_id: 'someone-else', username: 'Other', exp: FUTURE_EXP() })
-    const linkOrganizerMock = vi.fn()
+    const linkOrganizerMock = stub(async (_discordId: string, _t: string) => {
+      throw new Error('linkOrganizer should not have been called')
+    })
     const interaction = {
       data: { custom_id: 'connect-ptp:submit', components: actionRowWithToken(token) },
       member: { user: { id: 'user-1' } },
@@ -388,13 +438,15 @@ describe('handleModalSubmit', () => {
 
     const response = await handleModalSubmit(interaction as never, createFakeBackendClient({ linkOrganizer: linkOrganizerMock }))
 
-    expect(linkOrganizerMock).not.toHaveBeenCalled()
+    expect(linkOrganizerMock.calls).toHaveLength(0)
     expect(responseData(response).content).toMatch(/different discord account/i)
   })
 
   it('rejects an already-expired token before calling the backend', async () => {
     const token = fakeJwt({ discord_id: 'user-1', username: 'PlayerOne', exp: PAST_EXP() })
-    const linkOrganizerMock = vi.fn()
+    const linkOrganizerMock = stub(async (_discordId: string, _t: string) => {
+      throw new Error('linkOrganizer should not have been called')
+    })
     const interaction = {
       data: { custom_id: 'connect-ptp:submit', components: actionRowWithToken(token) },
       member: { user: { id: 'user-1' } },
@@ -402,13 +454,15 @@ describe('handleModalSubmit', () => {
 
     const response = await handleModalSubmit(interaction as never, createFakeBackendClient({ linkOrganizer: linkOrganizerMock }))
 
-    expect(linkOrganizerMock).not.toHaveBeenCalled()
+    expect(linkOrganizerMock.calls).toHaveLength(0)
     expect(responseData(response).content).toMatch(/already expired/i)
   })
 
   it('surfaces a friendly error when the backend rejects the token (e.g. PTP says it is invalid)', async () => {
     const token = fakeJwt({ discord_id: 'user-1', username: 'PlayerOne', exp: FUTURE_EXP() })
-    const linkOrganizerMock = vi.fn().mockRejectedValue(new Error('Backend request failed: 422'))
+    const linkOrganizerMock = stub(async (_discordId: string, _t: string) => {
+      throw new Error('Backend request failed: 422')
+    })
     const interaction = {
       data: { custom_id: 'connect-ptp:submit', components: actionRowWithToken(token) },
       member: { user: { id: 'user-1' } },
@@ -428,7 +482,10 @@ describe('handleModalSubmit', () => {
     // the live PTP validation instead. Pinning this so the behavior is a
     // visible, deliberate choice rather than something discovered later.
     const token = fakeJwt({ username: 'NoDiscordLink', exp: FUTURE_EXP() })
-    const linkOrganizerMock = vi.fn().mockResolvedValue({ username: 'NoDiscordLink' })
+    const linkOrganizerMock = stub(async (discordId: string, t: string) => {
+      if (discordId !== 'user-1' || t !== token) throw new Error(`unexpected linkOrganizer args: ${discordId} ${t}`)
+      return { username: 'NoDiscordLink' }
+    })
     const interaction = {
       data: { custom_id: 'connect-ptp:submit', components: actionRowWithToken(token) },
       member: { user: { id: 'user-1' } },
@@ -436,7 +493,6 @@ describe('handleModalSubmit', () => {
 
     const response = await handleModalSubmit(interaction as never, createFakeBackendClient({ linkOrganizer: linkOrganizerMock }))
 
-    expect(linkOrganizerMock).toHaveBeenCalledWith('user-1', token)
     expect(responseData(response).content).toContain('Linked as **NoDiscordLink**')
   })
 })

@@ -11,7 +11,6 @@ import {
 import type { DiscordRestClient } from '../discord/rest.js'
 import type { BackendClient } from '../backendClient.js'
 import { buildPodRoundMessage } from '../discord/podMessage.js'
-import { editMessage, postMessage } from '../discord/rest.js'
 import { decodeJwtPayloadUnverified } from '../util/jwt.js'
 
 export async function handleMessageComponent(
@@ -70,7 +69,7 @@ export async function handleMessageComponent(
     const postOutcomes = await Promise.allSettled(
       targets.map(async (target) => {
         const body = buildPodRoundMessage({ podRoundId, setCode, threshold, count: 0 })
-        const message = await postMessage(discordRest, target.channelId, {
+        const message = await discordRest.postMessage(target.channelId, {
           embeds: body.embeds,
           components: body.components,
         })
@@ -121,7 +120,7 @@ export async function handleMessageComponent(
       result.targets
         .filter((target) => target.guildId !== interaction.guild_id && target.messageId)
         .map((target) =>
-          editMessage(discordRest, target.channelId, target.messageId as string, {
+          discordRest.editMessage(target.channelId, target.messageId as string, {
             embeds: body.embeds,
             components: body.components,
           })

@@ -7,13 +7,51 @@ import {
   type RESTPatchAPIChannelMessageResult,
 } from 'discord-api-types/v10'
 
-// The contract postMessage/editMessage depend on — real @discordjs/rest
-// REST instances satisfy this structurally (post/patch are two of its many
-// methods), and a hand-written test stub can fully implement just these
-// two without an `as unknown as REST` cast. See testUtils/fakeDiscordRest.ts.
+// The contract the app depends on for talking to Discord — scoped to the
+// two message operations we actually perform, with real response types
+// (no `unknown`). See testUtils/fakeDiscordRest.ts.
 export interface DiscordRestClient {
+  postMessage(channelId: string, body: RESTPostAPIChannelMessageJSONBody): Promise<RESTPostAPIChannelMessageResult>
+  editMessage(
+    channelId: string,
+    messageId: string,
+    body: RESTPatchAPIChannelMessageJSONBody
+  ): Promise<RESTPatchAPIChannelMessageResult>
+}
+
+// The raw @discordjs/rest surface HttpDiscordRest wraps. A real REST
+// instance satisfies this structurally; tests can inject a plain stub
+// instead of spinning up a real REST client.
+interface RawRestClient {
   post(fullRoute: RouteLike, options?: RequestData): Promise<unknown>
   patch(fullRoute: RouteLike, options?: RequestData): Promise<unknown>
+}
+
+// The only place `unknown` gets cast away — every other consumer works
+// with DiscordRestClient's real response types directly.
+export class HttpDiscordRest implements DiscordRestClient {
+  #raw: RawRestClient
+
+  constructor(raw: RawRestClient) {
+    this.#raw = raw
+  }
+
+  async postMessage(
+    channelId: string,
+    body: RESTPostAPIChannelMessageJSONBody
+  ): Promise<RESTPostAPIChannelMessageResult> {
+    return this.#raw.post(Routes.channelMessages(channelId), { body }) as Promise<RESTPostAPIChannelMessageResult>
+  }
+
+  async editMessage(
+    channelId: string,
+    messageId: string,
+    body: RESTPatchAPIChannelMessageJSONBody
+  ): Promise<RESTPatchAPIChannelMessageResult> {
+    return this.#raw.patch(Routes.channelMessage(channelId, messageId), {
+      body,
+    }) as Promise<RESTPatchAPIChannelMessageResult>
+  }
 }
 
 // Pure REST client — no gateway connection. Used for anything the
@@ -21,24 +59,5 @@ export interface DiscordRestClient {
 // *different* guild than the one that triggered the interaction (needed for
 // the cross-guild shared-counter sync in INTEGRATIONS.md §7.5 step 3).
 export function createDiscordRest(botToken: string): DiscordRestClient {
-  return new REST({ version: '10' }).setToken(botToken)
-}
-
-export async function postMessage(
-  rest: DiscordRestClient,
-  channelId: string,
-  body: RESTPostAPIChannelMessageJSONBody
-): Promise<RESTPostAPIChannelMessageResult> {
-  return rest.post(Routes.channelMessages(channelId), { body }) as Promise<RESTPostAPIChannelMessageResult>
-}
-
-export async function editMessage(
-  rest: DiscordRestClient,
-  channelId: string,
-  messageId: string,
-  body: RESTPatchAPIChannelMessageJSONBody
-): Promise<RESTPatchAPIChannelMessageResult> {
-  return rest.patch(Routes.channelMessage(channelId, messageId), {
-    body,
-  }) as Promise<RESTPatchAPIChannelMessageResult>
+  return new HttpDiscordRest(new REST({ version: '10' }).setToken(botToken))
 }

@@ -30,8 +30,8 @@ describe('connectPtp', () => {
   it('never touches the backend — this step is entirely local', async () => {
     // §8.1: PTP has no third-party OAuth, so this step can't call PTP or
     // our backend yet — it's just instructions. Every fake method defaults
-    // to an unimplemented vi.fn(); the handler succeeding without calling
-    // any of them proves this step never touches the backend.
+    // to a stub that throws if called; the handler succeeding without
+    // calling any of them proves this step never touches the backend.
     const ctx = { interaction: {}, backend: createFakeBackendClient() } as unknown as CommandContext
     await expect(connectPtp(ctx)).resolves.toBeDefined()
   })
