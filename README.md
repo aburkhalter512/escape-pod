@@ -100,20 +100,35 @@ docker run --rm -p 3000:3000 \
 
 `infra/` has the OpenTofu (Terraform-compatible) configuration for
 running this on AWS — ECS Fargate, an ALB, ECR, RDS Postgres, SSM
-Parameter Store for secrets. See `infra/README.md` for the full picture,
-including why `domain_name` is currently unset (no domain registered yet,
-so the HTTPS listener/ACM cert/Route53 record don't exist until it is).
+Parameter Store for secrets, plus `infra/github-oidc/` (applied once,
+manually, like `infra/bootstrap/`) for the IAM role CI/CD assumes. See
+`infra/README.md` for the full picture. Live at
+`https://escape-pod.api.form-viii.com`.
 
-## CI
+## CI/CD
 
 `.github/workflows/ci.yml` runs on every push to `main` and every PR:
 `npm ci` (also runs `prisma generate` via `postinstall`), typecheck,
 lint, test, build, `npm run prisma:deploy` against a throwaway Postgres
 service container (catching a schema change that never got a migration,
 or a migration that doesn't actually apply cleanly), then a Docker build
-of the image above (build-only — no registry configured, nothing pushed).
-No live Discord/PTP calls — same checks as running them locally,
-automated.
+of the image above (build-only in this workflow — no registry
+configured here, nothing pushed).
+
+Two more workflows handle actually shipping to AWS, authenticated via
+GitHub OIDC (no stored AWS credentials — see `infra/github-oidc/`):
+
+- `deploy-app.yml` — triggered by `ci.yml` succeeding on `main`. Builds
+  and pushes the image (tagged by commit SHA, plus `latest`), runs
+  `prisma migrate deploy` against the real database as a one-off Fargate
+  task (`scripts/deploy-migration-task.sh`), then registers a new task
+  definition revision and updates the service
+  (`scripts/deploy-app-image.sh`).
+- `deploy-infra.yml` — `tofu plan` on PRs touching `infra/**` (visible in
+  the Actions log before merge), `tofu apply` on push to `main` touching
+  `infra/**`. Terraform intentionally stops managing the running image
+  after the first apply (see `infra/ecs.tf`'s `ignore_changes` comments)
+  so this and `deploy-app.yml` don't fight over the same resource.
 
 ## Status
 
