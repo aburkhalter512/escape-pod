@@ -119,10 +119,13 @@ Two more workflows handle actually shipping to AWS, authenticated via
 GitHub OIDC (no stored AWS credentials — see `infra/github-oidc/`):
 
 - `deploy-app.yml` — triggered by `ci.yml` succeeding on `main`. Builds
-  and pushes the image (tagged by commit SHA, plus `latest`), runs
-  `prisma migrate deploy` against the real database as a one-off Fargate
-  task (`scripts/deploy-migration-task.sh`), then registers a new task
-  definition revision and updates the service
+  and pushes the image (tagged by commit SHA, plus `latest`), registers
+  a new task definition revision pointing at it
+  (`scripts/register-task-definition.sh`), runs `prisma migrate deploy`
+  against the real database as a one-off Fargate task using *that exact
+  revision* (`scripts/deploy-migration-task.sh` — not the family's
+  still-active previous revision, otherwise migrations run a deploy
+  behind), then updates the service to it
   (`scripts/deploy-app-image.sh`).
 - `deploy-infra.yml` — `tofu plan` on PRs touching `infra/**` (visible in
   the Actions log before merge), `tofu apply` on push to `main` touching

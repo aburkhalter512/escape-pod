@@ -12,7 +12,7 @@ const startPodBodySchema = z.object({
   // Matches the /start-pod command's own min/max (INTEGRATIONS.md §7.4) —
   // enforced again here since nothing guarantees a Discord interaction
   // handler is the only caller of this route.
-  threshold: z.number().int().min(6).max(8),
+  threshold: z.number().int().min(2).max(8),
   guildIds: z.array(z.string().min(1)),
   // ISO datetime string, coerced to a Date — the in-process caller
   // (components.ts) already has an absolute Date from parsing a relative

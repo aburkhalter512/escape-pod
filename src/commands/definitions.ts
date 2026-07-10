@@ -57,7 +57,7 @@ export const commandDefinitions: RESTPostAPIChatInputApplicationCommandsJSONBody
         description: 'Players needed before the pod is created (default 8)',
         type: ApplicationCommandOptionType.Integer,
         required: false,
-        min_value: 6,
+        min_value: 2,
         max_value: 8,
       },
       {

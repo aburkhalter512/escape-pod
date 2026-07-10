@@ -241,7 +241,7 @@ describe('POST /pods/start', () => {
       expect(create.calls).toHaveLength(0)
     })
 
-    it.each([5, 9, 0, -1])('rejects a threshold outside the 6-8 range (%i)', async (threshold) => {
+    it.each([1, 9, 0, -1])('rejects a threshold outside the 2-8 range (%i)', async (threshold) => {
       const { app } = buildApp()
 
       const response = await app.inject({

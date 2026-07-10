@@ -44,12 +44,17 @@ jobs:
           docker push "$REGISTRY/$REPOSITORY:$SHA"
           docker push "$REGISTRY/$REPOSITORY:latest"
 
-      - name: Run database migrations
-        run: ./scripts/deploy-migration-task.sh
-
-      - name: Deploy new image
+      - name: Register new task definition revision
+        id: register
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
           REPOSITORY: escape-pod-discord-bot
           SHA: ${{ github.event.workflow_run.head_sha }}
-        run: ./scripts/deploy-app-image.sh "$REGISTRY/$REPOSITORY:$SHA"
+        run: |
+          echo "arn=$(./scripts/register-task-definition.sh "$REGISTRY/$REPOSITORY:$SHA")" >> "$GITHUB_OUTPUT"
+
+      - name: Run database migrations
+        run: ./scripts/deploy-migration-task.sh "${{ steps.register.outputs.arn }}"
+
+      - name: Deploy new image
+        run: ./scripts/deploy-app-image.sh "${{ steps.register.outputs.arn }}"
