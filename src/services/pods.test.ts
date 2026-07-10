@@ -8,13 +8,23 @@ import { createFakePtpClient } from '../testUtils/fakePtpClient.js'
 import { stub } from '../testUtils/stub.js'
 import { deepEqual } from '../testUtils/deepEqual.js'
 import { NotFoundError, ForbiddenError } from './errors.js'
-import { recordSignup, cancelPod, cancelActiveRound, recordTargetMessage, type PodServiceDeps } from './pods.js'
+import {
+  recordSignup,
+  cancelPod,
+  cancelActiveRound,
+  recordTargetMessage,
+  expireOverdueRounds,
+  startPod,
+  type PodServiceDeps,
+} from './pods.js'
 
 const TOKEN_KEY = '00'.repeat(32)
 
 type PodRoundRow = Awaited<ReturnType<AppPrismaClient['podRound']['create']>>
+type PodRoundCreateArgs = Parameters<AppPrismaClient['podRound']['create']>[0]
 type PodRoundUpdateArgs = Parameters<AppPrismaClient['podRound']['update']>[0]
 type PodRoundUpdateManyArgs = Parameters<AppPrismaClient['podRound']['updateMany']>[0]
+type PodRoundFindManyArgs = Parameters<AppPrismaClient['podRound']['findMany']>[0]
 type PodRoundWithOrganizer = Prisma.PodRoundGetPayload<{ include: { organizer: true } }>
 type PodRoundSignupUpsertArgs = Parameters<AppPrismaClient['podRoundSignup']['upsert']>[0]
 type PodRoundSignupRow = Awaited<ReturnType<AppPrismaClient['podRoundSignup']['upsert']>>
@@ -26,6 +36,7 @@ function fakePodRoundRow(overrides: Partial<PodRoundRow> = {}): PodRoundRow {
     setCode: 'JTL',
     threshold: 8,
     status: 'COLLECTING',
+    scheduledFor: null,
     ptpPodShareId: null,
     createdAt: new Date(),
     ...overrides,
@@ -249,5 +260,84 @@ describe('cancelActiveRound', () => {
         { channelId: 'channel-2', messageId: null },
       ],
     })
+  })
+})
+
+describe('startPod', () => {
+  it('stores scheduledFor on the created round when provided', async () => {
+    const create = stub(async (args: PodRoundCreateArgs) => {
+      expect(args.data.scheduledFor).toEqual(new Date('2026-01-01T12:00:00Z'))
+      return fakePodRoundRow()
+    })
+    const findMany = stub(async (_args: unknown) => [])
+    const deps = buildDeps({ podRound: { create }, guildSubscription: { findMany } })
+
+    await startPod(deps, {
+      organizerDiscordId: 'organizer-1',
+      setCode: 'JTL',
+      threshold: 8,
+      guildIds: [],
+      scheduledFor: new Date('2026-01-01T12:00:00Z'),
+    })
+
+    expect(create.calls).toHaveLength(1)
+  })
+})
+
+describe('expireOverdueRounds', () => {
+  it('queries for COLLECTING rounds past their deadline', async () => {
+    const now = new Date('2026-01-01T12:00:00Z')
+    const findManyRounds = stub(async (args: PodRoundFindManyArgs) => {
+      const where = args?.where as { status?: unknown; scheduledFor?: { lte?: Date } } | undefined
+      expect(where?.status).toBe('COLLECTING')
+      expect(where?.scheduledFor?.lte?.getTime()).toBeGreaterThanOrEqual(now.getTime())
+      return []
+    })
+    const deps = buildDeps({ podRound: { findMany: findManyRounds } })
+
+    await expireOverdueRounds(deps)
+
+    expect(findManyRounds.calls).toHaveLength(1)
+  })
+
+  it('claims and expires each overdue round, returning its setCode + targets', async () => {
+    const findManyRounds = stub(async () => [fakePodRoundRow({ id: 'round-1', setCode: 'JTL' })])
+    const updateMany = stub(async (args: PodRoundUpdateManyArgs) => {
+      const expected: PodRoundUpdateManyArgs = { where: { id: 'round-1', status: 'COLLECTING' }, data: { status: 'EXPIRED' } }
+      if (!deepEqual(args, expected)) throw new Error(`unexpected updateMany args: ${JSON.stringify(args)}`)
+      return { count: 1 }
+    })
+    const findManyTargets = stub(async () => [
+      { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
+    ])
+    const deps = buildDeps({ podRound: { findMany: findManyRounds, updateMany }, podRoundTarget: { findMany: findManyTargets } })
+
+    const result = await expireOverdueRounds(deps)
+
+    expect(result).toEqual([
+      { podRoundId: 'round-1', setCode: 'JTL', targets: [{ channelId: 'channel-1', messageId: 'msg-1' }] },
+    ])
+  })
+
+  it('skips a round that another concurrent sweep (or a racing signup) already claimed', async () => {
+    const findManyRounds = stub(async () => [fakePodRoundRow({ id: 'round-1' })])
+    const updateMany = stub(async () => ({ count: 0 }))
+    const findManyTargets = stub(async () => {
+      throw new Error('podRoundTarget.findMany should not have been called for an unclaimed round')
+    })
+    const deps = buildDeps({ podRound: { findMany: findManyRounds, updateMany }, podRoundTarget: { findMany: findManyTargets } })
+
+    const result = await expireOverdueRounds(deps)
+
+    expect(result).toEqual([])
+  })
+
+  it('returns an empty array when nothing is overdue', async () => {
+    const findManyRounds = stub(async () => [])
+    const deps = buildDeps({ podRound: { findMany: findManyRounds } })
+
+    const result = await expireOverdueRounds(deps)
+
+    expect(result).toEqual([])
   })
 })

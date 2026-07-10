@@ -6,14 +6,22 @@ import {
 } from 'discord-api-types/v10'
 import { ephemeral, getOption } from './helpers.js'
 import type { CommandHandler } from './types.js'
+import { parseDurationMs } from '../util/duration.js'
 
 const DEFAULT_THRESHOLD = 8
+
+// Policy (what's a *sensible* deadline for this app), not what's
+// syntactically a duration — see util/duration.ts. Under 5 minutes isn't
+// enough time for anyone to realistically see and click; over 30 days is
+// almost certainly a typo.
+const MIN_DEADLINE_MS = 5 * 60_000
+const MAX_DEADLINE_MS = 30 * 24 * 60 * 60_000
 
 // INTEGRATIONS.md §7.4/§7.5 step 1 — presents the organizer's eligible
 // guilds (open-policy + allow-listed) as a select menu. The actual fan-out
 // happens on the select's MESSAGE_COMPONENT submit (see components.ts);
-// set/threshold are packed into custom_id since interactions are stateless
-// per-request (§7.4 scale note: 25-option cap on select menus).
+// set/threshold/deadline are packed into custom_id since interactions are
+// stateless per-request (§7.4 scale note: 25-option cap on select menus).
 export const startPod: CommandHandler = async ({ interaction, backend, discordRest }) => {
   const organizerId = interaction.member?.user.id ?? interaction.user?.id
   if (!organizerId) {
@@ -29,6 +37,22 @@ export const startPod: CommandHandler = async ({ interaction, backend, discordRe
     thresholdOption?.type === ApplicationCommandOptionType.Integer
       ? thresholdOption.value
       : DEFAULT_THRESHOLD
+
+  const deadlineOption = getOption(interaction, 'deadline')
+  let deadlineEpochSeconds: number | undefined
+  if (deadlineOption?.type === ApplicationCommandOptionType.String) {
+    const durationMs = parseDurationMs(deadlineOption.value)
+    if (durationMs === null) {
+      return ephemeral('Couldn\'t understand that deadline. Use a duration like `2h`, `90m`, or `1d`.')
+    }
+    if (durationMs < MIN_DEADLINE_MS) {
+      return ephemeral('Deadline must be at least 5 minutes out.')
+    }
+    if (durationMs > MAX_DEADLINE_MS) {
+      return ephemeral('Deadline can\'t be more than 30 days out.')
+    }
+    deadlineEpochSeconds = Math.floor((Date.now() + durationMs) / 1000)
+  }
 
   const eligibleGuilds = await backend.listEligibleGuilds(organizerId)
   if (eligibleGuilds.length === 0) {
@@ -54,18 +78,20 @@ export const startPod: CommandHandler = async ({ interaction, backend, discordRe
     }
   })
 
+  const deadlineNote = deadlineEpochSeconds ? `, deadline <t:${deadlineEpochSeconds}:R>` : ''
+
   return {
     type: InteractionResponseType.ChannelMessageWithSource,
     data: {
       flags: MessageFlags.Ephemeral,
-      content: `Pick which server(s) to post this ${setOption.value} round (threshold ${threshold}) into:`,
+      content: `Pick which server(s) to post this ${setOption.value} round (threshold ${threshold}${deadlineNote}) into:`,
       components: [
         {
           type: ComponentType.ActionRow,
           components: [
             {
               type: ComponentType.StringSelect,
-              custom_id: `start-pod:select-guilds:${setOption.value}:${threshold}`,
+              custom_id: `start-pod:select-guilds:${setOption.value}:${threshold}:${deadlineEpochSeconds ?? ''}`,
               min_values: 1,
               max_values: options.length,
               options,

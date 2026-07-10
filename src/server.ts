@@ -12,6 +12,7 @@ import { registerOrganizerRoutes } from './routes/organizers.js'
 import { registerGuildRoutes } from './routes/guilds.js'
 import { registerPodRoutes } from './routes/pods.js'
 import { ephemeral } from './commands/helpers.js'
+import { expireOverduePodRounds } from './jobs/expirePodRounds.js'
 
 // All required config up front, fail-fast at boot — a missing var is a
 // clear crash-loop with a log line, not a silent runtime failure. This
@@ -103,6 +104,20 @@ await app.register(async (instance) => {
   registerGuildRoutes(instance, { prisma })
   registerPodRoutes(instance, backendDeps)
 })
+
+// Periodic sweep for /start-pod deadlines (see util/duration.ts,
+// jobs/expirePodRounds.ts) — in-process rather than a separate scheduled
+// AWS resource, since it needs no state beyond what's already in Postgres
+// and reuses the same atomic-claim pattern already proven safe under
+// concurrent execution (tasks/001). A 1-minute interval bounds worst-case
+// lateness without being noisy; errors are caught and logged rather than
+// crashing the sweep loop or the process.
+const SWEEP_INTERVAL_MS = 60_000
+setInterval(() => {
+  expireOverduePodRounds(backendDeps, discordRest).catch((err) => {
+    app.log.error({ err }, 'pod-round expiration sweep failed')
+  })
+}, SWEEP_INTERVAL_MS)
 
 const port = Number(process.env.PORT ?? 3000)
 app

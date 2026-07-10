@@ -109,8 +109,15 @@ describe('handleMessageComponent', () => {
     }
 
     it('starts the round, posts the RSVP message to every target, and records each message id', async () => {
-      const startPodMock = stub(async (params: { organizerDiscordId: string; setCode: string; threshold: number; guildIds: string[] }) => {
-        const expected = { organizerDiscordId: 'organizer-1', setCode: 'JTL', threshold: 8, guildIds: ['g1', 'g2'] }
+      const startPodMock = stub(
+        async (params: { organizerDiscordId: string; setCode: string; threshold: number; guildIds: string[]; scheduledFor?: Date }) => {
+        const expected = {
+          organizerDiscordId: 'organizer-1',
+          setCode: 'JTL',
+          threshold: 8,
+          guildIds: ['g1', 'g2'],
+          scheduledFor: undefined,
+        }
         if (!deepEqual(params, expected)) throw new Error(`unexpected startPod args: ${JSON.stringify(params)}`)
         return {
           podRoundId: 'round-1',
@@ -207,6 +214,58 @@ describe('handleMessageComponent', () => {
       )
 
       expect(responseData(response).content).toMatch(/could not determine your discord user id/i)
+    })
+
+    it('parses the deadline segment into scheduledFor and threads it through to startPod and the posted message', async () => {
+      const deadlineEpoch = Math.floor(Date.now() / 1000) + 7200
+      const deadlineInteraction = fakeMessageComponentInteraction({
+        data: {
+          custom_id: `start-pod:select-guilds:JTL:8:${deadlineEpoch}`,
+          component_type: ComponentType.StringSelect,
+          values: ['g1'],
+        },
+        member: fakeMember({ user: fakeUser({ id: 'organizer-1' }) }),
+      })
+      const startPodMock = stub(async (params: { scheduledFor?: Date }) => {
+        expect(params.scheduledFor).toEqual(new Date(deadlineEpoch * 1000))
+        return { podRoundId: 'round-1', targets: [{ guildId: 'g1', channelId: 'channel-1' }] }
+      })
+      const postMessage = stub(
+        async (_channelId: string, body: RESTPostAPIChannelMessageJSONBody) => {
+          const embeds = body.embeds as Array<{ description: string }>
+          expect(embeds[0].description).toContain(`<t:${deadlineEpoch}:R>`)
+          return { id: 'msg-1' } as RESTPostAPIChannelMessageResult
+        }
+      )
+
+      await handleMessageComponent(
+        deadlineInteraction,
+        createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: stub(async () => undefined) }),
+        createFakeDiscordRest({ postMessage })
+      )
+
+      expect(postMessage.calls).toHaveLength(1)
+    })
+
+    it('treats a missing deadline segment (custom_id ending in a bare colon) the same as no deadline at all', async () => {
+      const noDeadlineInteraction = fakeMessageComponentInteraction({
+        data: {
+          custom_id: 'start-pod:select-guilds:JTL:8:',
+          component_type: ComponentType.StringSelect,
+          values: ['g1'],
+        },
+        member: fakeMember({ user: fakeUser({ id: 'organizer-1' }) }),
+      })
+      const startPodMock = stub(async (params: { scheduledFor?: Date }) => {
+        expect(params.scheduledFor).toBeUndefined()
+        return { podRoundId: 'round-1', targets: [{ guildId: 'g1', channelId: 'channel-1' }] }
+      })
+
+      await handleMessageComponent(
+        noDeadlineInteraction,
+        createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: stub(async () => undefined) }),
+        createFakeDiscordRest({ postMessage: stub(async () => ({ id: 'msg-1' }) as RESTPostAPIChannelMessageResult) })
+      )
     })
   })
 

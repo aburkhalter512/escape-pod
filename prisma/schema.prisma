@@ -85,6 +85,12 @@ model PodRound {
   setCode           String         @map("set_code")
   threshold         Int
   status            PodRoundStatus @default(COLLECTING)
+  // Optional deadline — if still COLLECTING once this passes, the
+  // periodic sweep (src/jobs/expirePodRounds.ts) transitions it to
+  // EXPIRED. Absolute timestamp, computed from a relative duration
+  // ("2h", "1d") at /start-pod time — see src/util/duration.ts for why
+  // relative input, not absolute.
+  scheduledFor      DateTime?      @map("scheduled_for")
   // Set once POST /api/draft succeeds (§4.1.1).
   ptpPodShareId     String?        @map("ptp_pod_share_id")
   createdAt         DateTime       @default(now()) @map("created_at")

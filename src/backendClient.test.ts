@@ -80,6 +80,7 @@ describe('LocalBackendClient', () => {
       setCode: 'JTL',
       threshold: 8,
       status: 'COLLECTING' as const,
+      scheduledFor: null,
       ptpPodShareId: null,
       createdAt: new Date(),
     }))
@@ -106,6 +107,7 @@ describe('LocalBackendClient', () => {
         setCode: 'JTL',
         threshold: 8,
         status: 'COLLECTING' as const,
+        scheduledFor: null,
         ptpPodShareId: null,
         createdAt: new Date(),
       }) as never

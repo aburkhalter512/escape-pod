@@ -9,6 +9,7 @@ import {
 const COLLECTING_COLOR = 0x5865f2 // Discord blurple
 const POD_FULL_COLOR = 0x57f287 // green
 const CANCELLED_COLOR = 0xed4245 // Discord red
+const EXPIRED_COLOR = 0xfaa61a // Discord orange — distinct from CANCELLED
 
 export interface PodRoundMessageState {
   podRoundId: string
@@ -17,6 +18,10 @@ export interface PodRoundMessageState {
   count: number
   /** Present once the round has created its PTP pod (§7.5 step 4). */
   shareUrl?: string
+  /** If present, rendered via Discord's own <t:epoch:R> timestamp markup
+   * (auto-localized per viewer) — see util/duration.ts for why the
+   * deadline itself is collected as a relative duration, not this. */
+  scheduledFor?: Date
 }
 
 export interface PodRoundMessageBody {
@@ -54,11 +59,15 @@ export function buildPodRoundMessage(state: PodRoundMessageState): PodRoundMessa
     }
   }
 
+  const deadlineNote = state.scheduledFor
+    ? ` Cancels automatically <t:${Math.floor(state.scheduledFor.getTime() / 1000)}:R> if not full.`
+    : ''
+
   return {
     embeds: [
       {
         title: `${state.setCode} Draft Pod`,
-        description: `${state.count}/${state.threshold} confirmed.`,
+        description: `${state.count}/${state.threshold} confirmed.${deadlineNote}`,
         color: COLLECTING_COLOR,
       },
     ],
@@ -96,6 +105,24 @@ export function buildCancelledPodMessage(setCode: string): PodRoundMessageBody {
         title: `${setCode} Draft Pod — Cancelled`,
         description: 'The organizer cancelled this round.',
         color: CANCELLED_COLOR,
+      },
+    ],
+    components: [],
+  }
+}
+
+// What every target guild's RSVP message gets edited to when the
+// periodic sweep (jobs/expirePodRounds.ts) auto-expires a round whose
+// deadline passed without reaching threshold. Same no-buttons shape as
+// buildCancelledPodMessage, but visually and textually distinct — this
+// wasn't the organizer giving up, it's just running out the clock.
+export function buildExpiredPodMessage(setCode: string): PodRoundMessageBody {
+  return {
+    embeds: [
+      {
+        title: `${setCode} Draft Pod — Expired`,
+        description: 'Not enough players joined before the deadline.',
+        color: EXPIRED_COLOR,
       },
     ],
     components: [],

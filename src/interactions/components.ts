@@ -46,8 +46,12 @@ export async function handleMessageComponent(
   }
 
   if (customId.startsWith('start-pod:select-guilds:') && interaction.data.component_type === ComponentType.StringSelect) {
-    const [, , setCode, thresholdStr] = customId.split(':')
+    const [, , setCode, thresholdStr, deadlineStr] = customId.split(':')
     const threshold = Number.parseInt(thresholdStr, 10)
+    // Empty segment (no deadline was set) parses to NaN — normalize that
+    // to undefined rather than threading a NaN Date through to Prisma.
+    const deadlineEpochSeconds = deadlineStr ? Number.parseInt(deadlineStr, 10) : NaN
+    const scheduledFor = Number.isNaN(deadlineEpochSeconds) ? undefined : new Date(deadlineEpochSeconds * 1000)
     const organizerId = interaction.member?.user.id ?? interaction.user?.id
     const guildIds = interaction.data.values ?? []
 
@@ -64,11 +68,12 @@ export async function handleMessageComponent(
       setCode,
       threshold,
       guildIds,
+      scheduledFor,
     })
 
     const postOutcomes = await Promise.allSettled(
       targets.map(async (target) => {
-        const body = buildPodRoundMessage({ podRoundId, setCode, threshold, count: 0 })
+        const body = buildPodRoundMessage({ podRoundId, setCode, threshold, count: 0, scheduledFor })
         const message = await discordRest.postMessage(target.channelId, {
           embeds: body.embeds,
           components: body.components,

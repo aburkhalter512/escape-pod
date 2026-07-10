@@ -32,6 +32,7 @@ export interface BackendClient {
     setCode: string
     threshold: number
     guildIds: string[]
+    scheduledFor?: Date
   }): Promise<{ podRoundId: string; targets: Array<{ guildId: string; channelId: string }> }>
   recordMessagePosted(podRoundId: string, guildId: string, messageId: string): Promise<void>
   recordSignup(
@@ -96,6 +97,7 @@ export class LocalBackendClient implements BackendClient {
     setCode: string
     threshold: number
     guildIds: string[]
+    scheduledFor?: Date
   }): Promise<{ podRoundId: string; targets: Array<{ guildId: string; channelId: string }> }> {
     return podsService.startPod(this.deps, params)
   }

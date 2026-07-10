@@ -38,6 +38,10 @@ export interface AppPrismaClient {
     // §7.5 step 5). No include usage anywhere it's called, so this one
     // stays a plain fixed-shape Method unlike findUnique above.
     findFirst: Method<PrismaClient['podRound']['findFirst']>
+    // Finds all overdue-but-still-COLLECTING rounds for the expiration
+    // sweep (jobs/expirePodRounds.ts) — the only multi-row podRound query
+    // in the app, hence the only one needing findMany.
+    findMany: Method<PrismaClient['podRound']['findMany']>
     update: Method<PrismaClient['podRound']['update']>
     // Used as an atomic compare-and-swap (WHERE status: 'COLLECTING') to
     // claim the right to create the PTP pod — see tasks/001. A plain

@@ -35,6 +35,7 @@ export function createFakePrismaClient(overrides: FakePrismaOverrides = {}): App
       create: unimplemented('podRound.create'),
       findUnique: unimplemented('podRound.findUnique'),
       findFirst: unimplemented('podRound.findFirst'),
+      findMany: unimplemented('podRound.findMany'),
       update: unimplemented('podRound.update'),
       updateMany: unimplemented('podRound.updateMany'),
       ...overrides.podRound,

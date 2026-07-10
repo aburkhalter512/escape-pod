@@ -58,7 +58,7 @@ describe('startPod', () => {
     const response = await startPod(ctx)
 
     const select = selectComponent(response)
-    expect(select.custom_id).toBe('start-pod:select-guilds:JTL:7')
+    expect(select.custom_id).toBe('start-pod:select-guilds:JTL:7:')
     expect(select.options).toEqual([
       { label: 'Alpha', value: 'g1' },
       { label: 'Beta', value: 'g2' },
@@ -97,7 +97,7 @@ describe('startPod', () => {
 
     const response = await startPod(ctx)
 
-    expect(selectComponent(response).custom_id).toBe('start-pod:select-guilds:JTL:8')
+    expect(selectComponent(response).custom_id).toBe('start-pod:select-guilds:JTL:8:')
     expect(responseData(response).content).toContain('threshold 8')
   })
 
@@ -118,7 +118,7 @@ describe('startPod', () => {
 
     const response = await startPod(ctx)
 
-    expect(selectComponent(response).custom_id).toBe('start-pod:select-guilds:JTL:8')
+    expect(selectComponent(response).custom_id).toBe('start-pod:select-guilds:JTL:8:')
   })
 
   it('rejects when neither member nor user is present on the interaction', async () => {
@@ -185,5 +185,100 @@ describe('startPod', () => {
     expect(select.options).toHaveLength(25)
     expect(select.max_values).toBe(25)
     expect(getGuild.calls).toHaveLength(25) // never looked up guilds 25-29, which wouldn't fit anyway
+  })
+
+  describe('deadline option', () => {
+    it('packs a valid deadline as an absolute epoch-seconds timestamp into the custom_id', async () => {
+      const listEligibleGuildsMock = stub(async (_organizerDiscordId: string) => [{ guildId: 'g1' }])
+      const ctx: CommandContext = {
+        interaction: interaction({
+          options: [
+            { name: 'set', type: ApplicationCommandOptionType.String, value: 'JTL' },
+            { name: 'deadline', type: ApplicationCommandOptionType.String, value: '2h' },
+          ],
+        }),
+        backend: createFakeBackendClient({ listEligibleGuilds: listEligibleGuildsMock }),
+        discordRest: createFakeDiscordRest({ getGuild: fakeGetGuild({ g1: 'Alpha' }) }),
+      }
+
+      const before = Math.floor((Date.now() + 2 * 60 * 60_000) / 1000)
+      const response = await startPod(ctx)
+      const after = Math.floor((Date.now() + 2 * 60 * 60_000) / 1000)
+
+      const [, , , , deadlineStr] = selectComponent(response).custom_id.split(':')
+      const deadline = Number.parseInt(deadlineStr, 10)
+      expect(deadline).toBeGreaterThanOrEqual(before)
+      expect(deadline).toBeLessThanOrEqual(after)
+      expect(responseData(response).content).toContain(`<t:${deadline}:R>`)
+    })
+
+    it('rejects an unparseable deadline before ever calling the backend', async () => {
+      const listEligibleGuildsMock = stub(async (_organizerDiscordId: string) => {
+        throw new Error('listEligibleGuilds should not have been called')
+      })
+      const ctx: CommandContext = {
+        interaction: interaction({
+          options: [
+            { name: 'set', type: ApplicationCommandOptionType.String, value: 'JTL' },
+            { name: 'deadline', type: ApplicationCommandOptionType.String, value: 'tomorrow' },
+          ],
+        }),
+        backend: createFakeBackendClient({ listEligibleGuilds: listEligibleGuildsMock }),
+        discordRest: createFakeDiscordRest(),
+      }
+
+      const response = await startPod(ctx)
+
+      expect(responseData(response).content).toMatch(/couldn't understand that deadline/i)
+    })
+
+    it('rejects a deadline under the 5-minute minimum', async () => {
+      const ctx: CommandContext = {
+        interaction: interaction({
+          options: [
+            { name: 'set', type: ApplicationCommandOptionType.String, value: 'JTL' },
+            { name: 'deadline', type: ApplicationCommandOptionType.String, value: '4m' },
+          ],
+        }),
+        backend: createFakeBackendClient(),
+        discordRest: createFakeDiscordRest(),
+      }
+
+      const response = await startPod(ctx)
+
+      expect(responseData(response).content).toMatch(/at least 5 minutes/i)
+    })
+
+    it('rejects a deadline over the 30-day maximum', async () => {
+      const ctx: CommandContext = {
+        interaction: interaction({
+          options: [
+            { name: 'set', type: ApplicationCommandOptionType.String, value: 'JTL' },
+            { name: 'deadline', type: ApplicationCommandOptionType.String, value: '31d' },
+          ],
+        }),
+        backend: createFakeBackendClient(),
+        discordRest: createFakeDiscordRest(),
+      }
+
+      const response = await startPod(ctx)
+
+      expect(responseData(response).content).toMatch(/can't be more than 30 days/i)
+    })
+
+    it('omits the deadline entirely when not provided (no trailing content, empty custom_id segment)', async () => {
+      const listEligibleGuildsMock = stub(async (_organizerDiscordId: string) => [{ guildId: 'g1' }])
+      const ctx: CommandContext = {
+        interaction: interaction(),
+        backend: createFakeBackendClient({ listEligibleGuilds: listEligibleGuildsMock }),
+        discordRest: createFakeDiscordRest({ getGuild: fakeGetGuild({ g1: 'Alpha' }) }),
+      }
+
+      const response = await startPod(ctx)
+
+      expect(selectComponent(response).custom_id.split(':')).toHaveLength(5)
+      expect(selectComponent(response).custom_id.endsWith(':')).toBe(true)
+      expect(responseData(response).content).not.toContain('deadline')
+    })
   })
 })

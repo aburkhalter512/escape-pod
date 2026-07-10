@@ -15,6 +15,11 @@ export interface StartPodParams {
   setCode: string
   threshold: number
   guildIds: string[]
+  // Absolute deadline — if still COLLECTING once this passes, the
+  // periodic sweep (jobs/expirePodRounds.ts) auto-expires the round. See
+  // util/duration.ts for why callers compute this from a relative
+  // duration rather than taking an absolute time directly from the user.
+  scheduledFor?: Date
 }
 
 export interface StartPodResult {
@@ -28,7 +33,7 @@ export interface StartPodResult {
 // the interaction handlers' job (via discordRest), using the `targets`
 // this returns.
 export async function startPod(deps: PodServiceDeps, params: StartPodParams): Promise<StartPodResult> {
-  const { organizerDiscordId, setCode, threshold, guildIds } = params
+  const { organizerDiscordId, setCode, threshold, guildIds, scheduledFor } = params
 
   const subscriptions = await deps.prisma.guildSubscription.findMany({
     where: { guildId: { in: guildIds } },
@@ -46,6 +51,7 @@ export async function startPod(deps: PodServiceDeps, params: StartPodParams): Pr
       organizerDiscordId,
       setCode,
       threshold,
+      scheduledFor,
       targets: {
         create: resolvedTargets.map((t) => ({ guildId: t.guildId, channelId: t.channelId })),
       },
@@ -257,4 +263,44 @@ export async function cancelActiveRound(
     setCode: round.setCode,
     targets: targetRows.map((t) => ({ channelId: t.channelId, messageId: t.messageId })),
   }
+}
+
+export interface ExpiredRoundInfo {
+  podRoundId: string
+  setCode: string
+  targets: Array<{ channelId: string; messageId: string | null }>
+}
+
+// Runs on a periodic sweep (jobs/expirePodRounds.ts), not on any user
+// action — finds every round still COLLECTING past its deadline and
+// expires it. Claims each candidate individually via the same
+// WHERE-guarded updateMany compare-and-swap recordSignup already uses for
+// the threshold-reached race (tasks/001): `claim.count === 1` means this
+// call won that specific round, so it's safe to call from more than one
+// concurrent sweep, and safe even if a signup is racing the same round
+// toward THRESHOLD_REACHED at the same moment — whichever conditional
+// update lands first wins, the other sees status no longer COLLECTING
+// and no-ops.
+export async function expireOverdueRounds(deps: PodServiceDeps): Promise<ExpiredRoundInfo[]> {
+  const candidates = await deps.prisma.podRound.findMany({
+    where: { status: 'COLLECTING', scheduledFor: { lte: new Date() } },
+  })
+
+  const expired: ExpiredRoundInfo[] = []
+  for (const round of candidates) {
+    const claim = await deps.prisma.podRound.updateMany({
+      where: { id: round.id, status: 'COLLECTING' },
+      data: { status: 'EXPIRED' },
+    })
+    if (claim.count !== 1) continue
+
+    const targetRows = await deps.prisma.podRoundTarget.findMany({ where: { podRoundId: round.id } })
+    expired.push({
+      podRoundId: round.id,
+      setCode: round.setCode,
+      targets: targetRows.map((t) => ({ channelId: t.channelId, messageId: t.messageId })),
+    })
+  }
+
+  return expired
 }

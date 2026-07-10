@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ButtonStyle, ComponentType } from 'discord-api-types/v10'
-import { buildCancelledPodMessage, buildPodRoundMessage } from './podMessage.js'
+import { buildCancelledPodMessage, buildExpiredPodMessage, buildPodRoundMessage } from './podMessage.js'
 
 describe('buildPodRoundMessage', () => {
   it('shows the running count and signup buttons while still collecting', () => {
@@ -67,6 +67,33 @@ describe('buildPodRoundMessage', () => {
       .filter(Boolean)
     expect(customIds).toHaveLength(0)
   })
+
+  it('mentions no deadline when scheduledFor is absent', () => {
+    const body = buildPodRoundMessage({ podRoundId: 'round-1', setCode: 'JTL', threshold: 8, count: 5 })
+
+    expect(body.embeds[0].description).not.toContain('Cancels automatically')
+  })
+
+  it('appends a Discord timestamp countdown when scheduledFor is present', () => {
+    const scheduledFor = new Date('2026-01-01T12:00:00Z')
+    const body = buildPodRoundMessage({ podRoundId: 'round-1', setCode: 'JTL', threshold: 8, count: 5, scheduledFor })
+
+    expect(body.embeds[0].description).toContain('Cancels automatically')
+    expect(body.embeds[0].description).toContain(`<t:${Math.floor(scheduledFor.getTime() / 1000)}:R>`)
+  })
+
+  it('omits the deadline note once the pod is full, even if scheduledFor was set', () => {
+    const body = buildPodRoundMessage({
+      podRoundId: 'round-1',
+      setCode: 'JTL',
+      threshold: 8,
+      count: 8,
+      shareUrl: 'https://www.protectthepod.com/draft/share-1',
+      scheduledFor: new Date('2026-01-01T12:00:00Z'),
+    })
+
+    expect(body.embeds[0].description).not.toContain('Cancels automatically')
+  })
 })
 
 describe('buildCancelledPodMessage', () => {
@@ -76,5 +103,23 @@ describe('buildCancelledPodMessage', () => {
     expect(body.embeds[0].title).toContain('Cancelled')
     expect(body.embeds[0].title).toContain('JTL')
     expect(body.components).toHaveLength(0)
+  })
+})
+
+describe('buildExpiredPodMessage', () => {
+  it('shows an expired title, distinct copy from cancelled, and no buttons', () => {
+    const body = buildExpiredPodMessage('JTL')
+
+    expect(body.embeds[0].title).toContain('Expired')
+    expect(body.embeds[0].title).toContain('JTL')
+    expect(body.embeds[0].description).toMatch(/not enough players/i)
+    expect(body.components).toHaveLength(0)
+  })
+
+  it('uses a different color than the cancelled message', () => {
+    const expired = buildExpiredPodMessage('JTL')
+    const cancelled = buildCancelledPodMessage('JTL')
+
+    expect(expired.embeds[0].color).not.toBe(cancelled.embeds[0].color)
   })
 })

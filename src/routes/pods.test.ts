@@ -35,6 +35,7 @@ function fakePodRoundRow(overrides: Partial<PodRoundRow> = {}): PodRoundRow {
     setCode: 'JTL',
     threshold: 8,
     status: 'COLLECTING',
+    scheduledFor: null,
     ptpPodShareId: null,
     createdAt: new Date(),
     ...overrides,
@@ -134,6 +135,7 @@ describe('POST /pods/start', () => {
           organizerDiscordId: 'organizer-1',
           setCode: 'JTL',
           threshold: 8,
+          scheduledFor: undefined,
           targets: {
             create: [
               { guildId: 'g1', channelId: 'channel-1' },
@@ -194,6 +196,29 @@ describe('POST /pods/start', () => {
 
     expect(response.statusCode).toBe(200)
     expect(response.json().targets).toEqual([])
+  })
+
+  it('coerces an ISO scheduledFor string into a Date on the create call', async () => {
+    const create = stub(async (args: PodRoundCreateArgs) => {
+      expect(args.data.scheduledFor).toEqual(new Date('2026-01-01T12:00:00.000Z'))
+      return fakePodRoundRow()
+    })
+    const { app } = buildApp({ prisma: { podRound: { create } } })
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/pods/start',
+      payload: {
+        organizerDiscordId: 'organizer-1',
+        setCode: 'JTL',
+        threshold: 8,
+        guildIds: [],
+        scheduledFor: '2026-01-01T12:00:00.000Z',
+      },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(create.calls).toHaveLength(1)
   })
 
   describe('request validation', () => {

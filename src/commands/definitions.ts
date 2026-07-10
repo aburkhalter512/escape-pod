@@ -60,6 +60,12 @@ export const commandDefinitions: RESTPostAPIChatInputApplicationCommandsJSONBody
         min_value: 6,
         max_value: 8,
       },
+      {
+        name: 'deadline',
+        description: 'Auto-cancel if threshold isn\'t reached by then, e.g. "2h", "90m", "1d" (optional)',
+        type: ApplicationCommandOptionType.String,
+        required: false,
+      },
     ],
   },
   {
