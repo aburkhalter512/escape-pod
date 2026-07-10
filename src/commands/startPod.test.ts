@@ -26,11 +26,23 @@ function selectComponent(response: Awaited<ReturnType<typeof startPod>>) {
   }
 }
 
+// Resolves guild names live (INTEGRATIONS.md — names aren't stored, since
+// a cached one would go stale on rename), keyed by a plain guildId->name
+// map so tests can describe the guilds they care about without touching
+// the real Discord API shape beyond {id, name}.
+function fakeGetGuild(names: Record<string, string>) {
+  return stub(async (guildId: string) => {
+    const name = names[guildId]
+    if (name === undefined) throw new Error(`unexpected getGuild call: ${guildId}`)
+    return { id: guildId, name } as never
+  })
+}
+
 describe('startPod', () => {
   it('presents eligible guilds as a select menu, packing set+threshold into custom_id', async () => {
     const listEligibleGuildsMock = stub(async (organizerDiscordId: string) => {
       if (organizerDiscordId !== 'organizer-1') throw new Error(`unexpected organizerDiscordId: ${organizerDiscordId}`)
-      return [{ guildId: 'g1', name: 'Alpha' }, { guildId: 'g2', name: 'Beta' }]
+      return [{ guildId: 'g1' }, { guildId: 'g2' }]
     })
     const ctx: CommandContext = {
       interaction: interaction({
@@ -40,7 +52,7 @@ describe('startPod', () => {
         ],
       }),
       backend: createFakeBackendClient({ listEligibleGuilds: listEligibleGuildsMock }),
-      discordRest: createFakeDiscordRest(),
+      discordRest: createFakeDiscordRest({ getGuild: fakeGetGuild({ g1: 'Alpha', g2: 'Beta' }) }),
     }
 
     const response = await startPod(ctx)
@@ -55,12 +67,32 @@ describe('startPod', () => {
     expect(select.max_values).toBe(2)
   })
 
-  it('defaults the threshold to 8 when not provided', async () => {
-    const listEligibleGuildsMock = stub(async (_organizerDiscordId: string) => [{ guildId: 'g1', name: 'Alpha' }])
+  it('falls back to the raw guildId as the label when a name lookup fails', async () => {
+    const listEligibleGuildsMock = stub(async (_organizerDiscordId: string) => [{ guildId: 'g1' }, { guildId: 'g2' }])
+    const getGuild = stub(async (guildId: string) => {
+      if (guildId === 'g2') throw new Error('bot is no longer in this guild')
+      return { id: guildId, name: 'Alpha' } as never
+    })
     const ctx: CommandContext = {
       interaction: interaction(),
       backend: createFakeBackendClient({ listEligibleGuilds: listEligibleGuildsMock }),
-      discordRest: createFakeDiscordRest(),
+      discordRest: createFakeDiscordRest({ getGuild }),
+    }
+
+    const response = await startPod(ctx)
+
+    expect(selectComponent(response).options).toEqual([
+      { label: 'Alpha', value: 'g1' },
+      { label: 'g2', value: 'g2' },
+    ])
+  })
+
+  it('defaults the threshold to 8 when not provided', async () => {
+    const listEligibleGuildsMock = stub(async (_organizerDiscordId: string) => [{ guildId: 'g1' }])
+    const ctx: CommandContext = {
+      interaction: interaction(),
+      backend: createFakeBackendClient({ listEligibleGuilds: listEligibleGuildsMock }),
+      discordRest: createFakeDiscordRest({ getGuild: fakeGetGuild({ g1: 'Alpha' }) }),
     }
 
     const response = await startPod(ctx)
@@ -72,7 +104,7 @@ describe('startPod', () => {
   it('falls back to interaction.user.id when there is no member (e.g. DM context)', async () => {
     const listEligibleGuildsMock = stub(async (organizerDiscordId: string) => {
       if (organizerDiscordId !== 'dm-organizer') throw new Error(`unexpected organizerDiscordId: ${organizerDiscordId}`)
-      return [{ guildId: 'g1', name: 'Alpha' }]
+      return [{ guildId: 'g1' }]
     })
     const ctx: CommandContext = {
       interaction: interaction({
@@ -81,7 +113,7 @@ describe('startPod', () => {
         user: fakeUser({ id: 'dm-organizer' }),
       }),
       backend: createFakeBackendClient({ listEligibleGuilds: listEligibleGuildsMock }),
-      discordRest: createFakeDiscordRest(),
+      discordRest: createFakeDiscordRest({ getGuild: fakeGetGuild({ g1: 'Alpha' }) }),
     }
 
     const response = await startPod(ctx)
@@ -133,13 +165,18 @@ describe('startPod', () => {
     expect(responseData(response).content).toMatch(/not approved to post/i)
   })
 
-  it('caps the select menu at 25 options even when more guilds are eligible (Discord limit)', async () => {
-    const manyGuilds = Array.from({ length: 30 }, (_, i) => ({ guildId: `g${i}`, name: `Guild ${i}` }))
+  it('caps the select menu at 25 options even when more guilds are eligible (Discord limit), and only resolves names for the ones that fit', async () => {
+    const manyGuilds = Array.from({ length: 30 }, (_, i) => ({ guildId: `g${i}` }))
     const listEligibleGuildsMock = stub(async (_organizerDiscordId: string) => manyGuilds)
+    const names = Object.fromEntries(Array.from({ length: 30 }, (_, i) => [`g${i}`, `Guild ${i}`]))
+    const getGuild = stub(async (guildId: string) => {
+      if (!(guildId in names)) throw new Error(`unexpected getGuild call: ${guildId}`)
+      return { id: guildId, name: names[guildId] } as never
+    })
     const ctx: CommandContext = {
       interaction: interaction(),
       backend: createFakeBackendClient({ listEligibleGuilds: listEligibleGuildsMock }),
-      discordRest: createFakeDiscordRest(),
+      discordRest: createFakeDiscordRest({ getGuild }),
     }
 
     const response = await startPod(ctx)
@@ -147,5 +184,6 @@ describe('startPod', () => {
 
     expect(select.options).toHaveLength(25)
     expect(select.max_values).toBe(25)
+    expect(getGuild.calls).toHaveLength(25) // never looked up guilds 25-29, which wouldn't fit anyway
   })
 })

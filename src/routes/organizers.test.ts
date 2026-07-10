@@ -174,7 +174,7 @@ describe('GET /organizers/:discordId/eligible-guilds', () => {
     expect(response.statusCode).toBe(200)
   })
 
-  it('maps results to {guildId, name} (name is a guildId placeholder — see TODO in source)', async () => {
+  it('maps results to {guildId} — no name; the caller resolves that live via Discord, see commands/startPod.ts', async () => {
     const findMany = stub(async (_args: GuildSubscriptionFindManyArgs) => [
       fakeGuildSubscriptionRow({ guildId: 'g1' }),
       fakeGuildSubscriptionRow({ guildId: 'g2' }),
@@ -183,10 +183,7 @@ describe('GET /organizers/:discordId/eligible-guilds', () => {
 
     const response = await app.inject({ method: 'GET', url: '/organizers/user-1/eligible-guilds' })
 
-    expect(response.json()).toEqual([
-      { guildId: 'g1', name: 'g1' },
-      { guildId: 'g2', name: 'g2' },
-    ])
+    expect(response.json()).toEqual([{ guildId: 'g1' }, { guildId: 'g2' }])
   })
 
   it('returns an empty array when the organizer has no eligible guilds', async () => {

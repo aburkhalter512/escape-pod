@@ -14,7 +14,7 @@ const DEFAULT_THRESHOLD = 8
 // happens on the select's MESSAGE_COMPONENT submit (see components.ts);
 // set/threshold are packed into custom_id since interactions are stateless
 // per-request (§7.4 scale note: 25-option cap on select menus).
-export const startPod: CommandHandler = async ({ interaction, backend }) => {
+export const startPod: CommandHandler = async ({ interaction, backend, discordRest }) => {
   const organizerId = interaction.member?.user.id ?? interaction.user?.id
   if (!organizerId) {
     return ephemeral('Could not determine your Discord user ID.')
@@ -37,6 +37,23 @@ export const startPod: CommandHandler = async ({ interaction, backend }) => {
     )
   }
 
+  // Resolved live, not stored — a name cached at /subscribe-guild time
+  // would go stale the moment a guild renamed itself. §7.4's 25-option
+  // select-menu cap bounds this to at most 25 concurrent lookups; slicing
+  // before resolving (not after) avoids wasting calls on guilds that
+  // wouldn't fit in the menu anyway. Falls back to the raw guildId per
+  // guild (not the whole command) if a lookup fails — e.g. the bot was
+  // removed from that guild since it was allow-listed.
+  const capped = eligibleGuilds.slice(0, 25)
+  const nameLookups = await Promise.allSettled(capped.map((guild) => discordRest.getGuild(guild.guildId)))
+  const options = capped.map((guild, i) => {
+    const lookup = nameLookups[i]
+    return {
+      label: lookup.status === 'fulfilled' ? lookup.value.name : guild.guildId,
+      value: guild.guildId,
+    }
+  })
+
   return {
     type: InteractionResponseType.ChannelMessageWithSource,
     data: {
@@ -50,11 +67,8 @@ export const startPod: CommandHandler = async ({ interaction, backend }) => {
               type: ComponentType.StringSelect,
               custom_id: `start-pod:select-guilds:${setOption.value}:${threshold}`,
               min_values: 1,
-              max_values: Math.min(eligibleGuilds.length, 25),
-              options: eligibleGuilds.slice(0, 25).map((guild) => ({
-                label: guild.name,
-                value: guild.guildId,
-              })),
+              max_values: options.length,
+              options,
             },
           ],
         },

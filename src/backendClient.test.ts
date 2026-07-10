@@ -61,7 +61,7 @@ describe('LocalBackendClient', () => {
 
     const result = await client({ guildSubscription: { findMany } }).listEligibleGuilds('org-1')
 
-    expect(result).toEqual([{ guildId: 'g1', name: 'g1' }])
+    expect(result).toEqual([{ guildId: 'g1' }])
   })
 
   it('delegates startPod to podRound.create and guildSubscription.findMany', async () => {

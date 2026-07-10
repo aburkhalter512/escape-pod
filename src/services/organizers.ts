@@ -58,11 +58,14 @@ export async function linkOrganizer(
 
 export interface EligibleGuild {
   guildId: string
-  name: string
 }
 
 // INTEGRATIONS.md §7.4/§7.5 step 1 — guilds this organizer may fan a round
-// out to: OPEN-policy guilds, plus guilds where they're allow-listed.
+// out to: OPEN-policy guilds, plus guilds where they're allow-listed. No
+// display name here — this service never talks to Discord's API (only the
+// interaction handlers hold the bot token), and a name stored here would
+// go stale the moment a guild renamed itself. The caller (startPod.ts)
+// resolves real, current names live via discordRest.getGuild() instead.
 export async function listEligibleGuilds(
   deps: OrganizerServiceDeps,
   organizerDiscordId: string
@@ -73,9 +76,5 @@ export async function listEligibleGuilds(
     },
   })
 
-  // TODO: GuildSubscription doesn't store a human-readable guild name —
-  // this service never talks to Discord's API directly (only the
-  // interaction handlers hold the bot token). Using guildId as a
-  // placeholder label until that's threaded through subscribeGuild.
-  return guilds.map((guild) => ({ guildId: guild.guildId, name: guild.guildId }))
+  return guilds.map((guild) => ({ guildId: guild.guildId }))
 }

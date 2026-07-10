@@ -26,7 +26,7 @@ export interface BackendClient {
   linkOrganizer(discordId: string, token: string): Promise<{ username: string }>
   subscribeGuild(guildId: string, channelId: string, installedBy: string): Promise<void>
   allowOrganizer(guildId: string, organizerDiscordId: string, approvedBy: string): Promise<void>
-  listEligibleGuilds(organizerDiscordId: string): Promise<Array<{ guildId: string; name: string }>>
+  listEligibleGuilds(organizerDiscordId: string): Promise<Array<{ guildId: string }>>
   startPod(params: {
     organizerDiscordId: string
     setCode: string
@@ -82,8 +82,10 @@ export class LocalBackendClient implements BackendClient {
     return guildsService.allowOrganizer(this.deps, { guildId, organizerDiscordId, approvedBy })
   }
 
-  // §7.5: start a round; returns eligible target guilds.
-  listEligibleGuilds(organizerDiscordId: string): Promise<Array<{ guildId: string; name: string }>> {
+  // §7.5: start a round; returns eligible target guild IDs (no name —
+  // the caller resolves those live via discordRest.getGuild, see
+  // services/organizers.ts).
+  listEligibleGuilds(organizerDiscordId: string): Promise<Array<{ guildId: string }>> {
     return organizersService.listEligibleGuilds(this.deps, organizerDiscordId)
   }
 

@@ -8,6 +8,7 @@ export function createFakeDiscordRest(overrides: Partial<DiscordRestClient> = {}
   return {
     postMessage: unimplemented('postMessage'),
     editMessage: unimplemented('editMessage'),
+    getGuild: unimplemented('getGuild'),
     ...overrides,
   }
 }

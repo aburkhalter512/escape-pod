@@ -5,11 +5,12 @@ import {
   type RESTPostAPIChannelMessageResult,
   type RESTPatchAPIChannelMessageJSONBody,
   type RESTPatchAPIChannelMessageResult,
+  type RESTGetAPIGuildResult,
 } from 'discord-api-types/v10'
 
 // The contract the app depends on for talking to Discord — scoped to the
-// two message operations we actually perform, with real response types
-// (no `unknown`). See testUtils/fakeDiscordRest.ts.
+// operations we actually perform, with real response types (no
+// `unknown`). See testUtils/fakeDiscordRest.ts.
 export interface DiscordRestClient {
   postMessage(channelId: string, body: RESTPostAPIChannelMessageJSONBody): Promise<RESTPostAPIChannelMessageResult>
   editMessage(
@@ -17,12 +18,19 @@ export interface DiscordRestClient {
     messageId: string,
     body: RESTPatchAPIChannelMessageJSONBody
   ): Promise<RESTPatchAPIChannelMessageResult>
+  // /subscribe-guild's only use of this — the interaction payload itself
+  // only ever includes { id, features, locale } for the invoking guild
+  // (APIPartialInteractionGuild), never a display name, so getting a real
+  // name for the eligible-guilds select menu in /start-pod means fetching
+  // and storing it once here rather than on every /start-pod call.
+  getGuild(guildId: string): Promise<RESTGetAPIGuildResult>
 }
 
 // The raw @discordjs/rest surface HttpDiscordRest wraps. A real REST
 // instance satisfies this structurally; tests can inject a plain stub
 // instead of spinning up a real REST client.
 interface RawRestClient {
+  get(fullRoute: RouteLike, options?: RequestData): Promise<unknown>
   post(fullRoute: RouteLike, options?: RequestData): Promise<unknown>
   patch(fullRoute: RouteLike, options?: RequestData): Promise<unknown>
 }
@@ -51,6 +59,10 @@ export class HttpDiscordRest implements DiscordRestClient {
     return this.#raw.patch(Routes.channelMessage(channelId, messageId), {
       body,
     }) as Promise<RESTPatchAPIChannelMessageResult>
+  }
+
+  async getGuild(guildId: string): Promise<RESTGetAPIGuildResult> {
+    return this.#raw.get(Routes.guild(guildId)) as Promise<RESTGetAPIGuildResult>
   }
 }
 
