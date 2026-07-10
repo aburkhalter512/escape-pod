@@ -45,7 +45,7 @@ export interface BackendClient {
     count: number
     threshold: number
     setCode: string
-    thresholdReached: boolean
+    full: boolean
     podCreated: boolean
     shareUrl?: string
     targets: Array<{ guildId: string; channelId: string; messageId: string | null }>
@@ -121,7 +121,7 @@ export class LocalBackendClient implements BackendClient {
     count: number
     threshold: number
     setCode: string
-    thresholdReached: boolean
+    full: boolean
     podCreated: boolean
     shareUrl?: string
     targets: Array<{ guildId: string; channelId: string; messageId: string | null }>

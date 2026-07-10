@@ -41,8 +41,8 @@ describe('buildPodRoundMessage', () => {
       shareUrl: 'https://www.protectthepod.com/draft/share-1',
     })
 
-    expect(body.embeds[0].title).toContain('Full')
-    expect(body.embeds[0].description).toContain('8/8 confirmed')
+    expect(body.embeds[0].title).toContain('Starting')
+    expect(body.embeds[0].description).toContain('8 confirmed')
 
     const buttons = body.components[0].components
     expect(buttons).toHaveLength(1)
@@ -71,14 +71,14 @@ describe('buildPodRoundMessage', () => {
   it('mentions no deadline when scheduledFor is absent', () => {
     const body = buildPodRoundMessage({ podRoundId: 'round-1', setCode: 'JTL', threshold: 8, count: 5 })
 
-    expect(body.embeds[0].description).not.toContain('Cancels automatically')
+    expect(body.embeds[0].description).not.toContain('Fires automatically')
   })
 
   it('appends a Discord timestamp countdown when scheduledFor is present', () => {
     const scheduledFor = new Date('2026-01-01T12:00:00Z')
     const body = buildPodRoundMessage({ podRoundId: 'round-1', setCode: 'JTL', threshold: 8, count: 5, scheduledFor })
 
-    expect(body.embeds[0].description).toContain('Cancels automatically')
+    expect(body.embeds[0].description).toContain('Fires automatically')
     expect(body.embeds[0].description).toContain(`<t:${Math.floor(scheduledFor.getTime() / 1000)}:R>`)
   })
 
@@ -92,7 +92,7 @@ describe('buildPodRoundMessage', () => {
       scheduledFor: new Date('2026-01-01T12:00:00Z'),
     })
 
-    expect(body.embeds[0].description).not.toContain('Cancels automatically')
+    expect(body.embeds[0].description).not.toContain('Fires automatically')
   })
 })
 

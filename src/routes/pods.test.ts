@@ -398,7 +398,7 @@ describe('POST /pods/:id/signup', () => {
       count: 5,
       threshold: 8,
       setCode: 'JTL',
-      thresholdReached: false,
+      full: false,
       podCreated: false,
       targets: [],
     })
@@ -436,7 +436,7 @@ describe('POST /pods/:id/signup', () => {
     })
 
     expect(response.statusCode).toBe(200)
-    expect(response.json()).toMatchObject({ count: 4, thresholdReached: false })
+    expect(response.json()).toMatchObject({ count: 4, full: false })
   })
 
   it('creates the PTP pod once the signup pushes the count to threshold, and returns every target for cross-guild sync', async () => {
@@ -491,7 +491,7 @@ describe('POST /pods/:id/signup', () => {
       count: 8,
       threshold: 8,
       setCode: 'JTL',
-      thresholdReached: true,
+      full: true,
       podCreated: true,
       shareUrl: 'https://www.protectthepod.com/draft/share-1',
       targets: targetRows.map((t) => ({ guildId: t.guildId, channelId: t.channelId, messageId: t.messageId })),
@@ -594,7 +594,7 @@ describe('POST /pods/:id/signup', () => {
     // only the pod-creation side effect failed. §7.5 step 4's design note:
     // this needs an operator-facing alert, not yet built (see source TODO).
     expect(response.statusCode).toBe(200)
-    expect(response.json()).toMatchObject({ thresholdReached: true, podCreated: false })
+    expect(response.json()).toMatchObject({ full: true, podCreated: false })
     expect(response.json().shareUrl).toBeUndefined()
   })
 
@@ -621,7 +621,7 @@ describe('POST /pods/:id/signup', () => {
       payload: { discordId: 'player-9', username: 'PlayerNine', sourceGuildId: 'guild-1', action: 'in' },
     })
 
-    expect(response.json()).toMatchObject({ thresholdReached: true, podCreated: false })
+    expect(response.json()).toMatchObject({ full: true, podCreated: false })
   })
 
   it('rejects a signup body missing a required field with 400, before reading the round', async () => {

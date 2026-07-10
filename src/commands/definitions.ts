@@ -54,7 +54,7 @@ export const commandDefinitions: RESTPostAPIChatInputApplicationCommandsJSONBody
       },
       {
         name: 'threshold',
-        description: 'Players needed before the pod is created (default 8)',
+        description: 'Min players to still fire at the deadline, if set (default 8 = full table only)',
         type: ApplicationCommandOptionType.Integer,
         required: false,
         min_value: 2,

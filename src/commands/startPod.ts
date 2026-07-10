@@ -7,8 +7,13 @@ import {
 import { ephemeral, getOption } from './helpers.js'
 import type { CommandHandler } from './types.js'
 import { parseDurationMs } from '../util/duration.js'
+import { POD_CAPACITY } from '../podConfig.js'
 
-const DEFAULT_THRESHOLD = 8
+// Defaults to requiring a full table if the organizer doesn't set a
+// minimum explicitly — the safest default given a round with no deadline
+// only ever fires by reaching POD_CAPACITY (services/pods.ts's
+// recordSignup), so a low default threshold would otherwise do nothing.
+const DEFAULT_THRESHOLD = POD_CAPACITY
 
 // Policy (what's a *sensible* deadline for this app), not what's
 // syntactically a duration — see util/duration.ts. Under 5 minutes isn't
@@ -84,7 +89,7 @@ export const startPod: CommandHandler = async ({ interaction, backend, discordRe
     type: InteractionResponseType.ChannelMessageWithSource,
     data: {
       flags: MessageFlags.Ephemeral,
-      content: `Pick which server(s) to post this ${setOption.value} round (threshold ${threshold}${deadlineNote}) into:`,
+      content: `Pick which server(s) to post this ${setOption.value} round (min ${threshold}${deadlineNote}) into:`,
       components: [
         {
           type: ComponentType.ActionRow,

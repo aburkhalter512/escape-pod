@@ -283,7 +283,7 @@ describe('handleMessageComponent', () => {
         count: 5,
         threshold: 8,
         setCode: 'JTL',
-        thresholdReached: false,
+        full: false,
         podCreated: false,
         targets: [
           { guildId: 'guild-1', channelId: 'channel-1', messageId: 'msg-1' },
@@ -399,7 +399,7 @@ describe('handleMessageComponent', () => {
       const recordSignupMock = stub(async (_podRoundId: string, _discordId: string, _username: string, _sourceGuildId: string) =>
         signupResult({
           count: 8,
-          thresholdReached: true,
+          full: true,
           podCreated: true,
           shareUrl: 'https://www.protectthepod.com/draft/share-1',
         })

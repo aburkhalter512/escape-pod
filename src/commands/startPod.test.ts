@@ -98,7 +98,7 @@ describe('startPod', () => {
     const response = await startPod(ctx)
 
     expect(selectComponent(response).custom_id).toBe('start-pod:select-guilds:JTL:8:')
-    expect(responseData(response).content).toContain('threshold 8')
+    expect(responseData(response).content).toContain('min 8')
   })
 
   it('falls back to interaction.user.id when there is no member (e.g. DM context)', async () => {

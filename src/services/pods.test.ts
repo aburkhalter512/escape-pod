@@ -78,6 +78,15 @@ function stubPodRoundFindUnique<Result>(impl: () => Promise<Result>) {
   return findUnique
 }
 
+function stubPodRoundFindMany<Result>(impl: () => Promise<Result[]>) {
+  function findMany<T extends Prisma.PodRoundFindManyArgs>(
+    _args: Prisma.SelectSubset<T, Prisma.PodRoundFindManyArgs>
+  ): Promise<Prisma.PodRoundGetPayload<T>[]> {
+    return impl() as unknown as Promise<Prisma.PodRoundGetPayload<T>[]>
+  }
+  return findMany
+}
+
 function buildDeps(overrides: FakePrismaOverrides = {}): PodServiceDeps {
   return {
     prisma: createFakePrismaClient(overrides),
@@ -180,8 +189,41 @@ describe('recordSignup', () => {
       action: 'in',
     })
 
-    expect(result).toMatchObject({ thresholdReached: true, podCreated: false })
+    expect(result).toMatchObject({ full: true, podCreated: false })
     expect(errors).toHaveLength(1)
+  })
+
+  it('does not fire early just because count reaches the round\'s (lower) threshold — only a full table triggers it', async () => {
+    const round = fakeRoundWithOrganizer({ threshold: 2 })
+    const findUnique = stubPodRoundFindUnique(async () => round)
+    const updateMany = stub(async () => {
+      throw new Error('podRound.updateMany should not have been called below POD_CAPACITY')
+    })
+    const upsert = stub(async () => fakePodRoundSignupRow())
+    const count = stub(async () => 3) // >= threshold (2), well short of POD_CAPACITY (8)
+    const createPod = stub(async () => {
+      throw new Error('createPod should not have been called below POD_CAPACITY')
+    })
+    const deps: PodServiceDeps = {
+      prisma: createFakePrismaClient({
+        podRound: { findUnique, updateMany },
+        podRoundSignup: { upsert, count },
+        podRoundTarget: { findMany: stub(async () => []) },
+      }),
+      ptp: createFakePtpClient({ createPod }),
+      tokenEncryptionKey: TOKEN_KEY,
+      logger: { error: () => {} },
+    }
+
+    const result = await recordSignup(deps, {
+      podRoundId: 'round-1',
+      discordId: 'p3',
+      username: 'P3',
+      sourceGuildId: 'g1',
+      action: 'in',
+    })
+
+    expect(result).toMatchObject({ count: 3, threshold: 2, full: false, podCreated: false })
   })
 })
 
@@ -300,8 +342,9 @@ describe('expireOverdueRounds', () => {
     expect(findManyRounds.calls).toHaveLength(1)
   })
 
-  it('claims and expires each overdue round, returning its setCode + targets', async () => {
-    const findManyRounds = stub(async () => [fakePodRoundRow({ id: 'round-1', setCode: 'JTL' })])
+  it('expires a round that never reached its own minimum threshold by the deadline', async () => {
+    const findManyRounds = stubPodRoundFindMany(async () => [fakePodRoundRow({ id: 'round-1', setCode: 'JTL', threshold: 6 })])
+    const count = stub(async () => 3) // below threshold: 6
     const updateMany = stub(async (args: PodRoundUpdateManyArgs) => {
       const expected: PodRoundUpdateManyArgs = { where: { id: 'round-1', status: 'COLLECTING' }, data: { status: 'EXPIRED' } }
       if (!deepEqual(args, expected)) throw new Error(`unexpected updateMany args: ${JSON.stringify(args)}`)
@@ -310,22 +353,109 @@ describe('expireOverdueRounds', () => {
     const findManyTargets = stub(async () => [
       { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
     ])
-    const deps = buildDeps({ podRound: { findMany: findManyRounds, updateMany }, podRoundTarget: { findMany: findManyTargets } })
+    const deps = buildDeps({
+      podRound: { findMany: findManyRounds, updateMany },
+      podRoundSignup: { count },
+      podRoundTarget: { findMany: findManyTargets },
+    })
 
     const result = await expireOverdueRounds(deps)
 
     expect(result).toEqual([
-      { podRoundId: 'round-1', setCode: 'JTL', targets: [{ channelId: 'channel-1', messageId: 'msg-1' }] },
+      { podRoundId: 'round-1', setCode: 'JTL', outcome: 'expired', targets: [{ channelId: 'channel-1', messageId: 'msg-1' }] },
     ])
   })
 
+  it('fires a round short of a full table if it reached its own minimum threshold by the deadline', async () => {
+    const round = fakeRoundWithOrganizer({ id: 'round-1', setCode: 'JTL', threshold: 2 })
+    const findManyRounds = stubPodRoundFindMany(async () => [round])
+    const count = stub(async () => 5) // >= threshold (2), short of POD_CAPACITY (8)
+    const updateMany = stub(async (args: PodRoundUpdateManyArgs) => {
+      const expected: PodRoundUpdateManyArgs = { where: { id: 'round-1', status: 'COLLECTING' }, data: { status: 'THRESHOLD_REACHED' } }
+      if (!deepEqual(args, expected)) throw new Error(`unexpected updateMany args: ${JSON.stringify(args)}`)
+      return { count: 1 }
+    })
+    const update = stub(async (args: PodRoundUpdateArgs) => {
+      const expected: PodRoundUpdateArgs = { where: { id: 'round-1' }, data: { status: 'POD_CREATED', ptpPodShareId: 'share-1' } }
+      if (!deepEqual(args, expected)) throw new Error(`unexpected update args: ${JSON.stringify(args)}`)
+      return fakePodRoundRow()
+    })
+    const createPod = stub(async (token: string, params: CreatePodParams) => {
+      const validArgs = token === 'a-real-token' && deepEqual(params, { setCode: 'JTL', maxPlayers: 5 })
+      if (!validArgs) throw new Error(`unexpected createPod args: ${token} ${JSON.stringify(params)}`)
+      return {
+        id: 'ptp-pod-1',
+        shareId: 'share-1',
+        shareUrl: 'https://www.protectthepod.com/draft/share-1',
+        createdAt: '2026-01-01T00:00:00Z',
+      }
+    })
+    const findManyTargets = stub(async () => [
+      { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
+    ])
+    const deps: PodServiceDeps = {
+      prisma: createFakePrismaClient({
+        podRound: { findMany: findManyRounds, updateMany, update },
+        podRoundSignup: { count },
+        podRoundTarget: { findMany: findManyTargets },
+      }),
+      ptp: createFakePtpClient({ createPod }),
+      tokenEncryptionKey: TOKEN_KEY,
+      logger: { error: () => {} },
+    }
+
+    const result = await expireOverdueRounds(deps)
+
+    expect(result).toEqual([
+      {
+        podRoundId: 'round-1',
+        setCode: 'JTL',
+        outcome: 'fired',
+        count: 5,
+        threshold: 2,
+        shareUrl: 'https://www.protectthepod.com/draft/share-1',
+        targets: [{ channelId: 'channel-1', messageId: 'msg-1' }],
+      },
+    ])
+  })
+
+  it('does not surface a result when firing at the deadline fails after the claim (logs instead)', async () => {
+    const round = fakeRoundWithOrganizer({ id: 'round-1', threshold: 2 })
+    const findManyRounds = stubPodRoundFindMany(async () => [round])
+    const count = stub(async () => 5)
+    const updateMany = stub(async () => ({ count: 1 }))
+    const createPod = stub(async () => {
+      throw new Error('PTP pod creation failed: 401')
+    })
+    const errors: unknown[] = []
+    const deps: PodServiceDeps = {
+      prisma: createFakePrismaClient({
+        podRound: { findMany: findManyRounds, updateMany },
+        podRoundSignup: { count },
+      }),
+      ptp: createFakePtpClient({ createPod }),
+      tokenEncryptionKey: TOKEN_KEY,
+      logger: { error: (obj) => errors.push(obj) },
+    }
+
+    const result = await expireOverdueRounds(deps)
+
+    expect(result).toEqual([])
+    expect(errors).toHaveLength(1)
+  })
+
   it('skips a round that another concurrent sweep (or a racing signup) already claimed', async () => {
-    const findManyRounds = stub(async () => [fakePodRoundRow({ id: 'round-1' })])
+    const findManyRounds = stubPodRoundFindMany(async () => [fakePodRoundRow({ id: 'round-1' })])
+    const count = stub(async () => 3) // below the default threshold (8) — takes the expire path
     const updateMany = stub(async () => ({ count: 0 }))
     const findManyTargets = stub(async () => {
       throw new Error('podRoundTarget.findMany should not have been called for an unclaimed round')
     })
-    const deps = buildDeps({ podRound: { findMany: findManyRounds, updateMany }, podRoundTarget: { findMany: findManyTargets } })
+    const deps = buildDeps({
+      podRound: { findMany: findManyRounds, updateMany },
+      podRoundSignup: { count },
+      podRoundTarget: { findMany: findManyTargets },
+    })
 
     const result = await expireOverdueRounds(deps)
 

@@ -5,6 +5,7 @@ import {
   type APIButtonComponent,
   type APIEmbed,
 } from 'discord-api-types/v10'
+import { POD_CAPACITY } from '../podConfig.js'
 
 const COLLECTING_COLOR = 0x5865f2 // Discord blurple
 const POD_FULL_COLOR = 0x57f287 // green
@@ -14,6 +15,11 @@ const EXPIRED_COLOR = 0xfaa61a // Discord orange — distinct from CANCELLED
 export interface PodRoundMessageState {
   podRoundId: string
   setCode: string
+  /** The organizer's configured minimum — only relevant while still
+   * COLLECTING (shown alongside the deadline, if any). Once shareUrl is
+   * set the round has already fired, against POD_CAPACITY or `threshold`
+   * players depending on why (see services/pods.ts's fireRound), so this
+   * isn't consulted for that state. */
   threshold: number
   count: number
   /** Present once the round has created its PTP pod (§7.5 step 4). */
@@ -38,8 +44,8 @@ export function buildPodRoundMessage(state: PodRoundMessageState): PodRoundMessa
     return {
       embeds: [
         {
-          title: `${state.setCode} Draft Pod — Full!`,
-          description: `${state.count}/${state.threshold} confirmed. The draft is starting.`,
+          title: `${state.setCode} Draft Pod — Starting!`,
+          description: `${state.count} confirmed. The draft is starting.`,
           color: POD_FULL_COLOR,
         },
       ],
@@ -60,14 +66,14 @@ export function buildPodRoundMessage(state: PodRoundMessageState): PodRoundMessa
   }
 
   const deadlineNote = state.scheduledFor
-    ? ` Cancels automatically <t:${Math.floor(state.scheduledFor.getTime() / 1000)}:R> if not full.`
+    ? ` Fires automatically <t:${Math.floor(state.scheduledFor.getTime() / 1000)}:R> if at least ${state.threshold} have joined, otherwise cancels.`
     : ''
 
   return {
     embeds: [
       {
         title: `${state.setCode} Draft Pod`,
-        description: `${state.count}/${state.threshold} confirmed.${deadlineNote}`,
+        description: `${state.count}/${POD_CAPACITY} confirmed.${deadlineNote}`,
         color: COLLECTING_COLOR,
       },
     ],

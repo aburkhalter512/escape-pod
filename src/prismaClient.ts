@@ -40,8 +40,13 @@ export interface AppPrismaClient {
     findFirst: Method<PrismaClient['podRound']['findFirst']>
     // Finds all overdue-but-still-COLLECTING rounds for the expiration
     // sweep (jobs/expirePodRounds.ts) — the only multi-row podRound query
-    // in the app, hence the only one needing findMany.
-    findMany: Method<PrismaClient['podRound']['findMany']>
+    // in the app. Called with `include: { organizer: true }` (a round that
+    // reached its threshold needs the organizer's token to fire — see
+    // services/pods.ts's fireRound), so this stays generic per call, same
+    // reasoning as findUnique above.
+    findMany<T extends Prisma.PodRoundFindManyArgs>(
+      args: Prisma.SelectSubset<T, Prisma.PodRoundFindManyArgs>
+    ): Promise<Prisma.PodRoundGetPayload<T>[]>
     update: Method<PrismaClient['podRound']['update']>
     // Used as an atomic compare-and-swap (WHERE status: 'COLLECTING') to
     // claim the right to create the PTP pod — see tasks/001. A plain

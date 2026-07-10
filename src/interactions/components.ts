@@ -96,7 +96,7 @@ export async function handleMessageComponent(
     const failureCount = postOutcomes.filter((outcome) => outcome.status === 'rejected').length
 
     return ephemeral(
-      `Round started for ${setCode} (threshold ${threshold}) across ${targets.length} server(s).` +
+      `Round started for ${setCode} (min ${threshold}) across ${targets.length} server(s).` +
         (failureCount > 0
           ? ` ${failureCount} server(s) failed to post — check the bot has permission in their channel.`
           : '')
