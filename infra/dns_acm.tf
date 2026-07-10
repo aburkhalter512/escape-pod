@@ -6,16 +6,16 @@
 # endpoint. Discord will refuse to save/verify an endpoint URL that:
 #   - uses a self-signed certificate, or
 #   - uses the ALB's default *.elb.amazonaws.com hostname, because ACM
-#     cannot issue a certificate for a domain this AWS account doesn't
-#     own.
+#     cannot issue a certificate for a domain this AWS account doesn't own.
 #
-# Until var.domain_name is set to a real, owned domain (and this config
-# is re-applied), this stack stands up everything EXCEPT the ACM cert,
-# Route53 record, and HTTPS listener. The service will be running and
-# healthy over plain HTTP at the ALB's default hostname, but you cannot
-# register that URL with Discord — /interactions will not receive any
-# real traffic from Discord's servers until a domain is acquired and
-# var.domain_name is set.
+# This domain's DNS is hosted on Cloudflare, not Route53 — deliberately, to
+# avoid a nameserver migration. That means this config does NOT create any
+# DNS records itself (no Route53 zone exists to create them in): both the
+# ACM validation CNAME and the domain's own record pointing at the ALB have
+# to be added by hand in Cloudflare. See the dns_validation_record and
+# alb_dns_name outputs, and infra/README.md's "Adding HTTPS" section for
+# the two-step apply this requires (cert requested first, validated once
+# the CNAME is live, in a second apply).
 
 resource "aws_acm_certificate" "this" {
   count = var.domain_name != "" ? 1 : 0
@@ -28,42 +28,15 @@ resource "aws_acm_certificate" "this" {
   }
 }
 
-# for_each (not count) because domain_validation_options is a genuinely
-# keyed collection — in principle more than one validation record if the
-# cert ever covers additional SANs.
-resource "aws_route53_record" "acm_validation" {
-  for_each = var.domain_name != "" ? {
-    for dvo in aws_acm_certificate.this[0].domain_validation_options : dvo.domain_name => {
-      name   = dvo.resource_record_name
-      type   = dvo.resource_record_type
-      record = dvo.resource_record_value
-    }
-  } : {}
-
-  zone_id = var.route53_zone_id
-  name    = each.value.name
-  type    = each.value.type
-  records = [each.value.record]
-  ttl     = 60
-}
-
+# Polls ACM until the certificate is issued — succeeds as soon as ACM can
+# resolve the validation CNAME wherever it's actually hosted (Cloudflare),
+# with no dependency on any Route53 record existing. Will time out (default
+# 45m) if the CNAME hasn't been added in Cloudflare yet — see README.
 resource "aws_acm_certificate_validation" "this" {
   count = var.domain_name != "" ? 1 : 0
 
-  certificate_arn         = aws_acm_certificate.this[0].arn
-  validation_record_fqdns = [for r in aws_route53_record.acm_validation : r.fqdn]
-}
-
-resource "aws_route53_record" "app" {
-  count = var.domain_name != "" ? 1 : 0
-
-  zone_id = var.route53_zone_id
-  name    = var.domain_name
-  type    = "A"
-
-  alias {
-    name                   = aws_lb.this.dns_name
-    zone_id                = aws_lb.this.zone_id
-    evaluate_target_health = true
-  }
+  certificate_arn = aws_acm_certificate.this[0].arn
+  validation_record_fqdns = [
+    for dvo in aws_acm_certificate.this[0].domain_validation_options : dvo.resource_record_name
+  ]
 }

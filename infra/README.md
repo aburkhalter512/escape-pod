@@ -93,9 +93,51 @@ top of `dns_acm.tf`). Until a domain is registered:
   everything except the actual Discord integration.
 - `/interactions` will not receive any real traffic from Discord.
 
-Once a domain exists and its hosted zone is set up in Route53 (this
-config does not create the zone itself), set `domain_name` and
-`route53_zone_id` and re-apply — this adds the ACM cert (DNS-validated),
-the Route53 A record, and the HTTPS listener, with no other resource
-changes. Then register `tofu output alb_https_url` as the Interactions
-Endpoint URL in the Discord Developer Portal.
+## Adding HTTPS (domain's DNS hosted on Cloudflare, not Route53)
+
+This config deliberately doesn't create or require a Route53 hosted
+zone — the domain's DNS stays wherever it already lives (Cloudflare),
+avoiding a nameserver migration. That means the ACM validation record
+and the domain's own record pointing at the ALB both have to be added
+by hand, in two apply steps:
+
+### 1. Request the certificate
+
+Set `domain_name` (e.g. `terraform.auto.tfvars` or `TF_VAR_domain_name`)
+and apply just the certificate request — the full apply would otherwise
+hang waiting on DNS validation that can't succeed yet:
+
+```bash
+tofu apply -target=aws_acm_certificate.this
+tofu output dns_validation_record
+```
+
+Add the output's `name`/`value` as a CNAME record in Cloudflare's DNS
+dashboard for this domain (type `CNAME`, name and value exactly as
+shown — Cloudflare will likely strip the trailing dot ACM includes,
+that's fine). Cloudflare's own DNS propagates fast (usually under a
+minute, no registrar-level delegation involved), but give it a few
+minutes before continuing.
+
+### 2. Validate the certificate and add the HTTPS listener
+
+```bash
+tofu apply
+```
+
+This finishes validating the cert (polls until the CNAME resolves) and
+adds the ACM cert + HTTPS listener — no other resources change.
+
+### 3. Point the domain at the ALB
+
+Add a second record in Cloudflare: type `CNAME` (Cloudflare supports
+CNAME flattening at the apex), name `@` (or the domain itself), value
+`tofu output alb_dns_name`. This is the actual routing record — separate
+from the validation CNAME above, which only exists to prove domain
+ownership to ACM.
+
+### 4. Register with Discord
+
+Once both records are live, `tofu output alb_https_url` is the URL to
+paste into the Discord Developer Portal's Interactions Endpoint URL
+field.

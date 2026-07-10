@@ -10,21 +10,15 @@ variable "domain_name" {
   description = <<-EOT
     Custom domain for the ALB (e.g. "bot.example.com"). Leave empty (the
     default) until a domain is actually registered — when empty, this
-    config skips creating the ACM cert, Route53 record, and HTTPS
-    listener entirely. UNLIKE the backend, this isn't just a nice-to-have
-    here: Discord will not accept this service's /interactions endpoint
-    until it's served over a real, CA-signed HTTPS URL (no self-signed
-    certs, and no AWS default *.elb.amazonaws.com hostname — ACM can't
-    issue a cert for a domain this account doesn't own). Until
-    domain_name is set and this is re-applied, the service runs and is
-    healthy, but cannot actually receive traffic from Discord.
+    config skips creating the ACM cert and HTTPS listener entirely.
+    Discord will not accept this service's /interactions endpoint until
+    it's served over a real, CA-signed HTTPS URL (no self-signed certs,
+    and no AWS default *.elb.amazonaws.com hostname — ACM can't issue a
+    cert for a domain this account doesn't own). This domain's DNS lives
+    on Cloudflare, not Route53 — this config creates no DNS records of
+    its own; see the dns_validation_record and alb_dns_name outputs and
+    infra/README.md for the manual two-step apply this requires.
   EOT
-  type        = string
-  default     = ""
-}
-
-variable "route53_zone_id" {
-  description = "Hosted zone ID to create the domain_name record in. Required only when domain_name is set; this config does not create the zone itself (the domain's registrar NS records must already be delegated to it)."
   type        = string
   default     = ""
 }

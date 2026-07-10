@@ -3,7 +3,7 @@
 # bootstrap/'s outputs after running `tofu apply` there once. See README.md.
 terraform {
   backend "s3" {
-    bucket         = "escape-pod-tfstate-REPLACE_WITH_ACCOUNT_ID"
+    bucket         = "escape-pod-tfstate-228870477931"
     key            = "discord-bot/terraform.tfstate"
     region         = "us-west-2"
     dynamodb_table = "escape-pod-tfstate-lock"

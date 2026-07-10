@@ -8,6 +8,15 @@ output "alb_https_url" {
   value       = var.domain_name != "" ? "https://${var.domain_name}" : null
 }
 
+output "dns_validation_record" {
+  description = "CNAME to add in Cloudflare (or wherever DNS lives) to validate the ACM cert — null until domain_name is set. name/value are not secret; this is a public DNS challenge record."
+  value = var.domain_name != "" ? {
+    name  = tolist(aws_acm_certificate.this[0].domain_validation_options)[0].resource_record_name
+    type  = tolist(aws_acm_certificate.this[0].domain_validation_options)[0].resource_record_type
+    value = tolist(aws_acm_certificate.this[0].domain_validation_options)[0].resource_record_value
+  } : null
+}
+
 output "ecr_repository_url" {
   value = aws_ecr_repository.discord_bot.repository_url
 }
