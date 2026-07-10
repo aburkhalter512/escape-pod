@@ -3,6 +3,7 @@ import { ApplicationCommandOptionType, type APIInteractionGuildMember } from 'di
 import { subscribeGuild } from './subscribeGuild.js'
 import type { CommandContext } from './types.js'
 import { createFakeBackendClient } from '../testUtils/fakeBackendClient.js'
+import { createFakeDiscordRest } from '../testUtils/fakeDiscordRest.js'
 import { fakeChatInputInteraction, fakeMember } from '../testUtils/fakeInteraction.js'
 import { responseData } from '../testUtils/responseData.js'
 import { stub } from '../testUtils/stub.js'
@@ -32,6 +33,7 @@ describe('subscribeGuild', () => {
     const ctx: CommandContext = {
       interaction: interaction(),
       backend: createFakeBackendClient({ subscribeGuild: subscribeGuildMock }),
+      discordRest: createFakeDiscordRest(),
     }
 
     const response = await subscribeGuild(ctx)
@@ -47,6 +49,7 @@ describe('subscribeGuild', () => {
     const ctx: CommandContext = {
       interaction: interaction({ guild_id: undefined, member: undefined }),
       backend: createFakeBackendClient({ subscribeGuild: subscribeGuildMock }),
+      discordRest: createFakeDiscordRest(),
     }
 
     const response = await subscribeGuild(ctx)
@@ -61,6 +64,7 @@ describe('subscribeGuild', () => {
     const ctx: CommandContext = {
       interaction: interaction({ member: undefined }),
       backend: createFakeBackendClient({ subscribeGuild: subscribeGuildMock }),
+      discordRest: createFakeDiscordRest(),
     }
 
     const response = await subscribeGuild(ctx)
@@ -75,6 +79,7 @@ describe('subscribeGuild', () => {
     const ctx: CommandContext = {
       interaction: interaction({ member: memberWithoutUser() }),
       backend: createFakeBackendClient({ subscribeGuild: subscribeGuildMock }),
+      discordRest: createFakeDiscordRest(),
     }
 
     const response = await subscribeGuild(ctx)
@@ -89,6 +94,7 @@ describe('subscribeGuild', () => {
     const ctx: CommandContext = {
       interaction: interaction({ options: [] }),
       backend: createFakeBackendClient({ subscribeGuild: subscribeGuildMock }),
+      discordRest: createFakeDiscordRest(),
     }
 
     const response = await subscribeGuild(ctx)
@@ -105,6 +111,7 @@ describe('subscribeGuild', () => {
         options: [{ name: 'channel', type: ApplicationCommandOptionType.String, value: 'oops' }],
       }),
       backend: createFakeBackendClient({ subscribeGuild: subscribeGuildMock }),
+      discordRest: createFakeDiscordRest(),
     }
 
     const response = await subscribeGuild(ctx)

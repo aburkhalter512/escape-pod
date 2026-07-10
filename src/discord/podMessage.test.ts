@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ButtonStyle, ComponentType } from 'discord-api-types/v10'
-import { buildPodRoundMessage } from './podMessage.js'
+import { buildCancelledPodMessage, buildPodRoundMessage } from './podMessage.js'
 
 describe('buildPodRoundMessage', () => {
   it('shows the running count and signup buttons while still collecting', () => {
@@ -66,5 +66,15 @@ describe('buildPodRoundMessage', () => {
       .map((c) => (c as { custom_id?: string }).custom_id)
       .filter(Boolean)
     expect(customIds).toHaveLength(0)
+  })
+})
+
+describe('buildCancelledPodMessage', () => {
+  it('shows a cancelled title and no buttons', () => {
+    const body = buildCancelledPodMessage('JTL')
+
+    expect(body.embeds[0].title).toContain('Cancelled')
+    expect(body.embeds[0].title).toContain('JTL')
+    expect(body.components).toHaveLength(0)
   })
 })

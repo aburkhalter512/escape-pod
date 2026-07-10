@@ -8,6 +8,7 @@ import {
 
 const COLLECTING_COLOR = 0x5865f2 // Discord blurple
 const POD_FULL_COLOR = 0x57f287 // green
+const CANCELLED_COLOR = 0xed4245 // Discord red
 
 export interface PodRoundMessageState {
   podRoundId: string
@@ -80,5 +81,23 @@ export function buildPodRoundMessage(state: PodRoundMessageState): PodRoundMessa
         ],
       },
     ],
+  }
+}
+
+// §7.5 step 5 — what every target guild's RSVP message gets edited to once
+// the organizer cancels. No buttons: the round is over, so there's
+// nothing left to click — an explicit empty components array, not an
+// omitted field, since Discord treats a missing components field on an
+// edit as "leave the existing components alone," not "remove them."
+export function buildCancelledPodMessage(setCode: string): PodRoundMessageBody {
+  return {
+    embeds: [
+      {
+        title: `${setCode} Draft Pod — Cancelled`,
+        description: 'The organizer cancelled this round.',
+        color: CANCELLED_COLOR,
+      },
+    ],
+    components: [],
   }
 }

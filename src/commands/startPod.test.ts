@@ -3,6 +3,7 @@ import { ApplicationCommandOptionType } from 'discord-api-types/v10'
 import { startPod } from './startPod.js'
 import type { CommandContext } from './types.js'
 import { createFakeBackendClient } from '../testUtils/fakeBackendClient.js'
+import { createFakeDiscordRest } from '../testUtils/fakeDiscordRest.js'
 import { fakeChatInputInteraction, fakeMember, fakeUser } from '../testUtils/fakeInteraction.js'
 import { responseData } from '../testUtils/responseData.js'
 import { stub } from '../testUtils/stub.js'
@@ -39,6 +40,7 @@ describe('startPod', () => {
         ],
       }),
       backend: createFakeBackendClient({ listEligibleGuilds: listEligibleGuildsMock }),
+      discordRest: createFakeDiscordRest(),
     }
 
     const response = await startPod(ctx)
@@ -58,6 +60,7 @@ describe('startPod', () => {
     const ctx: CommandContext = {
       interaction: interaction(),
       backend: createFakeBackendClient({ listEligibleGuilds: listEligibleGuildsMock }),
+      discordRest: createFakeDiscordRest(),
     }
 
     const response = await startPod(ctx)
@@ -78,6 +81,7 @@ describe('startPod', () => {
         user: fakeUser({ id: 'dm-organizer' }),
       }),
       backend: createFakeBackendClient({ listEligibleGuilds: listEligibleGuildsMock }),
+      discordRest: createFakeDiscordRest(),
     }
 
     const response = await startPod(ctx)
@@ -92,6 +96,7 @@ describe('startPod', () => {
     const ctx: CommandContext = {
       interaction: interaction({ guild_id: undefined, member: undefined }),
       backend: createFakeBackendClient({ listEligibleGuilds: listEligibleGuildsMock }),
+      discordRest: createFakeDiscordRest(),
     }
 
     const response = await startPod(ctx)
@@ -106,6 +111,7 @@ describe('startPod', () => {
     const ctx: CommandContext = {
       interaction: interaction({ options: [] }),
       backend: createFakeBackendClient({ listEligibleGuilds: listEligibleGuildsMock }),
+      discordRest: createFakeDiscordRest(),
     }
 
     const response = await startPod(ctx)
@@ -118,6 +124,7 @@ describe('startPod', () => {
     const ctx: CommandContext = {
       interaction: interaction(),
       backend: createFakeBackendClient({ listEligibleGuilds: listEligibleGuildsMock }),
+      discordRest: createFakeDiscordRest(),
     }
 
     const response = await startPod(ctx)
@@ -132,6 +139,7 @@ describe('startPod', () => {
     const ctx: CommandContext = {
       interaction: interaction(),
       backend: createFakeBackendClient({ listEligibleGuilds: listEligibleGuildsMock }),
+      discordRest: createFakeDiscordRest(),
     }
 
     const response = await startPod(ctx)

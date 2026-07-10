@@ -8,11 +8,12 @@ import { createFakePtpClient } from '../testUtils/fakePtpClient.js'
 import { stub } from '../testUtils/stub.js'
 import { deepEqual } from '../testUtils/deepEqual.js'
 import { NotFoundError, ForbiddenError } from './errors.js'
-import { recordSignup, cancelPod, recordTargetMessage, type PodServiceDeps } from './pods.js'
+import { recordSignup, cancelPod, cancelActiveRound, recordTargetMessage, type PodServiceDeps } from './pods.js'
 
 const TOKEN_KEY = '00'.repeat(32)
 
 type PodRoundRow = Awaited<ReturnType<AppPrismaClient['podRound']['create']>>
+type PodRoundUpdateArgs = Parameters<AppPrismaClient['podRound']['update']>[0]
 type PodRoundUpdateManyArgs = Parameters<AppPrismaClient['podRound']['updateMany']>[0]
 type PodRoundWithOrganizer = Prisma.PodRoundGetPayload<{ include: { organizer: true } }>
 type PodRoundSignupUpsertArgs = Parameters<AppPrismaClient['podRoundSignup']['upsert']>[0]
@@ -190,5 +191,63 @@ describe('cancelPod', () => {
     await expect(cancelPod(deps, { podRoundId: 'round-1', requestedBy: 'someone-else' })).rejects.toBeInstanceOf(
       ForbiddenError
     )
+  })
+})
+
+describe('cancelActiveRound', () => {
+  it('returns null when the organizer has no active round', async () => {
+    const findFirst = stub(async () => null)
+    const deps = buildDeps({ podRound: { findFirst } })
+
+    const result = await cancelActiveRound(deps, 'organizer-1')
+
+    expect(result).toBeNull()
+  })
+
+  it('queries for the most recent COLLECTING/THRESHOLD_REACHED round, scoped to this organizer', async () => {
+    const findFirst = stub(async (args: unknown) => {
+      const expected = {
+        where: { organizerDiscordId: 'organizer-1', status: { in: ['COLLECTING', 'THRESHOLD_REACHED'] } },
+        orderBy: { createdAt: 'desc' },
+      }
+      if (!deepEqual(args, expected)) throw new Error(`unexpected findFirst args: ${JSON.stringify(args)}`)
+      return fakePodRoundRow({ id: 'round-1', organizerDiscordId: 'organizer-1' })
+    })
+    const findUnique = stubPodRoundFindUnique(async () => fakePodRoundRow({ id: 'round-1', organizerDiscordId: 'organizer-1' }))
+    const update = stub(async () => fakePodRoundRow())
+    const findMany = stub(async () => [])
+    const deps = buildDeps({ podRound: { findFirst, findUnique, update }, podRoundTarget: { findMany } })
+
+    await cancelActiveRound(deps, 'organizer-1')
+
+    expect(findFirst.calls).toHaveLength(1)
+  })
+
+  it('cancels the found round and returns its setCode + targets', async () => {
+    const findFirst = stub(async () => fakePodRoundRow({ id: 'round-1', organizerDiscordId: 'organizer-1', setCode: 'JTL' }))
+    const findUnique = stubPodRoundFindUnique(async () =>
+      fakePodRoundRow({ id: 'round-1', organizerDiscordId: 'organizer-1', setCode: 'JTL' })
+    )
+    const update = stub(async (args: PodRoundUpdateArgs) => {
+      const expected: PodRoundUpdateArgs = { where: { id: 'round-1' }, data: { status: 'CANCELLED' } }
+      if (!deepEqual(args, expected)) throw new Error(`unexpected update args: ${JSON.stringify(args)}`)
+      return fakePodRoundRow()
+    })
+    const findMany = stub(async () => [
+      { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
+      { podRoundId: 'round-1', guildId: 'g2', channelId: 'channel-2', messageId: null, approvalStatus: null, postedAt: new Date() },
+    ])
+    const deps = buildDeps({ podRound: { findFirst, findUnique, update }, podRoundTarget: { findMany } })
+
+    const result = await cancelActiveRound(deps, 'organizer-1')
+
+    expect(result).toEqual({
+      podRoundId: 'round-1',
+      setCode: 'JTL',
+      targets: [
+        { channelId: 'channel-1', messageId: 'msg-1' },
+        { channelId: 'channel-2', messageId: null },
+      ],
+    })
   })
 })

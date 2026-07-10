@@ -216,3 +216,45 @@ export async function cancelPod(deps: PodServiceDeps, params: CancelPodParams): 
     data: { status: 'CANCELLED' },
   })
 }
+
+export interface CancelActiveRoundResult {
+  podRoundId: string
+  setCode: string
+  targets: Array<{ channelId: string; messageId: string | null }>
+}
+
+// /cancel-pod takes no arguments (INTEGRATIONS.md's cancel-pod command
+// definition has none) — it cancels whichever round the calling organizer
+// most recently started that hasn't already finished (POD_CREATED),
+// failed (EXPIRED), or already been cancelled. Nothing today prevents an
+// organizer from starting more than one round concurrently (no unique
+// constraint on organizerDiscordId + active status), so "most recent" is
+// a deliberate, documented choice for that edge case, not an oversight.
+// Reuses cancelPod above for the actual status update (and its ownership
+// check, redundant here since the query below already scopes by
+// organizerDiscordId, but cheap and keeps this from silently diverging if
+// cancelPod's logic ever changes). Returns enough to let the caller (the
+// Discord-facing command handler) edit every target guild's RSVP message
+// — this function itself never touches the Discord API, same
+// Discord-agnostic-services boundary as the rest of this file.
+export async function cancelActiveRound(
+  deps: PodServiceDeps,
+  organizerDiscordId: string
+): Promise<CancelActiveRoundResult | null> {
+  const round = await deps.prisma.podRound.findFirst({
+    where: { organizerDiscordId, status: { in: ['COLLECTING', 'THRESHOLD_REACHED'] } },
+    orderBy: { createdAt: 'desc' },
+  })
+  if (!round) {
+    return null
+  }
+
+  await cancelPod(deps, { podRoundId: round.id, requestedBy: organizerDiscordId })
+
+  const targetRows = await deps.prisma.podRoundTarget.findMany({ where: { podRoundId: round.id } })
+  return {
+    podRoundId: round.id,
+    setCode: round.setCode,
+    targets: targetRows.map((t) => ({ channelId: t.channelId, messageId: t.messageId })),
+  }
+}

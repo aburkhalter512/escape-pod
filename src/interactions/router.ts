@@ -36,7 +36,7 @@ export async function routeInteraction(
       }
       // Narrowed by discord-api-types unions elsewhere; ChatInput is the
       // only command type we register (see commands/definitions.ts).
-      return handler({ interaction: interaction as never, backend: deps.backend })
+      return handler({ interaction: interaction as never, backend: deps.backend, discordRest: deps.discordRest })
     }
 
     case InteractionType.MessageComponent:

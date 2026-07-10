@@ -14,6 +14,7 @@ export function createFakeBackendClient(overrides: Partial<BackendClient> = {}):
     recordMessagePosted: unimplemented('recordMessagePosted'),
     recordSignup: unimplemented('recordSignup'),
     cancelPod: unimplemented('cancelPod'),
+    cancelActiveRound: unimplemented('cancelActiveRound'),
     ...overrides,
   }
 }

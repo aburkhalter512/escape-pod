@@ -3,6 +3,7 @@ import { ApplicationCommandOptionType, type APIInteractionGuildMember } from 'di
 import { allowOrganizer } from './allowOrganizer.js'
 import type { CommandContext } from './types.js'
 import { createFakeBackendClient } from '../testUtils/fakeBackendClient.js'
+import { createFakeDiscordRest } from '../testUtils/fakeDiscordRest.js'
 import { fakeChatInputInteraction, fakeMember } from '../testUtils/fakeInteraction.js'
 import { responseData } from '../testUtils/responseData.js'
 import { stub } from '../testUtils/stub.js'
@@ -32,6 +33,7 @@ describe('allowOrganizer', () => {
     const ctx: CommandContext = {
       interaction: interaction(),
       backend: createFakeBackendClient({ allowOrganizer: allowOrganizerMock }),
+      discordRest: createFakeDiscordRest(),
     }
 
     const response = await allowOrganizer(ctx)
@@ -46,6 +48,7 @@ describe('allowOrganizer', () => {
     const ctx: CommandContext = {
       interaction: interaction({ guild_id: undefined, member: undefined }),
       backend: createFakeBackendClient({ allowOrganizer: allowOrganizerMock }),
+      discordRest: createFakeDiscordRest(),
     }
 
     const response = await allowOrganizer(ctx)
@@ -60,6 +63,7 @@ describe('allowOrganizer', () => {
     const ctx: CommandContext = {
       interaction: interaction({ member: memberWithoutUser() }),
       backend: createFakeBackendClient({ allowOrganizer: allowOrganizerMock }),
+      discordRest: createFakeDiscordRest(),
     }
 
     const response = await allowOrganizer(ctx)
@@ -74,6 +78,7 @@ describe('allowOrganizer', () => {
     const ctx: CommandContext = {
       interaction: interaction({ options: [] }),
       backend: createFakeBackendClient({ allowOrganizer: allowOrganizerMock }),
+      discordRest: createFakeDiscordRest(),
     }
 
     const response = await allowOrganizer(ctx)
@@ -90,6 +95,7 @@ describe('allowOrganizer', () => {
         options: [{ name: 'organizer', type: ApplicationCommandOptionType.String, value: 'oops' }],
       }),
       backend: createFakeBackendClient({ allowOrganizer: allowOrganizerMock }),
+      discordRest: createFakeDiscordRest(),
     }
 
     const response = await allowOrganizer(ctx)

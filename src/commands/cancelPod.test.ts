@@ -2,32 +2,72 @@ import { describe, expect, it } from 'vitest'
 import { cancelPod } from './cancelPod.js'
 import type { CommandContext } from './types.js'
 import { createFakeBackendClient } from '../testUtils/fakeBackendClient.js'
+import { createFakeDiscordRest } from '../testUtils/fakeDiscordRest.js'
 import { fakeChatInputInteraction, fakeMember, fakeUser } from '../testUtils/fakeInteraction.js'
 import { responseData } from '../testUtils/responseData.js'
+import { stub } from '../testUtils/stub.js'
 
 describe('cancelPod', () => {
-  it('resolves the organizer id from member.user.id when present', async () => {
-    const ctx: CommandContext = {
-      interaction: fakeChatInputInteraction({ member: fakeMember({ user: fakeUser({ id: 'organizer-1' }) }) }),
-      backend: createFakeBackendClient(),
-    }
-
-    const response = await cancelPod(ctx)
-
-    // Not wired to the backend yet (see TODO in source) — this pins the
-    // current stub behavior so a future implementation change is a
-    // deliberate, visible diff here rather than a silent regression.
-    expect(responseData(response).content).toMatch(/not wired up yet/i)
-  })
-
   it('rejects when neither member nor user is present', async () => {
     const ctx: CommandContext = {
       interaction: fakeChatInputInteraction({ guild_id: undefined, member: undefined }),
       backend: createFakeBackendClient(),
+      discordRest: createFakeDiscordRest(),
     }
 
     const response = await cancelPod(ctx)
 
     expect(responseData(response).content).toMatch(/could not determine your discord user id/i)
+  })
+
+  it("tells the organizer there's nothing to cancel when they have no active round", async () => {
+    const cancelActiveRound = stub(async (_organizerDiscordId: string) => null)
+    const ctx: CommandContext = {
+      interaction: fakeChatInputInteraction({ member: fakeMember({ user: fakeUser({ id: 'organizer-1' }) }) }),
+      backend: createFakeBackendClient({ cancelActiveRound }),
+      discordRest: createFakeDiscordRest(),
+    }
+
+    const response = await cancelPod(ctx)
+
+    expect(cancelActiveRound.calls).toEqual([['organizer-1']])
+    expect(responseData(response).content).toMatch(/don't have an active pod round/i)
+  })
+
+  it('cancels the round and edits every target guild message with a messageId', async () => {
+    const cancelActiveRound = stub(async (_organizerDiscordId: string) => ({
+      podRoundId: 'round-1',
+      setCode: 'JTL',
+      targets: [
+        { channelId: 'channel-1', messageId: 'msg-1' },
+        { channelId: 'channel-2', messageId: null }, // never got a message posted — nothing to edit
+        { channelId: 'channel-3', messageId: 'msg-3' },
+      ],
+    }))
+    const editMessage = stub(async (_channelId: string, _messageId: string, _body: unknown) => ({}) as never)
+    const ctx: CommandContext = {
+      interaction: fakeChatInputInteraction({ member: fakeMember({ user: fakeUser({ id: 'organizer-1' }) }) }),
+      backend: createFakeBackendClient({ cancelActiveRound }),
+      discordRest: createFakeDiscordRest({ editMessage }),
+    }
+
+    const response = await cancelPod(ctx)
+
+    expect(editMessage.calls).toHaveLength(2)
+    expect(editMessage.calls.map((call) => call[0])).toEqual(['channel-1', 'channel-3'])
+    expect(responseData(response).content).toMatch(/cancelled your jtl round/i)
+  })
+
+  it('resolves the organizer id from user.id when member is absent (DM-style interaction)', async () => {
+    const cancelActiveRound = stub(async (_organizerDiscordId: string) => null)
+    const ctx: CommandContext = {
+      interaction: fakeChatInputInteraction({ member: undefined, user: fakeUser({ id: 'organizer-2' }) }),
+      backend: createFakeBackendClient({ cancelActiveRound }),
+      discordRest: createFakeDiscordRest(),
+    }
+
+    await cancelPod(ctx)
+
+    expect(cancelActiveRound.calls).toEqual([['organizer-2']])
   })
 })

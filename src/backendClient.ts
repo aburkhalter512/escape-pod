@@ -50,6 +50,11 @@ export interface BackendClient {
     targets: Array<{ guildId: string; channelId: string; messageId: string | null }>
   }>
   cancelPod(podRoundId: string, requestedBy: string): Promise<void>
+  cancelActiveRound(organizerDiscordId: string): Promise<{
+    podRoundId: string
+    setCode: string
+    targets: Array<{ channelId: string; messageId: string | null }>
+  } | null>
 }
 
 export interface LocalBackendClientDeps {
@@ -123,5 +128,16 @@ export class LocalBackendClient implements BackendClient {
   // §7.5 step 5: cancel a round.
   cancelPod(podRoundId: string, requestedBy: string): Promise<void> {
     return podsService.cancelPod(this.deps, { podRoundId, requestedBy })
+  }
+
+  // §7.5 step 5, /cancel-pod's actual entry point: finds and cancels the
+  // organizer's own most-recent active round (the command takes no
+  // arguments, so there's no podRoundId to hand cancelPod above directly).
+  cancelActiveRound(organizerDiscordId: string): Promise<{
+    podRoundId: string
+    setCode: string
+    targets: Array<{ channelId: string; messageId: string | null }>
+  } | null> {
+    return podsService.cancelActiveRound(this.deps, organizerDiscordId)
   }
 }
