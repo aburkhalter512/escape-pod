@@ -37,6 +37,7 @@ function fakePodRoundRow(overrides: Partial<PodRoundRow> = {}): PodRoundRow {
     status: 'COLLECTING',
     scheduledFor: null,
     ptpPodShareId: null,
+    originGuildName: null,
     createdAt: new Date(),
     ...overrides,
   }
@@ -136,6 +137,7 @@ describe('POST /pods/start', () => {
           setCode: 'JTL',
           threshold: 8,
           scheduledFor: undefined,
+          originGuildName: undefined,
           targets: {
             create: [
               { guildId: 'g1', channelId: 'channel-1' },
@@ -400,6 +402,7 @@ describe('POST /pods/:id/signup', () => {
       setCode: 'JTL',
       full: false,
       podCreated: false,
+      originGuildName: null,
       targets: [],
     })
   })
@@ -494,6 +497,7 @@ describe('POST /pods/:id/signup', () => {
       full: true,
       podCreated: true,
       shareUrl: 'https://www.protectthepod.com/draft/share-1',
+      originGuildName: null,
       targets: targetRows.map((t) => ({ guildId: t.guildId, channelId: t.channelId, messageId: t.messageId })),
     })
   })

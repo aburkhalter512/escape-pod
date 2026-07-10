@@ -22,6 +22,12 @@ export interface StartPodParams {
   // util/duration.ts for why callers compute this from a relative
   // duration rather than taking an absolute time directly from the user.
   scheduledFor?: Date
+  // Name of the guild /start-pod was invoked in, resolved live by the
+  // caller (interactions/components.ts) — stored once here rather than
+  // looked up again on every later message edit. Optional: a DM-context
+  // invocation has no guild, and a resolution failure shouldn't block
+  // creating the round over a cosmetic display value.
+  originGuildName?: string
 }
 
 export interface StartPodResult {
@@ -35,7 +41,7 @@ export interface StartPodResult {
 // the interaction handlers' job (via discordRest), using the `targets`
 // this returns.
 export async function startPod(deps: PodServiceDeps, params: StartPodParams): Promise<StartPodResult> {
-  const { organizerDiscordId, setCode, threshold, guildIds, scheduledFor } = params
+  const { organizerDiscordId, setCode, threshold, guildIds, scheduledFor, originGuildName } = params
 
   const subscriptions = await deps.prisma.guildSubscription.findMany({
     where: { guildId: { in: guildIds } },
@@ -54,6 +60,7 @@ export async function startPod(deps: PodServiceDeps, params: StartPodParams): Pr
       setCode,
       threshold,
       scheduledFor,
+      originGuildName,
       targets: {
         create: resolvedTargets.map((t) => ({ guildId: t.guildId, channelId: t.channelId })),
       },
@@ -107,6 +114,7 @@ export interface RecordSignupResult {
   full: boolean
   podCreated: boolean
   shareUrl?: string
+  originGuildName: string | null
   targets: Array<{ guildId: string; channelId: string; messageId: string | null }>
 }
 
@@ -226,6 +234,7 @@ export async function recordSignup(
     full,
     podCreated,
     shareUrl,
+    originGuildName: round.originGuildName,
     targets,
   }
 }
@@ -256,6 +265,7 @@ export async function cancelPod(deps: PodServiceDeps, params: CancelPodParams): 
 export interface CancelActiveRoundResult {
   podRoundId: string
   setCode: string
+  originGuildName: string | null
   targets: Array<{ channelId: string; messageId: string | null }>
 }
 
@@ -291,6 +301,7 @@ export async function cancelActiveRound(
   return {
     podRoundId: round.id,
     setCode: round.setCode,
+    originGuildName: round.originGuildName,
     targets: targetRows.map((t) => ({ channelId: t.channelId, messageId: t.messageId })),
   }
 }
@@ -298,7 +309,7 @@ export async function cancelActiveRound(
 type ExpiredRoundTarget = { channelId: string; messageId: string | null }
 
 export type ExpiredRoundInfo =
-  | { podRoundId: string; setCode: string; outcome: 'expired'; targets: ExpiredRoundTarget[] }
+  | { podRoundId: string; setCode: string; outcome: 'expired'; originGuildName: string | null; targets: ExpiredRoundTarget[] }
   | {
       podRoundId: string
       setCode: string
@@ -306,6 +317,7 @@ export type ExpiredRoundInfo =
       count: number
       threshold: number
       shareUrl?: string
+      originGuildName: string | null
       targets: ExpiredRoundTarget[]
     }
 
@@ -344,6 +356,7 @@ export async function expireOverdueRounds(deps: PodServiceDeps): Promise<Expired
         count,
         threshold: round.threshold,
         shareUrl: fireResult.shareUrl,
+        originGuildName: round.originGuildName,
         targets: targetRows.map((t) => ({ channelId: t.channelId, messageId: t.messageId })),
       })
       continue
@@ -360,6 +373,7 @@ export async function expireOverdueRounds(deps: PodServiceDeps): Promise<Expired
       podRoundId: round.id,
       setCode: round.setCode,
       outcome: 'expired',
+      originGuildName: round.originGuildName,
       targets: targetRows.map((t) => ({ channelId: t.channelId, messageId: t.messageId })),
     })
   }

@@ -34,6 +34,17 @@ function memberWithoutUser(): APIInteractionGuildMember {
   return { ...fakeMember(), user: undefined } as unknown as APIInteractionGuildMember
 }
 
+// Origin guild name lookup (interactions.ts's start-pod:select-guilds:
+// handler) — same shape as commands/startPod.test.ts's fakeGetGuild, keyed
+// by guildId->name so tests describe only the guild(s) they care about.
+function fakeGetGuild(names: Record<string, string>) {
+  return stub(async (guildId: string) => {
+    const name = names[guildId]
+    if (name === undefined) throw new Error(`unexpected getGuild call: ${guildId}`)
+    return { id: guildId, name } as never
+  })
+}
+
 describe('extractTextInputValue', () => {
   it('finds a match inside a legacy ActionRow', () => {
     const components = [
@@ -110,13 +121,21 @@ describe('handleMessageComponent', () => {
 
     it('starts the round, posts the RSVP message to every target, and records each message id', async () => {
       const startPodMock = stub(
-        async (params: { organizerDiscordId: string; setCode: string; threshold: number; guildIds: string[]; scheduledFor?: Date }) => {
+        async (params: {
+          organizerDiscordId: string
+          setCode: string
+          threshold: number
+          guildIds: string[]
+          scheduledFor?: Date
+          originGuildName?: string
+        }) => {
         const expected = {
           organizerDiscordId: 'organizer-1',
           setCode: 'JTL',
           threshold: 8,
           guildIds: ['g1', 'g2'],
           scheduledFor: undefined,
+          originGuildName: 'Origin Guild',
         }
         if (!deepEqual(params, expected)) throw new Error(`unexpected startPod args: ${JSON.stringify(params)}`)
         return {
@@ -142,13 +161,56 @@ describe('handleMessageComponent', () => {
       const response = await handleMessageComponent(
         interaction(),
         createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: recordMessagePostedMock }),
-        createFakeDiscordRest({ postMessage })
+        createFakeDiscordRest({ postMessage, getGuild: fakeGetGuild({ 'guild-1': 'Origin Guild' }) })
       )
 
       expect(postMessage.calls).toHaveLength(2)
       expect(recordMessagePostedMock.calls).toHaveLength(2)
       expect(responseData(response).content).toContain('2 server(s)')
       expect(responseData(response).content).not.toMatch(/failed to post/i)
+    })
+
+    it("includes the origin guild's name in the posted message's footer", async () => {
+      const startPodMock = stub(async (_params: unknown) => ({
+        podRoundId: 'round-1',
+        targets: [{ guildId: 'g1', channelId: 'channel-1' }],
+      }))
+      const postMessage = stub(async (_channelId: string, body: RESTPostAPIChannelMessageJSONBody) => {
+        const embeds = body.embeds as Array<{ footer?: { text: string } }>
+        expect(embeds[0].footer?.text).toContain('Origin Guild')
+        return { id: 'msg-1' } as RESTPostAPIChannelMessageResult
+      })
+
+      await handleMessageComponent(
+        interaction({ values: ['g1'] }),
+        createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: stub(async () => undefined) }),
+        createFakeDiscordRest({ postMessage, getGuild: fakeGetGuild({ 'guild-1': 'Origin Guild' }) })
+      )
+
+      expect(postMessage.calls).toHaveLength(1)
+    })
+
+    it('omits the origin guild footer (does not fail the round) when the lookup fails', async () => {
+      const startPodMock = stub(async (_params: unknown) => ({
+        podRoundId: 'round-1',
+        targets: [{ guildId: 'g1', channelId: 'channel-1' }],
+      }))
+      const postMessage = stub(async (_channelId: string, body: RESTPostAPIChannelMessageJSONBody) => {
+        const embeds = body.embeds as Array<{ footer?: { text: string } }>
+        expect(embeds[0].footer).toBeUndefined()
+        return { id: 'msg-1' } as RESTPostAPIChannelMessageResult
+      })
+      const getGuild = stub(async (_guildId: string) => {
+        throw new Error('Missing Access')
+      })
+
+      await handleMessageComponent(
+        interaction({ values: ['g1'] }),
+        createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: stub(async () => undefined) }),
+        createFakeDiscordRest({ postMessage, getGuild })
+      )
+
+      expect(postMessage.calls).toHaveLength(1)
     })
 
     it("posts an initial embed showing 0 signups with I'm in / Leave buttons, not the count directly", async () => {
@@ -163,7 +225,7 @@ describe('handleMessageComponent', () => {
       await handleMessageComponent(
         interaction({ values: ['g1'] }),
         createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: stub(async () => undefined) }),
-        createFakeDiscordRest({ postMessage })
+        createFakeDiscordRest({ postMessage, getGuild: fakeGetGuild({ 'guild-1': 'Origin Guild' }) })
       )
 
       const [, postBody] = postMessage.calls[0]
@@ -191,7 +253,7 @@ describe('handleMessageComponent', () => {
       const response = await handleMessageComponent(
         interaction(),
         createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: recordMessagePostedMock }),
-        createFakeDiscordRest({ postMessage })
+        createFakeDiscordRest({ postMessage, getGuild: fakeGetGuild({ 'guild-1': 'Origin Guild' }) })
       )
 
       // The failing guild never got recordMessagePosted called for it, but
@@ -241,7 +303,7 @@ describe('handleMessageComponent', () => {
       await handleMessageComponent(
         deadlineInteraction,
         createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: stub(async () => undefined) }),
-        createFakeDiscordRest({ postMessage })
+        createFakeDiscordRest({ postMessage, getGuild: fakeGetGuild({ 'guild-1': 'Origin Guild' }) })
       )
 
       expect(postMessage.calls).toHaveLength(1)
@@ -264,7 +326,7 @@ describe('handleMessageComponent', () => {
       await handleMessageComponent(
         noDeadlineInteraction,
         createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: stub(async () => undefined) }),
-        createFakeDiscordRest({ postMessage: stub(async () => ({ id: 'msg-1' }) as RESTPostAPIChannelMessageResult) })
+        createFakeDiscordRest({ postMessage: stub(async () => ({ id: 'msg-1' }) as RESTPostAPIChannelMessageResult), getGuild: fakeGetGuild({ 'guild-1': 'Origin Guild' }) })
       )
     })
   })
@@ -285,6 +347,7 @@ describe('handleMessageComponent', () => {
         setCode: 'JTL',
         full: false,
         podCreated: false,
+        originGuildName: null,
         targets: [
           { guildId: 'guild-1', channelId: 'channel-1', messageId: 'msg-1' },
           { guildId: 'guild-2', channelId: 'channel-2', messageId: 'msg-2' },

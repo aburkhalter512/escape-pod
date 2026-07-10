@@ -59,6 +59,20 @@ export async function handleMessageComponent(
       return ephemeral('Could not determine your Discord user ID.')
     }
 
+    // Resolved once, here, and stored on the round (see
+    // services/pods.ts's StartPodParams) rather than looked up again on
+    // every later message edit — a guild receiving a cross-posted round
+    // (INTEGRATIONS.md §1) sees where it came from. No guild_id (e.g. a
+    // DM-context invocation) or a failed lookup both just omit it.
+    let originGuildName: string | undefined
+    if (interaction.guild_id) {
+      try {
+        originGuildName = (await discordRest.getGuild(interaction.guild_id)).name
+      } catch (err) {
+        console.error(`start-pod origin guild lookup failed for ${interaction.guild_id}:`, err)
+      }
+    }
+
     // §7.5 steps 1-2: backend creates the PodRound + PodRoundTarget rows and
     // returns each target's resolved channel; this posts the actual RSVP
     // message into each one and records the resulting message ID so a
@@ -69,11 +83,12 @@ export async function handleMessageComponent(
       threshold,
       guildIds,
       scheduledFor,
+      originGuildName,
     })
 
     const postOutcomes = await Promise.allSettled(
       targets.map(async (target) => {
-        const body = buildPodRoundMessage({ podRoundId, setCode, threshold, count: 0, scheduledFor })
+        const body = buildPodRoundMessage({ podRoundId, setCode, threshold, count: 0, scheduledFor, originGuildName })
         const message = await discordRest.postMessage(target.channelId, {
           embeds: body.embeds,
           components: body.components,
@@ -123,6 +138,7 @@ export async function handleMessageComponent(
       threshold: result.threshold,
       count: result.count,
       shareUrl: result.shareUrl,
+      originGuildName: result.originGuildName,
     })
 
     // Fan the same update out to every OTHER target guild's message — the

@@ -4,6 +4,7 @@ import {
   type APIActionRowComponent,
   type APIButtonComponent,
   type APIEmbed,
+  type APIEmbedFooter,
 } from 'discord-api-types/v10'
 import { POD_CAPACITY } from '../podConfig.js'
 
@@ -28,6 +29,21 @@ export interface PodRoundMessageState {
    * (auto-localized per viewer) — see util/duration.ts for why the
    * deadline itself is collected as a relative duration, not this. */
   scheduledFor?: Date
+  /** Name of the guild /start-pod was invoked in — shown so a guild
+   * receiving a cross-posted round (§1's "reach beyond their own server")
+   * knows where it originated. Resolved once at round-creation time (see
+   * services/pods.ts's StartPodParams), not looked up here. */
+  originGuildName?: string | null
+}
+
+// Shared across every message state below (collecting, fired, cancelled,
+// expired) — the "where did this round come from" context is the same
+// regardless of what else changed, so it lives in the embed footer rather
+// than duplicated into every state's description text. Absent (not just
+// empty) when there's no name to show, since APIEmbed's footer field is
+// itself optional.
+function originFooter(originGuildName: string | null | undefined): APIEmbedFooter | undefined {
+  return originGuildName ? { text: `Started from ${originGuildName}` } : undefined
 }
 
 export interface PodRoundMessageBody {
@@ -47,6 +63,7 @@ export function buildPodRoundMessage(state: PodRoundMessageState): PodRoundMessa
           title: `${state.setCode} Draft Pod — Starting!`,
           description: `${state.count} confirmed. The draft is starting.`,
           color: POD_FULL_COLOR,
+          footer: originFooter(state.originGuildName),
         },
       ],
       components: [
@@ -75,6 +92,7 @@ export function buildPodRoundMessage(state: PodRoundMessageState): PodRoundMessa
         title: `${state.setCode} Draft Pod`,
         description: `${state.count}/${POD_CAPACITY} confirmed.${deadlineNote}`,
         color: COLLECTING_COLOR,
+        footer: originFooter(state.originGuildName),
       },
     ],
     components: [
@@ -104,13 +122,14 @@ export function buildPodRoundMessage(state: PodRoundMessageState): PodRoundMessa
 // nothing left to click — an explicit empty components array, not an
 // omitted field, since Discord treats a missing components field on an
 // edit as "leave the existing components alone," not "remove them."
-export function buildCancelledPodMessage(setCode: string): PodRoundMessageBody {
+export function buildCancelledPodMessage(setCode: string, originGuildName?: string | null): PodRoundMessageBody {
   return {
     embeds: [
       {
         title: `${setCode} Draft Pod — Cancelled`,
         description: 'The organizer cancelled this round.',
         color: CANCELLED_COLOR,
+        footer: originFooter(originGuildName),
       },
     ],
     components: [],
@@ -122,13 +141,14 @@ export function buildCancelledPodMessage(setCode: string): PodRoundMessageBody {
 // deadline passed without reaching threshold. Same no-buttons shape as
 // buildCancelledPodMessage, but visually and textually distinct — this
 // wasn't the organizer giving up, it's just running out the clock.
-export function buildExpiredPodMessage(setCode: string): PodRoundMessageBody {
+export function buildExpiredPodMessage(setCode: string, originGuildName?: string | null): PodRoundMessageBody {
   return {
     embeds: [
       {
         title: `${setCode} Draft Pod — Expired`,
         description: 'Not enough players joined before the deadline.',
         color: EXPIRED_COLOR,
+        footer: originFooter(originGuildName),
       },
     ],
     components: [],

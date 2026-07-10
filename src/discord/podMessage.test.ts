@@ -94,6 +94,31 @@ describe('buildPodRoundMessage', () => {
 
     expect(body.embeds[0].description).not.toContain('Fires automatically')
   })
+
+  it("shows the origin guild's name in the footer when present", () => {
+    const body = buildPodRoundMessage({ podRoundId: 'round-1', setCode: 'JTL', threshold: 8, count: 5, originGuildName: 'Sister Community' })
+
+    expect(body.embeds[0].footer?.text).toContain('Sister Community')
+  })
+
+  it('omits the footer entirely when there is no origin guild name', () => {
+    const body = buildPodRoundMessage({ podRoundId: 'round-1', setCode: 'JTL', threshold: 8, count: 5 })
+
+    expect(body.embeds[0].footer).toBeUndefined()
+  })
+
+  it("carries the origin guild's name into the fired/full-table embed too", () => {
+    const body = buildPodRoundMessage({
+      podRoundId: 'round-1',
+      setCode: 'JTL',
+      threshold: 8,
+      count: 8,
+      shareUrl: 'https://www.protectthepod.com/draft/share-1',
+      originGuildName: 'Sister Community',
+    })
+
+    expect(body.embeds[0].footer?.text).toContain('Sister Community')
+  })
 })
 
 describe('buildCancelledPodMessage', () => {
@@ -103,6 +128,18 @@ describe('buildCancelledPodMessage', () => {
     expect(body.embeds[0].title).toContain('Cancelled')
     expect(body.embeds[0].title).toContain('JTL')
     expect(body.components).toHaveLength(0)
+  })
+
+  it("shows the origin guild's name in the footer when present", () => {
+    const body = buildCancelledPodMessage('JTL', 'Sister Community')
+
+    expect(body.embeds[0].footer?.text).toContain('Sister Community')
+  })
+
+  it('omits the footer when there is no origin guild name', () => {
+    const body = buildCancelledPodMessage('JTL')
+
+    expect(body.embeds[0].footer).toBeUndefined()
   })
 })
 
@@ -121,5 +158,11 @@ describe('buildExpiredPodMessage', () => {
     const cancelled = buildCancelledPodMessage('JTL')
 
     expect(expired.embeds[0].color).not.toBe(cancelled.embeds[0].color)
+  })
+
+  it("shows the origin guild's name in the footer when present", () => {
+    const body = buildExpiredPodMessage('JTL', 'Sister Community')
+
+    expect(body.embeds[0].footer?.text).toContain('Sister Community')
   })
 })

@@ -38,6 +38,7 @@ function fakePodRoundRow(overrides: Partial<PodRoundRow> = {}): PodRoundRow {
     status: 'COLLECTING',
     scheduledFor: null,
     ptpPodShareId: null,
+    originGuildName: null,
     createdAt: new Date(),
     ...overrides,
   }
@@ -297,11 +298,24 @@ describe('cancelActiveRound', () => {
     expect(result).toEqual({
       podRoundId: 'round-1',
       setCode: 'JTL',
+      originGuildName: null,
       targets: [
         { channelId: 'channel-1', messageId: 'msg-1' },
         { channelId: 'channel-2', messageId: null },
       ],
     })
+  })
+
+  it('carries the origin guild name through to the result', async () => {
+    const findFirst = stub(async () => fakePodRoundRow({ id: 'round-1', originGuildName: 'Sister Community' }))
+    const findUnique = stubPodRoundFindUnique(async () => fakePodRoundRow({ id: 'round-1' }))
+    const update = stub(async () => fakePodRoundRow())
+    const findMany = stub(async () => [])
+    const deps = buildDeps({ podRound: { findFirst, findUnique, update }, podRoundTarget: { findMany } })
+
+    const result = await cancelActiveRound(deps, 'organizer-1')
+
+    expect(result?.originGuildName).toBe('Sister Community')
   })
 })
 
@@ -320,6 +334,25 @@ describe('startPod', () => {
       threshold: 8,
       guildIds: [],
       scheduledFor: new Date('2026-01-01T12:00:00Z'),
+    })
+
+    expect(create.calls).toHaveLength(1)
+  })
+
+  it('stores originGuildName on the created round when provided', async () => {
+    const create = stub(async (args: PodRoundCreateArgs) => {
+      expect(args.data.originGuildName).toBe('Sister Community')
+      return fakePodRoundRow()
+    })
+    const findMany = stub(async (_args: unknown) => [])
+    const deps = buildDeps({ podRound: { create }, guildSubscription: { findMany } })
+
+    await startPod(deps, {
+      organizerDiscordId: 'organizer-1',
+      setCode: 'JTL',
+      threshold: 8,
+      guildIds: [],
+      originGuildName: 'Sister Community',
     })
 
     expect(create.calls).toHaveLength(1)
@@ -362,7 +395,13 @@ describe('expireOverdueRounds', () => {
     const result = await expireOverdueRounds(deps)
 
     expect(result).toEqual([
-      { podRoundId: 'round-1', setCode: 'JTL', outcome: 'expired', targets: [{ channelId: 'channel-1', messageId: 'msg-1' }] },
+      {
+        podRoundId: 'round-1',
+        setCode: 'JTL',
+        outcome: 'expired',
+        originGuildName: null,
+        targets: [{ channelId: 'channel-1', messageId: 'msg-1' }],
+      },
     ])
   })
 
@@ -414,6 +453,7 @@ describe('expireOverdueRounds', () => {
         count: 5,
         threshold: 2,
         shareUrl: 'https://www.protectthepod.com/draft/share-1',
+        originGuildName: null,
         targets: [{ channelId: 'channel-1', messageId: 'msg-1' }],
       },
     ])

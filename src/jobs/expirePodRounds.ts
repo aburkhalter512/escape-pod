@@ -26,10 +26,11 @@ export async function expireOverduePodRounds(
         threshold: round.threshold,
         count: round.count,
         shareUrl: round.shareUrl,
+        originGuildName: round.originGuildName,
       })
     } else {
       expired++
-      body = buildExpiredPodMessage(round.setCode)
+      body = buildExpiredPodMessage(round.setCode, round.originGuildName)
     }
 
     const outcomes = await Promise.allSettled(

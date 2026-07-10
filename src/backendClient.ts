@@ -33,6 +33,7 @@ export interface BackendClient {
     threshold: number
     guildIds: string[]
     scheduledFor?: Date
+    originGuildName?: string
   }): Promise<{ podRoundId: string; targets: Array<{ guildId: string; channelId: string }> }>
   recordMessagePosted(podRoundId: string, guildId: string, messageId: string): Promise<void>
   recordSignup(
@@ -48,12 +49,14 @@ export interface BackendClient {
     full: boolean
     podCreated: boolean
     shareUrl?: string
+    originGuildName: string | null
     targets: Array<{ guildId: string; channelId: string; messageId: string | null }>
   }>
   cancelPod(podRoundId: string, requestedBy: string): Promise<void>
   cancelActiveRound(organizerDiscordId: string): Promise<{
     podRoundId: string
     setCode: string
+    originGuildName: string | null
     targets: Array<{ channelId: string; messageId: string | null }>
   } | null>
 }
@@ -98,6 +101,7 @@ export class LocalBackendClient implements BackendClient {
     threshold: number
     guildIds: string[]
     scheduledFor?: Date
+    originGuildName?: string
   }): Promise<{ podRoundId: string; targets: Array<{ guildId: string; channelId: string }> }> {
     return podsService.startPod(this.deps, params)
   }
@@ -124,6 +128,7 @@ export class LocalBackendClient implements BackendClient {
     full: boolean
     podCreated: boolean
     shareUrl?: string
+    originGuildName: string | null
     targets: Array<{ guildId: string; channelId: string; messageId: string | null }>
   }> {
     return podsService.recordSignup(this.deps, { podRoundId, discordId, username, sourceGuildId, action })
@@ -140,6 +145,7 @@ export class LocalBackendClient implements BackendClient {
   cancelActiveRound(organizerDiscordId: string): Promise<{
     podRoundId: string
     setCode: string
+    originGuildName: string | null
     targets: Array<{ channelId: string; messageId: string | null }>
   } | null> {
     return podsService.cancelActiveRound(this.deps, organizerDiscordId)

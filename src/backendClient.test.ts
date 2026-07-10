@@ -82,6 +82,7 @@ describe('LocalBackendClient', () => {
       status: 'COLLECTING' as const,
       scheduledFor: null,
       ptpPodShareId: null,
+      originGuildName: null,
       createdAt: new Date(),
     }))
 

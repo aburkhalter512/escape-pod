@@ -19,6 +19,9 @@ const startPodBodySchema = z.object({
   // duration (util/duration.ts); this route takes the absolute form
   // directly rather than re-implementing that parsing here too.
   scheduledFor: z.coerce.date().optional(),
+  // Name of the guild /start-pod was invoked in, resolved live by the
+  // caller before this call — see services/pods.ts's StartPodParams.
+  originGuildName: z.string().min(1).optional(),
 })
 type StartPodBody = z.infer<typeof startPodBodySchema>
 

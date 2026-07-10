@@ -38,6 +38,7 @@ describe('cancelPod', () => {
     const cancelActiveRound = stub(async (_organizerDiscordId: string) => ({
       podRoundId: 'round-1',
       setCode: 'JTL',
+      originGuildName: null,
       targets: [
         { channelId: 'channel-1', messageId: 'msg-1' },
         { channelId: 'channel-2', messageId: null }, // never got a message posted — nothing to edit
@@ -56,6 +57,28 @@ describe('cancelPod', () => {
     expect(editMessage.calls).toHaveLength(2)
     expect(editMessage.calls.map((call) => call[0])).toEqual(['channel-1', 'channel-3'])
     expect(responseData(response).content).toMatch(/cancelled your jtl round/i)
+  })
+
+  it("includes the origin guild's name in the cancelled message's footer", async () => {
+    const cancelActiveRound = stub(async (_organizerDiscordId: string) => ({
+      podRoundId: 'round-1',
+      setCode: 'JTL',
+      originGuildName: 'Sister Community',
+      targets: [{ channelId: 'channel-1', messageId: 'msg-1' }],
+    }))
+    const editMessage = stub(async (_channelId: string, _messageId: string, body: { embeds: Array<{ footer?: { text: string } }> }) => {
+      expect(body.embeds[0].footer?.text).toContain('Sister Community')
+      return {} as never
+    })
+    const ctx: CommandContext = {
+      interaction: fakeChatInputInteraction({ member: fakeMember({ user: fakeUser({ id: 'organizer-1' }) }) }),
+      backend: createFakeBackendClient({ cancelActiveRound }),
+      discordRest: createFakeDiscordRest({ editMessage }),
+    }
+
+    await cancelPod(ctx)
+
+    expect(editMessage.calls).toHaveLength(1)
   })
 
   it('resolves the organizer id from user.id when member is absent (DM-style interaction)', async () => {

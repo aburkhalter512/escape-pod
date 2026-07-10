@@ -94,6 +94,13 @@ model PodRound {
   // Set once POST /api/draft succeeds (§4.1.1).
   ptpPodShareId     String?        @map("ptp_pod_share_id")
   createdAt         DateTime       @default(now()) @map("created_at")
+  // Name of the guild /start-pod was invoked in, resolved live and stored
+  // once at creation (not looked up again on every message edit — see
+  // interactions/components.ts's start-pod:select-guilds: handler).
+  // Nullable: rounds created before this column existed have none, and a
+  // resolution failure at creation time also falls back to null rather
+  // than blocking round creation over a cosmetic lookup.
+  originGuildName   String?        @map("origin_guild_name")
 
   organizer Organizer         @relation(fields: [organizerDiscordId], references: [discordId])
   targets   PodRoundTarget[]
