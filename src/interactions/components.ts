@@ -76,6 +76,18 @@ export async function handleMessageComponent(
         await backend.recordMessagePosted(podRoundId, target.guildId, message.id)
       })
     )
+    // Promise.allSettled only exposes each rejection's reason on the
+    // outcome object itself — swallowing it here (as this used to) meant
+    // "N server(s) failed to post" was the only signal available,
+    // regardless of whether the real cause was a permissions issue, the
+    // bot not actually being in that guild, a deleted channel, or
+    // anything else. Logging each one gives that back without changing
+    // the user-facing message.
+    for (const [i, outcome] of postOutcomes.entries()) {
+      if (outcome.status === 'rejected') {
+        console.error(`start-pod post failed for guild ${targets[i].guildId}:`, outcome.reason)
+      }
+    }
     const failureCount = postOutcomes.filter((outcome) => outcome.status === 'rejected').length
 
     return ephemeral(
