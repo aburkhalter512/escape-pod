@@ -12,7 +12,7 @@ resource "aws_db_subnet_group" "this" {
 resource "aws_db_instance" "postgres" {
   identifier     = "escape-pod"
   engine         = "postgres"
-  engine_version = "16.4"
+  engine_version = "16.14"
 
   instance_class    = var.db_instance_class
   allocated_storage = var.db_allocated_storage

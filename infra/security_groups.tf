@@ -7,7 +7,7 @@
 
 resource "aws_security_group" "alb" {
   name        = "escape-pod-alb"
-  description = "discord-bot ALB — public HTTP/HTTPS"
+  description = "discord-bot ALB - public HTTP/HTTPS"
   vpc_id      = aws_vpc.this.id
 
   ingress {
@@ -44,7 +44,7 @@ resource "aws_security_group" "alb" {
 
 resource "aws_security_group" "ecs_tasks" {
   name        = "escape-pod-ecs-tasks"
-  description = "discord-bot ECS tasks — only reachable from the ALB"
+  description = "discord-bot ECS tasks - only reachable from the ALB"
   vpc_id      = aws_vpc.this.id
 
   ingress {
@@ -70,7 +70,7 @@ resource "aws_security_group" "ecs_tasks" {
 
 resource "aws_security_group" "rds" {
   name        = "escape-pod-rds"
-  description = "escape-pod RDS — only reachable from ECS tasks"
+  description = "escape-pod RDS - only reachable from ECS tasks"
   vpc_id      = aws_vpc.this.id
 
   ingress {
