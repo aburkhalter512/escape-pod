@@ -11,6 +11,7 @@ import { zodValidatorCompiler } from './validation.js'
 import { registerOrganizerRoutes } from './routes/organizers.js'
 import { registerGuildRoutes } from './routes/guilds.js'
 import { registerPodRoutes } from './routes/pods.js'
+import { ephemeral } from './commands/helpers.js'
 
 // All required config up front, fail-fast at boot — a missing var is a
 // clear crash-loop with a log line, not a silent runtime failure. This
@@ -30,7 +31,11 @@ const prisma = new PrismaClient()
 const ptp = new HttpPtpClient({ baseUrl: ptpBaseUrl })
 const discordRest = createDiscordRest(discordBotToken)
 
-const app = Fastify()
+// Fastify's default is logger: false — silent on every request/response/
+// error, which made a live "this command timed out" report undiagnosable
+// (nothing in CloudWatch beyond the startup line). pino's default JSON
+// output is fine for CloudWatch — greppable, structured.
+const app = Fastify({ logger: true })
 app.setValidatorCompiler(zodValidatorCompiler)
 
 const backendDeps = { prisma, ptp, tokenEncryptionKey, logger: app.log }
@@ -72,8 +77,19 @@ app.post('/interactions', async (request, reply) => {
   if (!isValid) return // verifyDiscordSignature already sent the 401
 
   const interaction = request.body as APIInteraction
-  const response = await routeInteraction(interaction, { backend, discordRest })
-  return reply.send(response)
+  try {
+    const response = await routeInteraction(interaction, { backend, discordRest })
+    return reply.send(response)
+  } catch (err) {
+    // An uncaught throw here would otherwise become a raw 500 — not a
+    // valid APIInteractionResponse body, so Discord's client just shows
+    // "This interaction failed" with nothing else to go on. Logging the
+    // real error and still returning a well-formed (ephemeral) response
+    // keeps that failure diagnosable from CloudWatch instead of only
+    // visible as a generic client-side error.
+    request.log.error({ err, interactionType: interaction.type }, 'interaction handling failed')
+    return reply.send(ephemeral('Something went wrong handling that. Please try again.'))
+  }
 })
 
 // The internal HTTP API — nothing calls this externally anymore now that

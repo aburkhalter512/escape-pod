@@ -173,7 +173,15 @@ export async function handleModalSubmit(
   try {
     const { username } = await backend.linkOrganizer(discordId, token)
     return ephemeral(`Linked as **${username}** ✅ — you can now run \`/start-pod\`.`)
-  } catch {
+  } catch (err) {
+    // Was previously a bare `catch {}` — swallowed the real cause
+    // entirely (PTP genuinely rejecting the token vs. a Prisma error vs.
+    // anything else all produced the exact same message, and nothing was
+    // logged anywhere to tell them apart). console.error always reaches
+    // CloudWatch via the awslogs driver regardless of Fastify's own
+    // logger config, and this function has no request/reply to log
+    // through instead.
+    console.error('connect-ptp linkOrganizer failed:', err)
     return ephemeral("PTP didn't accept that token. Grab a fresh one from /api/auth/token and try again.")
   }
 }

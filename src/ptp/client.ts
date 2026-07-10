@@ -39,6 +39,14 @@ export class HttpPtpClient implements PtpClient {
     const response = await fetch(`${this.config.baseUrl}/api/me/drafts?limit=1`, {
       headers: { Authorization: `Bearer ${token}` },
     })
+    if (!response.ok) {
+      // The only signal callers get back is `false` (organizersService
+      // turns that into a generic "PTP rejected this token" for the
+      // user) — logging PTP's real status/body here is the only way to
+      // tell "token genuinely invalid" apart from "PTP's endpoint/WAF
+      // rejected the request for an unrelated reason" from CloudWatch.
+      console.error(`PTP validateToken rejected: ${response.status} ${await response.text()}`)
+    }
     return response.ok
   }
 

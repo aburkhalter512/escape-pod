@@ -1,0 +1,68 @@
+name: Deploy Infra
+
+on:
+  pull_request:
+    paths: ["infra/**"]
+  push:
+    branches: [main]
+    paths: ["infra/**"]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  TF_VAR_discord_application_id: ${{ secrets.TF_VAR_DISCORD_APPLICATION_ID }}
+  TF_VAR_discord_public_key: ${{ secrets.TF_VAR_DISCORD_PUBLIC_KEY }}
+  TF_VAR_discord_bot_token: ${{ secrets.TF_VAR_DISCORD_BOT_TOKEN }}
+  TF_VAR_bot_api_key: ${{ secrets.TF_VAR_BOT_API_KEY }}
+  TF_VAR_db_password: ${{ secrets.TF_VAR_DB_PASSWORD }}
+  TF_VAR_token_encryption_key: ${{ secrets.TF_VAR_TOKEN_ENCRYPTION_KEY }}
+  TF_VAR_domain_name: ${{ secrets.TF_VAR_DOMAIN_NAME }}
+  # Only matters for a from-scratch apply — see infra/ecs.tf's
+  # ignore_changes comments. CI's own deploy-app.yml, not this variable,
+  # is what actually updates the running image after bootstrap.
+  TF_VAR_container_image: ${{ secrets.TF_VAR_CONTAINER_IMAGE }}
+
+jobs:
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::228870477931:role/escape-pod-gha-deploy
+          aws-region: us-west-2
+
+      - uses: opentofu/setup-opentofu@v1
+
+      - name: tofu init
+        working-directory: infra
+        run: tofu init
+
+      - name: tofu plan
+        working-directory: infra
+        run: tofu plan
+
+  apply:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::228870477931:role/escape-pod-gha-deploy
+          aws-region: us-west-2
+
+      - uses: opentofu/setup-opentofu@v1
+
+      - name: tofu init
+        working-directory: infra
+        run: tofu init
+
+      - name: tofu apply
+        working-directory: infra
+        run: tofu apply -auto-approve

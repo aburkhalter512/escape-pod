@@ -53,6 +53,19 @@ resource "aws_ecs_task_definition" "discord_bot" {
       }
     }
   ])
+
+  # After the first apply, CI (.github/workflows/deploy-app.yml,
+  # scripts/deploy-app-image.sh) registers its own new task-definition
+  # revisions per deploy, tagged by commit SHA — Terraform stops trying
+  # to manage which image is currently running, only the shape of the
+  # task definition (cpu/memory/roles/secrets/env vars). Without this,
+  # every infra-only `tofu apply` would silently roll the running image
+  # back to whatever `container_image` was set to at bootstrap time.
+  # `container_image`/`var.container_image` therefore only matters for
+  # the very first apply, before CI has ever registered a revision.
+  lifecycle {
+    ignore_changes = [container_definitions]
+  }
 }
 
 resource "aws_ecs_service" "discord_bot" {
@@ -80,4 +93,14 @@ resource "aws_ecs_service" "discord_bot" {
   health_check_grace_period_seconds = 30
 
   depends_on = [aws_lb_listener.http]
+
+  # Same reasoning as aws_ecs_task_definition.discord_bot's
+  # ignore_changes above — CI points the service at its own new
+  # revisions directly (aws ecs update-service --task-definition ...);
+  # without ignoring this too, Terraform would see that as drift against
+  # aws_ecs_task_definition.discord_bot.arn (frozen at whatever revision
+  # this resource itself last created) and revert it on the next apply.
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
 }
