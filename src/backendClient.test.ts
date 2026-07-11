@@ -16,8 +16,9 @@ function client(overrides: FakePrismaOverrides = {}) {
 }
 
 describe('LocalBackendClient', () => {
-  it('delegates subscribeGuild to guildSubscription.upsert with the right args', async () => {
-    const upsert = stub(async (_args: unknown) => ({
+  it('delegates a first-time subscribeGuild to guildSubscription.create with the right args', async () => {
+    const findUnique = stub(async (_args: unknown) => null)
+    const create = stub(async (_args: unknown) => ({
       guildId: 'g1',
       installedByDiscordId: 'admin-1',
       broadcastChannelId: 'channel-1',
@@ -25,13 +26,11 @@ describe('LocalBackendClient', () => {
       installedAt: new Date(),
     }))
 
-    await client({ guildSubscription: { upsert } }).subscribeGuild('g1', 'channel-1', 'admin-1')
+    await client({ guildSubscription: { findUnique, create } }).subscribeGuild('g1', 'admin-1', { channelId: 'channel-1' })
 
-    expect(upsert.calls).toHaveLength(1)
-    expect(upsert.calls[0][0]).toEqual({
-      where: { guildId: 'g1' },
-      create: { guildId: 'g1', broadcastChannelId: 'channel-1', installedByDiscordId: 'admin-1' },
-      update: { broadcastChannelId: 'channel-1' },
+    expect(create.calls).toHaveLength(1)
+    expect(create.calls[0][0]).toEqual({
+      data: { guildId: 'g1', broadcastChannelId: 'channel-1', installedByDiscordId: 'admin-1' },
     })
   })
 

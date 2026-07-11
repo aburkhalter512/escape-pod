@@ -16,15 +16,25 @@ export const commandDefinitions: RESTPostAPIChatInputApplicationCommandsJSONBody
   },
   {
     name: 'subscribe-guild',
-    description: 'Opt this server in to receive draft pod LFG broadcasts',
+    description: 'Opt this server in to receive draft pod LFG broadcasts, or reconfigure it',
     type: ApplicationCommandType.ChatInput,
     default_member_permissions: PermissionFlagsBits.ManageGuild.toString(),
     options: [
       {
         name: 'channel',
-        description: 'Channel to post LFG rounds into',
+        description: 'Channel to post LFG rounds into (required the first time; omit to leave unchanged)',
         type: ApplicationCommandOptionType.Channel,
-        required: true,
+        required: false,
+      },
+      {
+        name: 'policy',
+        description: 'Who can post rounds here (omit to leave unchanged; default on first setup: allow-list)',
+        type: ApplicationCommandOptionType.String,
+        required: false,
+        choices: [
+          { name: 'Allow-list — only organizers you approve', value: 'ALLOWLIST' },
+          { name: 'Open — any linked organizer can post', value: 'OPEN' },
+        ],
       },
     ],
   },

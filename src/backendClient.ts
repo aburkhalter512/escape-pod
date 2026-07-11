@@ -6,6 +6,7 @@
 // trip. commands/* and interactions/* only depend on the BackendClient
 // interface, so none of them needed to change for that merge.
 
+import type { PostingPolicy } from '@prisma/client'
 import type { AppPrismaClient } from './prismaClient.js'
 import type { PtpClient } from './ptp/client.js'
 import type { Logger } from './services/errors.js'
@@ -24,7 +25,11 @@ export type SignupAction = 'in' | 'leave'
 // `as unknown as` needed.
 export interface BackendClient {
   linkOrganizer(discordId: string, token: string): Promise<{ username: string }>
-  subscribeGuild(guildId: string, channelId: string, installedBy: string): Promise<void>
+  subscribeGuild(
+    guildId: string,
+    installedBy: string,
+    params: { channelId?: string; policy?: PostingPolicy }
+  ): Promise<{ broadcastChannelId: string; postingPolicy: PostingPolicy }>
   allowOrganizer(guildId: string, organizerDiscordId: string, approvedBy: string): Promise<void>
   listEligibleGuilds(organizerDiscordId: string): Promise<Array<{ guildId: string }>>
   startPod(params: {
@@ -76,9 +81,15 @@ export class LocalBackendClient implements BackendClient {
     return organizersService.linkOrganizer(this.deps, { discordId, token })
   }
 
-  // §7.2: register/update a guild's broadcast subscription.
-  subscribeGuild(guildId: string, channelId: string, installedBy: string): Promise<void> {
-    return guildsService.subscribeGuild(this.deps, { guildId, channelId, installedBy })
+  // §7.2: register a guild's broadcast subscription, or reconfigure an
+  // existing one's channel/policy (or neither, to just read current
+  // settings back) — see services/guilds.ts's subscribeGuild.
+  subscribeGuild(
+    guildId: string,
+    installedBy: string,
+    params: { channelId?: string; policy?: PostingPolicy }
+  ): Promise<{ broadcastChannelId: string; postingPolicy: PostingPolicy }> {
+    return guildsService.subscribeGuild(this.deps, { guildId, installedBy, ...params })
   }
 
   // §7.2: allow-list an organizer for a guild with `allowlist` policy.

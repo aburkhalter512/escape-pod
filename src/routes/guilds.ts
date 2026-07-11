@@ -2,13 +2,18 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import * as guildsService from '../services/guilds.js'
 import type { GuildServiceDeps } from '../services/guilds.js'
+import { ValidationError } from '../services/errors.js'
 
 export type GuildRouteDeps = GuildServiceDeps
 
 const subscribeGuildBodySchema = z.object({
   guildId: z.string().min(1),
-  channelId: z.string().min(1),
   installedBy: z.string().min(1),
+  // Both optional — see services/guilds.ts's subscribeGuild for what
+  // omitting one or both means (reconfigure just one setting, or read
+  // current settings back without writing anything).
+  channelId: z.string().min(1).optional(),
+  policy: z.enum(['OPEN', 'ALLOWLIST']).optional(),
 })
 type SubscribeGuildBody = z.infer<typeof subscribeGuildBodySchema>
 
@@ -24,8 +29,15 @@ export function registerGuildRoutes(app: FastifyInstance, deps: GuildRouteDeps):
     '/guilds/subscribe',
     { schema: { body: subscribeGuildBodySchema } },
     async (request, reply) => {
-      await guildsService.subscribeGuild(deps, request.body)
-      return reply.send({ ok: true })
+      try {
+        const result = await guildsService.subscribeGuild(deps, request.body)
+        return reply.send(result)
+      } catch (err) {
+        if (err instanceof ValidationError) {
+          return reply.code(422).send({ error: err.message })
+        }
+        throw err
+      }
     }
   )
 

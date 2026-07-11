@@ -20,7 +20,9 @@ export interface AppPrismaClient {
   }
   guildSubscription: {
     findMany: Method<PrismaClient['guildSubscription']['findMany']>
-    upsert: Method<PrismaClient['guildSubscription']['upsert']>
+    findUnique: Method<PrismaClient['guildSubscription']['findUnique']>
+    create: Method<PrismaClient['guildSubscription']['create']>
+    update: Method<PrismaClient['guildSubscription']['update']>
   }
   guildOrganizerAllowlist: {
     upsert: Method<PrismaClient['guildOrganizerAllowlist']['upsert']>
