@@ -57,6 +57,12 @@ model GuildSubscription {
   broadcastChannelId String        @map("broadcast_channel_id")
   postingPolicy      PostingPolicy @default(ALLOWLIST) @map("posting_policy")
   installedAt        DateTime      @default(now()) @map("installed_at")
+  // Soft-delete, not a real row delete — pod_round_targets' FK to this
+  // table is ON DELETE RESTRICT (preserves historical round data), so a
+  // guild with any round history can never actually be deleted. Null
+  // means currently subscribed; a timestamp means unsubscribed as of
+  // then. /subscribe-guild clears this back to null on reactivation.
+  unsubscribedAt     DateTime?     @map("unsubscribed_at")
 
   allowlist GuildOrganizerAllowlist[]
   targets   PodRoundTarget[]

@@ -4,7 +4,7 @@ import { createFakePrismaClient } from '../testUtils/fakePrismaClient.js'
 import { stub } from '../testUtils/stub.js'
 import { deepEqual } from '../testUtils/deepEqual.js'
 import { ValidationError } from './errors.js'
-import { subscribeGuild, type GuildServiceDeps } from './guilds.js'
+import { subscribeGuild, unsubscribeGuild, type GuildServiceDeps } from './guilds.js'
 
 type GuildSubscriptionRow = Awaited<ReturnType<AppPrismaClient['guildSubscription']['create']>>
 type GuildSubscriptionCreateArgs = Parameters<AppPrismaClient['guildSubscription']['create']>[0]
@@ -16,6 +16,7 @@ function fakeGuildSubscriptionRow(overrides: Partial<GuildSubscriptionRow> = {})
     installedByDiscordId: 'admin-1',
     broadcastChannelId: 'channel-1',
     postingPolicy: 'ALLOWLIST',
+    unsubscribedAt: null,
     installedAt: new Date(),
     ...overrides,
   }
@@ -52,7 +53,7 @@ describe('subscribeGuild', () => {
 
     const result = await subscribeGuild(deps, { guildId: 'guild-1', installedBy: 'admin-1', channelId: 'channel-1' })
 
-    expect(result).toEqual({ broadcastChannelId: 'channel-1', postingPolicy: 'ALLOWLIST' })
+    expect(result).toEqual({ subscribed: true, broadcastChannelId: 'channel-1', postingPolicy: 'ALLOWLIST' })
   })
 
   it('creates a new subscription with an explicit OPEN policy when given', async () => {
@@ -82,7 +83,7 @@ describe('subscribeGuild', () => {
 
     const result = await subscribeGuild(deps, { guildId: 'guild-1', installedBy: 'admin-1' })
 
-    expect(result).toEqual({ broadcastChannelId: 'channel-9', postingPolicy: 'OPEN' })
+    expect(result).toEqual({ subscribed: true, broadcastChannelId: 'channel-9', postingPolicy: 'OPEN' })
     expect(update.calls).toHaveLength(0)
   })
 
@@ -90,7 +91,7 @@ describe('subscribeGuild', () => {
     const findUnique = stub(async () => fakeGuildSubscriptionRow({ postingPolicy: 'OPEN' }))
     const expected: GuildSubscriptionUpdateArgs = {
       where: { guildId: 'guild-1' },
-      data: { broadcastChannelId: 'channel-2' },
+      data: { broadcastChannelId: 'channel-2', unsubscribedAt: null },
     }
     const update = stub(async (args: GuildSubscriptionUpdateArgs) => {
       if (!deepEqual(args, expected)) throw new Error(`unexpected update args: ${JSON.stringify(args)}`)
@@ -100,7 +101,7 @@ describe('subscribeGuild', () => {
 
     const result = await subscribeGuild(deps, { guildId: 'guild-1', installedBy: 'admin-1', channelId: 'channel-2' })
 
-    expect(result).toEqual({ broadcastChannelId: 'channel-2', postingPolicy: 'OPEN' })
+    expect(result).toEqual({ subscribed: true, broadcastChannelId: 'channel-2', postingPolicy: 'OPEN' })
   })
 
   it('updates only the policy when only a policy is given, leaving the channel alone', async () => {
@@ -117,7 +118,7 @@ describe('subscribeGuild', () => {
 
     const result = await subscribeGuild(deps, { guildId: 'guild-1', installedBy: 'admin-1', policy: 'OPEN' })
 
-    expect(result).toEqual({ broadcastChannelId: 'channel-1', postingPolicy: 'OPEN' })
+    expect(result).toEqual({ subscribed: true, broadcastChannelId: 'channel-1', postingPolicy: 'OPEN' })
   })
 
   it('never includes installedByDiscordId in an update — set once at creation, not reassigned on reconfigure', async () => {
@@ -131,5 +132,93 @@ describe('subscribeGuild', () => {
     await subscribeGuild(deps, { guildId: 'guild-1', installedBy: 'someone-else', channelId: 'channel-2' })
 
     expect(update.calls).toHaveLength(1)
+  })
+
+  it('reports last-known settings (subscribed: false), without writing anything, when unsubscribed and no channel is given', async () => {
+    const findUnique = stub(async () =>
+      fakeGuildSubscriptionRow({ broadcastChannelId: 'channel-1', postingPolicy: 'OPEN', unsubscribedAt: new Date() })
+    )
+    const update = stub(async () => {
+      throw new Error('update should not have been called')
+    })
+    const deps = buildDeps({ guildSubscription: { findUnique, update } })
+
+    const result = await subscribeGuild(deps, { guildId: 'guild-1', installedBy: 'admin-1' })
+
+    expect(result).toEqual({ subscribed: false, broadcastChannelId: 'channel-1', postingPolicy: 'OPEN' })
+    expect(update.calls).toHaveLength(0)
+  })
+
+  it('reactivates (clears unsubscribedAt) when a channel is given for a currently-unsubscribed guild', async () => {
+    const findUnique = stub(async () => fakeGuildSubscriptionRow({ unsubscribedAt: new Date() }))
+    const expected: GuildSubscriptionUpdateArgs = {
+      where: { guildId: 'guild-1' },
+      data: { broadcastChannelId: 'channel-3', unsubscribedAt: null },
+    }
+    const update = stub(async (args: GuildSubscriptionUpdateArgs) => {
+      if (!deepEqual(args, expected)) throw new Error(`unexpected update args: ${JSON.stringify(args)}`)
+      return fakeGuildSubscriptionRow({ broadcastChannelId: 'channel-3', unsubscribedAt: null })
+    })
+    const deps = buildDeps({ guildSubscription: { findUnique, update } })
+
+    const result = await subscribeGuild(deps, { guildId: 'guild-1', installedBy: 'admin-1', channelId: 'channel-3' })
+
+    expect(result).toEqual({ subscribed: true, broadcastChannelId: 'channel-3', postingPolicy: 'ALLOWLIST' })
+  })
+
+  it('does not reactivate on a policy-only call while unsubscribed (still reports subscribed: false)', async () => {
+    const findUnique = stub(async () => fakeGuildSubscriptionRow({ unsubscribedAt: new Date() }))
+    const update = stub(async () => {
+      throw new Error('update should not have been called — policy alone must not reactivate')
+    })
+    const deps = buildDeps({ guildSubscription: { findUnique, update } })
+
+    const result = await subscribeGuild(deps, { guildId: 'guild-1', installedBy: 'admin-1', policy: 'OPEN' })
+
+    expect(result.subscribed).toBe(false)
+    expect(update.calls).toHaveLength(0)
+  })
+})
+
+describe('unsubscribeGuild', () => {
+  it('sets unsubscribedAt and reports wasSubscribed: true for a currently-subscribed guild', async () => {
+    const findUnique = stub(async () => fakeGuildSubscriptionRow())
+    const update = stub(async (args: GuildSubscriptionUpdateArgs) => {
+      expect(args.where).toEqual({ guildId: 'guild-1' })
+      expect(args.data.unsubscribedAt).toBeInstanceOf(Date)
+      return fakeGuildSubscriptionRow({ unsubscribedAt: new Date() })
+    })
+    const deps = buildDeps({ guildSubscription: { findUnique, update } })
+
+    const result = await unsubscribeGuild(deps, 'guild-1')
+
+    expect(result).toEqual({ wasSubscribed: true })
+    expect(update.calls).toHaveLength(1)
+  })
+
+  it('reports wasSubscribed: false (no write) for a guild that was never subscribed', async () => {
+    const findUnique = stub(async () => null)
+    const update = stub(async () => {
+      throw new Error('update should not have been called')
+    })
+    const deps = buildDeps({ guildSubscription: { findUnique, update } })
+
+    const result = await unsubscribeGuild(deps, 'guild-1')
+
+    expect(result).toEqual({ wasSubscribed: false })
+    expect(update.calls).toHaveLength(0)
+  })
+
+  it('reports wasSubscribed: false (no write) for a guild that is already unsubscribed', async () => {
+    const findUnique = stub(async () => fakeGuildSubscriptionRow({ unsubscribedAt: new Date() }))
+    const update = stub(async () => {
+      throw new Error('update should not have been called')
+    })
+    const deps = buildDeps({ guildSubscription: { findUnique, update } })
+
+    const result = await unsubscribeGuild(deps, 'guild-1')
+
+    expect(result).toEqual({ wasSubscribed: false })
+    expect(update.calls).toHaveLength(0)
   })
 })

@@ -34,6 +34,7 @@ function fakeGuildSubscriptionRow(overrides: Partial<GuildSubscriptionRow> = {})
     installedByDiscordId: 'admin-1',
     broadcastChannelId: 'channel-1',
     postingPolicy: 'ALLOWLIST',
+    unsubscribedAt: null,
     installedAt: new Date(),
     ...overrides,
   }
@@ -160,6 +161,7 @@ describe('GET /organizers/:discordId/eligible-guilds', () => {
   it('queries for OPEN-policy guilds plus guilds where the organizer is allow-listed', async () => {
     const expectedArgs: GuildSubscriptionFindManyArgs = {
       where: {
+        unsubscribedAt: null,
         OR: [{ postingPolicy: 'OPEN' }, { allowlist: { some: { organizerDiscordId: 'user-1' } } }],
       },
     }

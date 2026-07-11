@@ -8,6 +8,7 @@ export function createFakeBackendClient(overrides: Partial<BackendClient> = {}):
   return {
     linkOrganizer: unimplemented('linkOrganizer'),
     subscribeGuild: unimplemented('subscribeGuild'),
+    unsubscribeGuild: unimplemented('unsubscribeGuild'),
     allowOrganizer: unimplemented('allowOrganizer'),
     listEligibleGuilds: unimplemented('listEligibleGuilds'),
     startPod: unimplemented('startPod'),

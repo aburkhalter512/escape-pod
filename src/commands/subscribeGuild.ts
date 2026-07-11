@@ -42,6 +42,13 @@ export const subscribeGuild: CommandHandler = async ({ interaction, backend }) =
     throw err
   }
 
+  if (!result.subscribed) {
+    return ephemeral(
+      `This server isn't currently subscribed (last channel: <#${result.broadcastChannelId}>, policy: ${POLICY_LABEL[result.postingPolicy]}). ` +
+        'Run this command again with a channel to resume.'
+    )
+  }
+
   const changedSomething = channelId !== undefined || policy !== undefined
   const summary = `Channel: <#${result.broadcastChannelId}>. Policy: ${POLICY_LABEL[result.postingPolicy]}.`
 

@@ -23,6 +23,7 @@ describe('LocalBackendClient', () => {
       installedByDiscordId: 'admin-1',
       broadcastChannelId: 'channel-1',
       postingPolicy: 'ALLOWLIST' as const,
+      unsubscribedAt: null,
       installedAt: new Date(),
     }))
 
@@ -32,6 +33,30 @@ describe('LocalBackendClient', () => {
     expect(create.calls[0][0]).toEqual({
       data: { guildId: 'g1', broadcastChannelId: 'channel-1', installedByDiscordId: 'admin-1' },
     })
+  })
+
+  it('delegates unsubscribeGuild to services/guilds.ts', async () => {
+    const findUnique = stub(async (_args: unknown) => ({
+      guildId: 'g1',
+      installedByDiscordId: 'admin-1',
+      broadcastChannelId: 'channel-1',
+      postingPolicy: 'ALLOWLIST' as const,
+      unsubscribedAt: null,
+      installedAt: new Date(),
+    }))
+    const update = stub(async (_args: unknown) => ({
+      guildId: 'g1',
+      installedByDiscordId: 'admin-1',
+      broadcastChannelId: 'channel-1',
+      postingPolicy: 'ALLOWLIST' as const,
+      unsubscribedAt: new Date(),
+      installedAt: new Date(),
+    }))
+
+    const result = await client({ guildSubscription: { findUnique, update } }).unsubscribeGuild('g1')
+
+    expect(result).toEqual({ wasSubscribed: true })
+    expect(update.calls).toHaveLength(1)
   })
 
   it('delegates allowOrganizer to guildOrganizerAllowlist.upsert', async () => {
@@ -54,6 +79,7 @@ describe('LocalBackendClient', () => {
         installedByDiscordId: 'admin-1',
         broadcastChannelId: 'channel-1',
         postingPolicy: 'OPEN' as const,
+        unsubscribedAt: null,
         installedAt: new Date(),
       },
     ])
@@ -70,6 +96,7 @@ describe('LocalBackendClient', () => {
         installedByDiscordId: 'admin-1',
         broadcastChannelId: 'channel-1',
         postingPolicy: 'OPEN' as const,
+        unsubscribedAt: null,
         installedAt: new Date(),
       },
     ])

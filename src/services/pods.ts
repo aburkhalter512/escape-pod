@@ -44,9 +44,9 @@ export async function startPod(deps: PodServiceDeps, params: StartPodParams): Pr
   const { organizerDiscordId, setCode, threshold, guildIds, scheduledFor, originGuildName } = params
 
   const subscriptions = await deps.prisma.guildSubscription.findMany({
-    where: { guildId: { in: guildIds } },
+    where: { guildId: { in: guildIds }, unsubscribedAt: null },
   })
-  // A guild could theoretically have unsubscribed between /start-pod's
+  // A guild could genuinely have unsubscribed between /start-pod's
   // eligibility check and this call — skip it rather than failing the
   // whole round over one stale target.
   const resolvedTargets = subscriptions.map((sub) => ({

@@ -39,6 +39,12 @@ export const commandDefinitions: RESTPostAPIChatInputApplicationCommandsJSONBody
     ],
   },
   {
+    name: 'unsubscribe-guild',
+    description: 'Stop this server from receiving draft pod LFG broadcasts',
+    type: ApplicationCommandType.ChatInput,
+    default_member_permissions: PermissionFlagsBits.ManageGuild.toString(),
+  },
+  {
     name: 'allow-organizer',
     description: 'Approve an organizer to post draft pod rounds into this server',
     type: ApplicationCommandType.ChatInput,

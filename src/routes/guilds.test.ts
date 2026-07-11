@@ -19,6 +19,7 @@ function fakeGuildSubscriptionRow(overrides: Partial<GuildSubscriptionRow> = {})
     installedByDiscordId: 'admin-1',
     broadcastChannelId: 'channel-1',
     postingPolicy: 'ALLOWLIST',
+    unsubscribedAt: null,
     installedAt: new Date(),
     ...overrides,
   }
@@ -62,7 +63,7 @@ describe('POST /guilds/subscribe', () => {
     })
 
     expect(response.statusCode).toBe(200)
-    expect(response.json()).toEqual({ broadcastChannelId: 'channel-1', postingPolicy: 'ALLOWLIST' })
+    expect(response.json()).toEqual({ subscribed: true, broadcastChannelId: 'channel-1', postingPolicy: 'ALLOWLIST' })
   })
 
   it('rejects a first-time subscribe with no channel (422), before touching create', async () => {
@@ -117,7 +118,7 @@ describe('POST /guilds/subscribe', () => {
     })
 
     expect(response.statusCode).toBe(200)
-    expect(response.json()).toEqual({ broadcastChannelId: 'channel-1', postingPolicy: 'OPEN' })
+    expect(response.json()).toEqual({ subscribed: true, broadcastChannelId: 'channel-1', postingPolicy: 'OPEN' })
     expect(update.calls).toHaveLength(0)
   })
 
@@ -135,6 +136,90 @@ describe('POST /guilds/subscribe', () => {
 
     expect(response.statusCode).toBe(400)
     expect(findUnique.calls).toHaveLength(0)
+  })
+
+  it('resubscribes (reactivates) a previously-unsubscribed guild when a channel is given', async () => {
+    const findUnique = stub(async (_args: unknown) => fakeGuildSubscriptionRow({ unsubscribedAt: new Date() }))
+    const update = stub(async (args: GuildSubscriptionUpdateArgs) => {
+      expect(args.data).toEqual({ broadcastChannelId: 'channel-2', unsubscribedAt: null })
+      return fakeGuildSubscriptionRow({ broadcastChannelId: 'channel-2', unsubscribedAt: null })
+    })
+    const { app } = buildApp({ prisma: { guildSubscription: { findUnique, update } } })
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/guilds/subscribe',
+      payload: { guildId: 'guild-1', channelId: 'channel-2', installedBy: 'admin-1' },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({ subscribed: true, broadcastChannelId: 'channel-2', postingPolicy: 'ALLOWLIST' })
+  })
+
+  it('reports subscribed: false (no write) for an unsubscribed guild when no channel is given', async () => {
+    const findUnique = stub(async (_args: unknown) =>
+      fakeGuildSubscriptionRow({ broadcastChannelId: 'channel-1', unsubscribedAt: new Date() })
+    )
+    const update = stub(async (_args: unknown) => {
+      throw new Error('update should not have been called')
+    })
+    const { app } = buildApp({ prisma: { guildSubscription: { findUnique, update } } })
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/guilds/subscribe',
+      payload: { guildId: 'guild-1', installedBy: 'admin-1' },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({ subscribed: false, broadcastChannelId: 'channel-1', postingPolicy: 'ALLOWLIST' })
+    expect(update.calls).toHaveLength(0)
+  })
+})
+
+describe('POST /guilds/unsubscribe', () => {
+  it('unsubscribes a currently-subscribed guild', async () => {
+    const findUnique = stub(async (_args: unknown) => fakeGuildSubscriptionRow())
+    const update = stub(async (args: GuildSubscriptionUpdateArgs) => {
+      expect(args.data.unsubscribedAt).toBeInstanceOf(Date)
+      return fakeGuildSubscriptionRow({ unsubscribedAt: new Date() })
+    })
+    const { app } = buildApp({ prisma: { guildSubscription: { findUnique, update } } })
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/guilds/unsubscribe',
+      payload: { guildId: 'guild-1' },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({ wasSubscribed: true })
+  })
+
+  it('reports wasSubscribed: false for a guild that was never subscribed', async () => {
+    const findUnique = stub(async (_args: unknown) => null)
+    const { app } = buildApp({ prisma: { guildSubscription: { findUnique } } })
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/guilds/unsubscribe',
+      payload: { guildId: 'guild-1' },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({ wasSubscribed: false })
+  })
+
+  it('rejects a body missing guildId with 400', async () => {
+    const { app } = buildApp()
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/guilds/unsubscribe',
+      payload: {},
+    })
+
+    expect(response.statusCode).toBe(400)
   })
 })
 

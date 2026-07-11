@@ -17,6 +17,11 @@ const subscribeGuildBodySchema = z.object({
 })
 type SubscribeGuildBody = z.infer<typeof subscribeGuildBodySchema>
 
+const unsubscribeGuildBodySchema = z.object({
+  guildId: z.string().min(1),
+})
+type UnsubscribeGuildBody = z.infer<typeof unsubscribeGuildBodySchema>
+
 const allowOrganizerBodySchema = z.object({
   guildId: z.string().min(1),
   organizerDiscordId: z.string().min(1),
@@ -38,6 +43,15 @@ export function registerGuildRoutes(app: FastifyInstance, deps: GuildRouteDeps):
         }
         throw err
       }
+    }
+  )
+
+  app.post<{ Body: UnsubscribeGuildBody }>(
+    '/guilds/unsubscribe',
+    { schema: { body: unsubscribeGuildBodySchema } },
+    async (request, reply) => {
+      const result = await guildsService.unsubscribeGuild(deps, request.body.guildId)
+      return reply.send(result)
     }
   )
 

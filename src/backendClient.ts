@@ -29,7 +29,8 @@ export interface BackendClient {
     guildId: string,
     installedBy: string,
     params: { channelId?: string; policy?: PostingPolicy }
-  ): Promise<{ broadcastChannelId: string; postingPolicy: PostingPolicy }>
+  ): Promise<{ subscribed: boolean; broadcastChannelId: string; postingPolicy: PostingPolicy }>
+  unsubscribeGuild(guildId: string): Promise<{ wasSubscribed: boolean }>
   allowOrganizer(guildId: string, organizerDiscordId: string, approvedBy: string): Promise<void>
   listEligibleGuilds(organizerDiscordId: string): Promise<Array<{ guildId: string }>>
   startPod(params: {
@@ -88,8 +89,14 @@ export class LocalBackendClient implements BackendClient {
     guildId: string,
     installedBy: string,
     params: { channelId?: string; policy?: PostingPolicy }
-  ): Promise<{ broadcastChannelId: string; postingPolicy: PostingPolicy }> {
+  ): Promise<{ subscribed: boolean; broadcastChannelId: string; postingPolicy: PostingPolicy }> {
     return guildsService.subscribeGuild(this.deps, { guildId, installedBy, ...params })
+  }
+
+  // §7.2 inverse: soft-deletes the subscription (see services/guilds.ts's
+  // unsubscribeGuild for why this can never be a real row delete).
+  unsubscribeGuild(guildId: string): Promise<{ wasSubscribed: boolean }> {
+    return guildsService.unsubscribeGuild(this.deps, guildId)
   }
 
   // §7.2: allow-list an organizer for a guild with `allowlist` policy.

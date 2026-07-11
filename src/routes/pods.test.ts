@@ -63,6 +63,7 @@ function fakeGuildSubscriptionRow(overrides: Partial<GuildSubscriptionRow> = {})
     installedByDiscordId: 'admin-1',
     broadcastChannelId: 'channel-1',
     postingPolicy: 'ALLOWLIST',
+    unsubscribedAt: null,
     installedAt: new Date(),
     ...overrides,
   }

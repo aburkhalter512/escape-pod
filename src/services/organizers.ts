@@ -72,6 +72,7 @@ export async function listEligibleGuilds(
 ): Promise<EligibleGuild[]> {
   const guilds = await deps.prisma.guildSubscription.findMany({
     where: {
+      unsubscribedAt: null,
       OR: [{ postingPolicy: 'OPEN' }, { allowlist: { some: { organizerDiscordId } } }],
     },
   })
