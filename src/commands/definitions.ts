@@ -4,6 +4,7 @@ import {
   PermissionFlagsBits,
   type RESTPostAPIChatInputApplicationCommandsJSONBody,
 } from 'discord-api-types/v10'
+import { SWU_SETS } from '../swuSets.js'
 
 // Command set from INTEGRATIONS.md §7.4. Registered globally per guild the
 // bot is installed in via scripts/register-commands.ts.
@@ -48,9 +49,10 @@ export const commandDefinitions: RESTPostAPIChatInputApplicationCommandsJSONBody
     options: [
       {
         name: 'set',
-        description: 'Set code to draft (e.g. JTL, LOF, SOR)',
+        description: 'Set to draft',
         type: ApplicationCommandOptionType.String,
         required: true,
+        choices: SWU_SETS.map((set) => ({ name: `${set.name} (${set.code})`, value: set.code })),
       },
       {
         name: 'threshold',

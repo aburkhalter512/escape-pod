@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import { ApplicationCommandOptionType } from 'discord-api-types/v10'
 import { commandDefinitions } from './definitions.js'
 import { commandHandlers } from './index.js'
+import { SWU_SETS } from '../swuSets.js'
 
 describe('commandDefinitions / commandHandlers alignment', () => {
   it('registers a handler for every defined command', () => {
@@ -33,5 +35,15 @@ describe('commandDefinitions / commandHandlers alignment', () => {
       const definition = commandDefinitions.find((d) => d.name === name)
       expect(definition?.default_member_permissions, `${name} should restrict by default`).toBeDefined()
     }
+  })
+
+  it("start-pod's set option offers every SWU_SETS entry as a dropdown choice, newest first, no free text", () => {
+    const startPod = commandDefinitions.find((d) => d.name === 'start-pod')
+    const setOption = startPod?.options?.find((o) => o.name === 'set') as
+      | { type: ApplicationCommandOptionType; choices?: Array<{ name: string; value: string }> }
+      | undefined
+
+    expect(setOption?.type).toBe(ApplicationCommandOptionType.String)
+    expect(setOption?.choices?.map((c) => c.value)).toEqual(SWU_SETS.map((s) => s.code))
   })
 })
