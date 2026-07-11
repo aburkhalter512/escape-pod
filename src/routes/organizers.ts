@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import * as organizersService from '../services/organizers.js'
 import type { OrganizerServiceDeps } from '../services/organizers.js'
-import { ValidationError } from '../services/errors.js'
+import { httpStatusForError } from '../services/errors.js'
 
 export type OrganizerRouteDeps = OrganizerServiceDeps
 
@@ -22,15 +22,11 @@ export function registerOrganizerRoutes(app: FastifyInstance, deps: OrganizerRou
     '/organizers/link',
     { schema: { body: linkOrganizerBodySchema } },
     async (request, reply) => {
-      try {
-        const result = await organizersService.linkOrganizer(deps, request.body)
-        return reply.send(result)
-      } catch (err) {
-        if (err instanceof ValidationError) {
-          return reply.code(422).send({ error: err.message })
-        }
-        throw err
+      const result = await organizersService.linkOrganizer(deps, request.body)
+      if (!result.ok) {
+        return reply.code(httpStatusForError(result.error)).send({ error: result.error.message })
       }
+      return reply.send(result.value)
     }
   )
 

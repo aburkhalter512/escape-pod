@@ -23,6 +23,11 @@ export interface AppPrismaClient {
     findUnique: Method<PrismaClient['guildSubscription']['findUnique']>
     create: Method<PrismaClient['guildSubscription']['create']>
     update: Method<PrismaClient['guildSubscription']['update']>
+    // Only used by listEligibleGuilds to distinguish "no guild anywhere is
+    // subscribed" from "guilds are subscribed but this organizer isn't
+    // eligible for any of them" once the eligible-guilds query itself
+    // comes back empty.
+    count: Method<PrismaClient['guildSubscription']['count']>
   }
   guildOrganizerAllowlist: {
     upsert: Method<PrismaClient['guildOrganizerAllowlist']['upsert']>

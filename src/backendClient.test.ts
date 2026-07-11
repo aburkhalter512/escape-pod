@@ -86,7 +86,7 @@ describe('LocalBackendClient', () => {
 
     const result = await client({ guildSubscription: { findMany } }).listEligibleGuilds('org-1')
 
-    expect(result).toEqual([{ guildId: 'g1' }])
+    expect(result).toEqual({ guilds: [{ guildId: 'g1' }], anySubscribed: true })
   })
 
   it('delegates startPod to podRound.create and guildSubscription.findMany', async () => {
@@ -122,7 +122,7 @@ describe('LocalBackendClient', () => {
     expect(result).toEqual({ podRoundId: 'round-1', targets: [{ guildId: 'g1', channelId: 'channel-1' }] })
   })
 
-  it('delegates cancelPod to podRound.findUnique + update, throwing on a non-organizer requester', async () => {
+  it('delegates cancelPod to podRound.findUnique + update, returning a forbidden error for a non-organizer requester', async () => {
     // podRound.findUnique is generic in AppPrismaClient (called both with
     // and without `include: { organizer: true }` elsewhere), so a plain
     // stub() can't satisfy its type — a small generic wrapper is needed
@@ -140,6 +140,11 @@ describe('LocalBackendClient', () => {
       }) as never
     }
 
-    await expect(client({ podRound: { findUnique } }).cancelPod('round-1', 'someone-else')).rejects.toThrow()
+    const result = await client({ podRound: { findUnique } }).cancelPod('round-1', 'someone-else')
+
+    expect(result).toEqual({
+      ok: false,
+      error: { kind: 'forbidden', message: 'Only the organizer who started this round can cancel it' },
+    })
   })
 })

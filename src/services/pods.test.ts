@@ -7,7 +7,6 @@ import { createFakePrismaClient, type FakePrismaOverrides } from '../testUtils/f
 import { createFakePtpClient } from '../testUtils/fakePtpClient.js'
 import { stub } from '../testUtils/stub.js'
 import { deepEqual } from '../testUtils/deepEqual.js'
-import { NotFoundError, ForbiddenError } from './errors.js'
 import {
   recordSignup,
   cancelPod,
@@ -98,24 +97,24 @@ function buildDeps(overrides: FakePrismaOverrides = {}): PodServiceDeps {
 }
 
 describe('recordTargetMessage', () => {
-  it('throws NotFoundError when there is no target for that round/guild pair', async () => {
+  it('returns a not_found error when there is no target for that round/guild pair', async () => {
     const findUnique = stub(async () => null)
     const deps = buildDeps({ podRoundTarget: { findUnique } })
 
-    await expect(
-      recordTargetMessage(deps, { podRoundId: 'round-1', guildId: 'unknown-guild', messageId: 'msg-1' })
-    ).rejects.toBeInstanceOf(NotFoundError)
+    const result = await recordTargetMessage(deps, { podRoundId: 'round-1', guildId: 'unknown-guild', messageId: 'msg-1' })
+
+    expect(result).toEqual({ ok: false, error: { kind: 'not_found', message: 'Pod round target not found' } })
   })
 })
 
 describe('recordSignup', () => {
-  it('throws NotFoundError when the round does not exist', async () => {
+  it('returns a not_found error when the round does not exist', async () => {
     const findUnique = stubPodRoundFindUnique(async () => null)
     const deps = buildDeps({ podRound: { findUnique } })
 
-    await expect(
-      recordSignup(deps, { podRoundId: 'round-1', discordId: 'p1', username: 'P1', sourceGuildId: 'g1', action: 'in' })
-    ).rejects.toBeInstanceOf(NotFoundError)
+    const result = await recordSignup(deps, { podRoundId: 'round-1', discordId: 'p1', username: 'P1', sourceGuildId: 'g1', action: 'in' })
+
+    expect(result).toEqual({ ok: false, error: { kind: 'not_found', message: 'Pod round not found' } })
   })
 
   it('only calls PTP once when two signups race to push the round past threshold (tasks/001)', async () => {
@@ -158,7 +157,9 @@ describe('recordSignup', () => {
     ])
 
     expect(createPod.calls).toHaveLength(1)
-    expect([resultA.podCreated, resultB.podCreated].filter(Boolean)).toHaveLength(1)
+    expect(resultA.ok && resultB.ok).toBe(true)
+    const podCreatedFlags = [resultA, resultB].map((r) => r.ok && r.value.podCreated)
+    expect(podCreatedFlags.filter(Boolean)).toHaveLength(1)
   })
 
   it('logs (not throws) when PTP pod creation fails after threshold reached', async () => {
@@ -190,7 +191,8 @@ describe('recordSignup', () => {
       action: 'in',
     })
 
-    expect(result).toMatchObject({ full: true, podCreated: false })
+    expect(result.ok).toBe(true)
+    expect(result.ok && result.value).toMatchObject({ full: true, podCreated: false })
     expect(errors).toHaveLength(1)
   })
 
@@ -224,27 +226,31 @@ describe('recordSignup', () => {
       action: 'in',
     })
 
-    expect(result).toMatchObject({ count: 3, threshold: 2, full: false, podCreated: false })
+    expect(result.ok).toBe(true)
+    expect(result.ok && result.value).toMatchObject({ count: 3, threshold: 2, full: false, podCreated: false })
   })
 })
 
 describe('cancelPod', () => {
-  it('throws NotFoundError when the round does not exist', async () => {
+  it('returns a not_found error when the round does not exist', async () => {
     const findUnique = stubPodRoundFindUnique(async () => null)
     const deps = buildDeps({ podRound: { findUnique } })
 
-    await expect(cancelPod(deps, { podRoundId: 'round-1', requestedBy: 'organizer-1' })).rejects.toBeInstanceOf(
-      NotFoundError
-    )
+    const result = await cancelPod(deps, { podRoundId: 'round-1', requestedBy: 'organizer-1' })
+
+    expect(result).toEqual({ ok: false, error: { kind: 'not_found', message: 'Pod round not found' } })
   })
 
-  it("throws ForbiddenError when the requester is not the round's organizer", async () => {
+  it("returns a forbidden error when the requester is not the round's organizer", async () => {
     const findUnique = stubPodRoundFindUnique(async () => fakePodRoundRow())
     const deps = buildDeps({ podRound: { findUnique } })
 
-    await expect(cancelPod(deps, { podRoundId: 'round-1', requestedBy: 'someone-else' })).rejects.toBeInstanceOf(
-      ForbiddenError
-    )
+    const result = await cancelPod(deps, { podRoundId: 'round-1', requestedBy: 'someone-else' })
+
+    expect(result).toEqual({
+      ok: false,
+      error: { kind: 'forbidden', message: "Only the organizer who started this round can cancel it" },
+    })
   })
 })
 

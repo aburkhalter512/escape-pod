@@ -7,7 +7,6 @@ import { createFakeDiscordRest } from '../testUtils/fakeDiscordRest.js'
 import { fakeChatInputInteraction, fakeMember } from '../testUtils/fakeInteraction.js'
 import { responseData } from '../testUtils/responseData.js'
 import { stub } from '../testUtils/stub.js'
-import { ValidationError } from '../services/errors.js'
 
 // Discord's own type guarantees member.user is always present — this
 // simulates the malformed payload that guarantee rules out, to prove the
@@ -32,7 +31,7 @@ describe('subscribeGuild', () => {
       if (guildId !== 'guild-1' || params.channelId !== 'channel-1' || installedBy !== 'user-1') {
         throw new Error(`unexpected subscribeGuild args: ${guildId} ${JSON.stringify(params)} ${installedBy}`)
       }
-      return { subscribed: true, broadcastChannelId: 'channel-1', postingPolicy: 'ALLOWLIST' as const }
+      return { ok: true as const, value: { subscribed: true, broadcastChannelId: 'channel-1', postingPolicy: 'ALLOWLIST' as const } }
     })
     const ctx: CommandContext = {
       interaction: interaction(),
@@ -49,7 +48,7 @@ describe('subscribeGuild', () => {
   it('passes the policy option through when provided', async () => {
     const subscribeGuildMock = stub(async (_guildId: string, _installedBy: string, params: SubscribeGuildParams) => {
       expect(params.policy).toBe('OPEN')
-      return { subscribed: true, broadcastChannelId: 'channel-1', postingPolicy: 'OPEN' as const }
+      return { ok: true as const, value: { subscribed: true, broadcastChannelId: 'channel-1', postingPolicy: 'OPEN' as const } }
     })
     const ctx: CommandContext = {
       interaction: interaction({
@@ -73,7 +72,7 @@ describe('subscribeGuild', () => {
   it('shows current settings without claiming anything changed when no options are given', async () => {
     const subscribeGuildMock = stub(async (_guildId: string, _installedBy: string, params: SubscribeGuildParams) => {
       expect(params).toEqual({ channelId: undefined, policy: undefined })
-      return { subscribed: true, broadcastChannelId: 'channel-1', postingPolicy: 'ALLOWLIST' as const }
+      return { ok: true as const, value: { subscribed: true, broadcastChannelId: 'channel-1', postingPolicy: 'ALLOWLIST' as const } }
     })
     const ctx: CommandContext = {
       interaction: interaction({ options: [] }),
@@ -89,9 +88,8 @@ describe('subscribeGuild', () => {
 
   it('tells the admin how to resume when the guild is currently unsubscribed and no channel is given', async () => {
     const subscribeGuildMock = stub(async (_guildId: string, _installedBy: string, _params: SubscribeGuildParams) => ({
-      subscribed: false,
-      broadcastChannelId: 'channel-1',
-      postingPolicy: 'ALLOWLIST' as const,
+      ok: true as const,
+      value: { subscribed: false, broadcastChannelId: 'channel-1', postingPolicy: 'ALLOWLIST' as const },
     }))
     const ctx: CommandContext = {
       interaction: interaction({ options: [] }),
@@ -108,7 +106,7 @@ describe('subscribeGuild', () => {
   it('reactivates a previously-unsubscribed guild when a channel is given', async () => {
     const subscribeGuildMock = stub(async (_guildId: string, _installedBy: string, params: SubscribeGuildParams) => {
       expect(params.channelId).toBe('channel-1')
-      return { subscribed: true, broadcastChannelId: 'channel-1', postingPolicy: 'ALLOWLIST' as const }
+      return { ok: true as const, value: { subscribed: true, broadcastChannelId: 'channel-1', postingPolicy: 'ALLOWLIST' as const } }
     })
     const ctx: CommandContext = {
       interaction: interaction(),
@@ -123,9 +121,10 @@ describe('subscribeGuild', () => {
   })
 
   it("surfaces the service's validation error (e.g. first-time subscribe with no channel) as an ephemeral message", async () => {
-    const subscribeGuildMock = stub(async (_guildId: string, _installedBy: string, _params: SubscribeGuildParams) => {
-      throw new ValidationError('A channel is required the first time this server subscribes.')
-    })
+    const subscribeGuildMock = stub(async (_guildId: string, _installedBy: string, _params: SubscribeGuildParams) => ({
+      ok: false as const,
+      error: { kind: 'validation' as const, message: 'A channel is required the first time this server subscribes.' },
+    }))
     const ctx: CommandContext = {
       interaction: interaction({ options: [] }),
       backend: createFakeBackendClient({ subscribeGuild: subscribeGuildMock }),
@@ -185,7 +184,7 @@ describe('subscribeGuild', () => {
   it('treats a channel option with an unexpected type the same as no channel at all', async () => {
     const subscribeGuildMock = stub(async (_guildId: string, _installedBy: string, params: SubscribeGuildParams) => {
       expect(params.channelId).toBeUndefined()
-      return { subscribed: true, broadcastChannelId: 'channel-1', postingPolicy: 'ALLOWLIST' as const }
+      return { ok: true as const, value: { subscribed: true, broadcastChannelId: 'channel-1', postingPolicy: 'ALLOWLIST' as const } }
     })
     const ctx: CommandContext = {
       interaction: interaction({

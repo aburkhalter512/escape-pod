@@ -169,7 +169,8 @@ describe('GET /organizers/:discordId/eligible-guilds', () => {
       if (!deepEqual(args, expectedArgs)) throw new Error(`unexpected findMany args: ${JSON.stringify(args)}`)
       return []
     })
-    const { app } = buildApp({ prisma: { guildSubscription: { findMany } } })
+    const count = stub(async () => 0)
+    const { app } = buildApp({ prisma: { guildSubscription: { findMany, count } } })
 
     const response = await app.inject({ method: 'GET', url: '/organizers/user-1/eligible-guilds' })
 
@@ -185,15 +186,26 @@ describe('GET /organizers/:discordId/eligible-guilds', () => {
 
     const response = await app.inject({ method: 'GET', url: '/organizers/user-1/eligible-guilds' })
 
-    expect(response.json()).toEqual([{ guildId: 'g1' }, { guildId: 'g2' }])
+    expect(response.json()).toEqual({ guilds: [{ guildId: 'g1' }, { guildId: 'g2' }], anySubscribed: true })
   })
 
-  it('returns an empty array when the organizer has no eligible guilds', async () => {
+  it('reports anySubscribed: false when no guild anywhere is subscribed', async () => {
     const findMany = stub(async (_args: GuildSubscriptionFindManyArgs) => [])
-    const { app } = buildApp({ prisma: { guildSubscription: { findMany } } })
+    const count = stub(async () => 0)
+    const { app } = buildApp({ prisma: { guildSubscription: { findMany, count } } })
 
     const response = await app.inject({ method: 'GET', url: '/organizers/user-1/eligible-guilds' })
 
-    expect(response.json()).toEqual([])
+    expect(response.json()).toEqual({ guilds: [], anySubscribed: false })
+  })
+
+  it('reports anySubscribed: true when guilds are subscribed but none are eligible for this organizer', async () => {
+    const findMany = stub(async (_args: GuildSubscriptionFindManyArgs) => [])
+    const count = stub(async () => 2)
+    const { app } = buildApp({ prisma: { guildSubscription: { findMany, count } } })
+
+    const response = await app.inject({ method: 'GET', url: '/organizers/user-1/eligible-guilds' })
+
+    expect(response.json()).toEqual({ guilds: [], anySubscribed: true })
   })
 })

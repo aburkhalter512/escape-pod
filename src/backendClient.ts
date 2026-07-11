@@ -9,7 +9,7 @@
 import type { PostingPolicy } from '@prisma/client'
 import type { AppPrismaClient } from './prismaClient.js'
 import type { PtpClient } from './ptp/client.js'
-import type { Logger } from './services/errors.js'
+import type { Logger, Result } from './services/errors.js'
 import * as podsService from './services/pods.js'
 import * as organizersService from './services/organizers.js'
 import * as guildsService from './services/guilds.js'
@@ -24,15 +24,15 @@ export type SignupAction = 'in' | 'leave'
 // testUtils/fakeBackendClient.ts that fully satisfies this interface, no
 // `as unknown as` needed.
 export interface BackendClient {
-  linkOrganizer(discordId: string, token: string): Promise<{ username: string }>
+  linkOrganizer(discordId: string, token: string): Promise<Result<{ username: string }>>
   subscribeGuild(
     guildId: string,
     installedBy: string,
     params: { channelId?: string; policy?: PostingPolicy }
-  ): Promise<{ subscribed: boolean; broadcastChannelId: string; postingPolicy: PostingPolicy }>
+  ): Promise<Result<{ subscribed: boolean; broadcastChannelId: string; postingPolicy: PostingPolicy }>>
   unsubscribeGuild(guildId: string): Promise<{ wasSubscribed: boolean }>
   allowOrganizer(guildId: string, organizerDiscordId: string, approvedBy: string): Promise<void>
-  listEligibleGuilds(organizerDiscordId: string): Promise<Array<{ guildId: string }>>
+  listEligibleGuilds(organizerDiscordId: string): Promise<{ guilds: Array<{ guildId: string }>; anySubscribed: boolean }>
   startPod(params: {
     organizerDiscordId: string
     setCode: string
@@ -41,24 +41,26 @@ export interface BackendClient {
     scheduledFor?: Date
     originGuildName?: string
   }): Promise<{ podRoundId: string; targets: Array<{ guildId: string; channelId: string }> }>
-  recordMessagePosted(podRoundId: string, guildId: string, messageId: string): Promise<void>
+  recordMessagePosted(podRoundId: string, guildId: string, messageId: string): Promise<Result<void>>
   recordSignup(
     podRoundId: string,
     discordId: string,
     username: string,
     sourceGuildId: string,
     action: SignupAction
-  ): Promise<{
-    count: number
-    threshold: number
-    setCode: string
-    full: boolean
-    podCreated: boolean
-    shareUrl?: string
-    originGuildName: string | null
-    targets: Array<{ guildId: string; channelId: string; messageId: string | null }>
-  }>
-  cancelPod(podRoundId: string, requestedBy: string): Promise<void>
+  ): Promise<
+    Result<{
+      count: number
+      threshold: number
+      setCode: string
+      full: boolean
+      podCreated: boolean
+      shareUrl?: string
+      originGuildName: string | null
+      targets: Array<{ guildId: string; channelId: string; messageId: string | null }>
+    }>
+  >
+  cancelPod(podRoundId: string, requestedBy: string): Promise<Result<void>>
   cancelActiveRound(organizerDiscordId: string): Promise<{
     podRoundId: string
     setCode: string
@@ -78,7 +80,7 @@ export class LocalBackendClient implements BackendClient {
   constructor(private readonly deps: LocalBackendClientDeps) {}
 
   // §8.2: submit a pasted PTP token for validation + storage.
-  linkOrganizer(discordId: string, token: string): Promise<{ username: string }> {
+  linkOrganizer(discordId: string, token: string): Promise<Result<{ username: string }>> {
     return organizersService.linkOrganizer(this.deps, { discordId, token })
   }
 
@@ -89,7 +91,7 @@ export class LocalBackendClient implements BackendClient {
     guildId: string,
     installedBy: string,
     params: { channelId?: string; policy?: PostingPolicy }
-  ): Promise<{ subscribed: boolean; broadcastChannelId: string; postingPolicy: PostingPolicy }> {
+  ): Promise<Result<{ subscribed: boolean; broadcastChannelId: string; postingPolicy: PostingPolicy }>> {
     return guildsService.subscribeGuild(this.deps, { guildId, installedBy, ...params })
   }
 
@@ -106,8 +108,10 @@ export class LocalBackendClient implements BackendClient {
 
   // §7.5: start a round; returns eligible target guild IDs (no name —
   // the caller resolves those live via discordRest.getGuild, see
-  // services/organizers.ts).
-  listEligibleGuilds(organizerDiscordId: string): Promise<Array<{ guildId: string }>> {
+  // services/organizers.ts) plus whether ANY guild is subscribed at all,
+  // so the caller can distinguish "no guild anywhere is subscribed" from
+  // "guilds are subscribed but this organizer isn't eligible for any."
+  listEligibleGuilds(organizerDiscordId: string): Promise<{ guilds: Array<{ guildId: string }>; anySubscribed: boolean }> {
     return organizersService.listEligibleGuilds(this.deps, organizerDiscordId)
   }
 
@@ -126,7 +130,7 @@ export class LocalBackendClient implements BackendClient {
 
   // §7.5 step 2: persists the Discord message ID for one target guild once
   // it's been posted, so a later signup's fan-out (step 3) knows what to edit.
-  recordMessagePosted(podRoundId: string, guildId: string, messageId: string): Promise<void> {
+  recordMessagePosted(podRoundId: string, guildId: string, messageId: string): Promise<Result<void>> {
     return podsService.recordTargetMessage(this.deps, { podRoundId, guildId, messageId })
   }
 
@@ -139,21 +143,23 @@ export class LocalBackendClient implements BackendClient {
     username: string,
     sourceGuildId: string,
     action: SignupAction
-  ): Promise<{
-    count: number
-    threshold: number
-    setCode: string
-    full: boolean
-    podCreated: boolean
-    shareUrl?: string
-    originGuildName: string | null
-    targets: Array<{ guildId: string; channelId: string; messageId: string | null }>
-  }> {
+  ): Promise<
+    Result<{
+      count: number
+      threshold: number
+      setCode: string
+      full: boolean
+      podCreated: boolean
+      shareUrl?: string
+      originGuildName: string | null
+      targets: Array<{ guildId: string; channelId: string; messageId: string | null }>
+    }>
+  > {
     return podsService.recordSignup(this.deps, { podRoundId, discordId, username, sourceGuildId, action })
   }
 
   // §7.5 step 5: cancel a round.
-  cancelPod(podRoundId: string, requestedBy: string): Promise<void> {
+  cancelPod(podRoundId: string, requestedBy: string): Promise<Result<void>> {
     return podsService.cancelPod(this.deps, { podRoundId, requestedBy })
   }
 

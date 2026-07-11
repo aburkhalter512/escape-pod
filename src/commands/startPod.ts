@@ -59,10 +59,12 @@ export const startPod: CommandHandler = async ({ interaction, backend, discordRe
     deadlineEpochSeconds = Math.floor((Date.now() + durationMs) / 1000)
   }
 
-  const eligibleGuilds = await backend.listEligibleGuilds(organizerId)
+  const { guilds: eligibleGuilds, anySubscribed } = await backend.listEligibleGuilds(organizerId)
   if (eligibleGuilds.length === 0) {
     return ephemeral(
-      "You're not approved to post into any subscribed servers yet. Ask a server admin to run `/allow-organizer` for you, or `/subscribe-guild` in an open-policy server."
+      anySubscribed
+        ? "You're not approved to post into any subscribed servers yet. Ask a server admin to run `/allow-organizer` for you, or find one with an open posting policy."
+        : 'No servers are currently subscribed to receive draft pod broadcasts yet. Ask a server admin to run `/subscribe-guild` there first.'
     )
   }
 

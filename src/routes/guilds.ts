@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import * as guildsService from '../services/guilds.js'
 import type { GuildServiceDeps } from '../services/guilds.js'
-import { ValidationError } from '../services/errors.js'
+import { httpStatusForError } from '../services/errors.js'
 
 export type GuildRouteDeps = GuildServiceDeps
 
@@ -34,15 +34,11 @@ export function registerGuildRoutes(app: FastifyInstance, deps: GuildRouteDeps):
     '/guilds/subscribe',
     { schema: { body: subscribeGuildBodySchema } },
     async (request, reply) => {
-      try {
-        const result = await guildsService.subscribeGuild(deps, request.body)
-        return reply.send(result)
-      } catch (err) {
-        if (err instanceof ValidationError) {
-          return reply.code(422).send({ error: err.message })
-        }
-        throw err
+      const result = await guildsService.subscribeGuild(deps, request.body)
+      if (!result.ok) {
+        return reply.code(httpStatusForError(result.error)).send({ error: result.error.message })
       }
+      return reply.send(result.value)
     }
   )
 

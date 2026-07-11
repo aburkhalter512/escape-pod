@@ -39,6 +39,18 @@ const discordRest = createDiscordRest(discordBotToken)
 const app = Fastify({ logger: true })
 app.setValidatorCompiler(zodValidatorCompiler)
 
+// The one catch-all for the whole HTTP surface (routes/*.ts) — those
+// route handlers only ever branch on a service's returned Result for
+// expected outcomes (see services/errors.ts), never try/catch. Anything
+// that still throws here is genuinely unexpected (a real bug, a Prisma
+// outage), so this logs it and returns a generic 500 rather than leaking
+// internals. Mirrors the same shape the /interactions handler below
+// already uses for the Discord surface.
+app.setErrorHandler((error, request, reply) => {
+  request.log.error({ err: error }, 'unhandled error')
+  reply.code(500).send({ error: 'Internal server error' })
+})
+
 const backendDeps = { prisma, ptp, tokenEncryptionKey, logger: app.log }
 const backend = new LocalBackendClient(backendDeps)
 

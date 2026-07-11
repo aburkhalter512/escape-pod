@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import * as podsService from '../services/pods.js'
 import type { PodServiceDeps } from '../services/pods.js'
-import { NotFoundError, ForbiddenError } from '../services/errors.js'
+import { httpStatusForError } from '../services/errors.js'
 
 export type PodRouteDeps = PodServiceDeps
 
@@ -67,19 +67,15 @@ export function registerPodRoutes(app: FastifyInstance, deps: PodRouteDeps): voi
     '/pods/:id/targets/:guildId/message',
     { schema: { params: targetMessageParamsSchema, body: targetMessageBodySchema } },
     async (request, reply) => {
-      try {
-        await podsService.recordTargetMessage(deps, {
-          podRoundId: request.params.id,
-          guildId: request.params.guildId,
-          messageId: request.body.messageId,
-        })
-        return reply.send({ ok: true })
-      } catch (err) {
-        if (err instanceof NotFoundError) {
-          return reply.code(404).send({ error: err.message })
-        }
-        throw err
+      const result = await podsService.recordTargetMessage(deps, {
+        podRoundId: request.params.id,
+        guildId: request.params.guildId,
+        messageId: request.body.messageId,
+      })
+      if (!result.ok) {
+        return reply.code(httpStatusForError(result.error)).send({ error: result.error.message })
       }
+      return reply.send({ ok: true })
     }
   )
 
@@ -87,18 +83,14 @@ export function registerPodRoutes(app: FastifyInstance, deps: PodRouteDeps): voi
     '/pods/:id/signup',
     { schema: { params: signupParamsSchema, body: signupBodySchema } },
     async (request, reply) => {
-      try {
-        const result = await podsService.recordSignup(deps, {
-          podRoundId: request.params.id,
-          ...request.body,
-        })
-        return reply.send(result)
-      } catch (err) {
-        if (err instanceof NotFoundError) {
-          return reply.code(404).send({ error: err.message })
-        }
-        throw err
+      const result = await podsService.recordSignup(deps, {
+        podRoundId: request.params.id,
+        ...request.body,
+      })
+      if (!result.ok) {
+        return reply.code(httpStatusForError(result.error)).send({ error: result.error.message })
       }
+      return reply.send(result.value)
     }
   )
 
@@ -106,21 +98,14 @@ export function registerPodRoutes(app: FastifyInstance, deps: PodRouteDeps): voi
     '/pods/:id/cancel',
     { schema: { params: cancelParamsSchema, body: cancelBodySchema } },
     async (request, reply) => {
-      try {
-        await podsService.cancelPod(deps, {
-          podRoundId: request.params.id,
-          requestedBy: request.body.requestedBy,
-        })
-        return reply.send({ ok: true })
-      } catch (err) {
-        if (err instanceof NotFoundError) {
-          return reply.code(404).send({ error: err.message })
-        }
-        if (err instanceof ForbiddenError) {
-          return reply.code(403).send({ error: err.message })
-        }
-        throw err
+      const result = await podsService.cancelPod(deps, {
+        podRoundId: request.params.id,
+        requestedBy: request.body.requestedBy,
+      })
+      if (!result.ok) {
+        return reply.code(httpStatusForError(result.error)).send({ error: result.error.message })
       }
+      return reply.send({ ok: true })
     }
   )
 }

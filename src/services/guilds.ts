@@ -1,6 +1,6 @@
 import type { PostingPolicy } from '@prisma/client'
 import type { AppPrismaClient } from '../prismaClient.js'
-import { ValidationError } from './errors.js'
+import { ok, err, validationError, type Result } from './errors.js'
 
 export interface GuildServiceDeps {
   prisma: AppPrismaClient
@@ -34,7 +34,10 @@ export interface SubscribeGuildResult {
 // ALLOWLIST per §7.2's safer-default reasoning — the schema's own default,
 // applied by omitting postingPolicy from `create` below when no policy was
 // given.
-export async function subscribeGuild(deps: GuildServiceDeps, params: SubscribeGuildParams): Promise<SubscribeGuildResult> {
+export async function subscribeGuild(
+  deps: GuildServiceDeps,
+  params: SubscribeGuildParams
+): Promise<Result<SubscribeGuildResult>> {
   const { guildId, installedBy, channelId, policy } = params
 
   const existing = await deps.prisma.guildSubscription.findUnique({ where: { guildId } })
@@ -42,12 +45,12 @@ export async function subscribeGuild(deps: GuildServiceDeps, params: SubscribeGu
 
   if (!isActive && !channelId) {
     if (!existing) {
-      throw new ValidationError('A channel is required the first time this server subscribes.')
+      return err(validationError('A channel is required the first time this server subscribes.'))
     }
     // Previously unsubscribed and no channel given to reactivate — report
     // its last-known settings rather than writing anything or erroring;
     // the command layer tells the admin how to resume.
-    return { subscribed: false, broadcastChannelId: existing.broadcastChannelId, postingPolicy: existing.postingPolicy }
+    return ok({ subscribed: false, broadcastChannelId: existing.broadcastChannelId, postingPolicy: existing.postingPolicy })
   }
 
   if (!existing) {
@@ -59,14 +62,14 @@ export async function subscribeGuild(deps: GuildServiceDeps, params: SubscribeGu
         ...(policy ? { postingPolicy: policy } : {}),
       },
     })
-    return { subscribed: true, broadcastChannelId: created.broadcastChannelId, postingPolicy: created.postingPolicy }
+    return ok({ subscribed: true, broadcastChannelId: created.broadcastChannelId, postingPolicy: created.postingPolicy })
   }
 
   if (isActive && !channelId && !policy) {
     // Nothing to change — e.g. an admin running the command bare just to
     // see current settings. No write, so installedAt/installedBy are
     // untouched too.
-    return { subscribed: true, broadcastChannelId: existing.broadcastChannelId, postingPolicy: existing.postingPolicy }
+    return ok({ subscribed: true, broadcastChannelId: existing.broadcastChannelId, postingPolicy: existing.postingPolicy })
   }
 
   // installedByDiscordId is deliberately never part of this update —
@@ -82,7 +85,7 @@ export async function subscribeGuild(deps: GuildServiceDeps, params: SubscribeGu
       ...(policy ? { postingPolicy: policy } : {}),
     },
   })
-  return { subscribed: true, broadcastChannelId: updated.broadcastChannelId, postingPolicy: updated.postingPolicy }
+  return ok({ subscribed: true, broadcastChannelId: updated.broadcastChannelId, postingPolicy: updated.postingPolicy })
 }
 
 export interface UnsubscribeGuildResult {

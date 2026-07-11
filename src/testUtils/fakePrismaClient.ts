@@ -27,6 +27,7 @@ export function createFakePrismaClient(overrides: FakePrismaOverrides = {}): App
       findUnique: unimplemented('guildSubscription.findUnique'),
       create: unimplemented('guildSubscription.create'),
       update: unimplemented('guildSubscription.update'),
+      count: unimplemented('guildSubscription.count'),
       ...overrides.guildSubscription,
     },
     guildOrganizerAllowlist: {

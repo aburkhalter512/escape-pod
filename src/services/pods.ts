@@ -3,7 +3,7 @@ import type { Prisma } from '@prisma/client'
 import type { PtpClient } from '../ptp/client.js'
 import { decryptToken } from '../crypto/tokenCrypto.js'
 import { POD_CAPACITY } from '../podConfig.js'
-import { NotFoundError, ForbiddenError, type Logger } from './errors.js'
+import { ok, err, notFound, forbidden, type Logger, type Result } from './errors.js'
 
 export interface PodServiceDeps {
   prisma: AppPrismaClient
@@ -83,20 +83,21 @@ export interface RecordTargetMessageParams {
 export async function recordTargetMessage(
   deps: PodServiceDeps,
   params: RecordTargetMessageParams
-): Promise<void> {
+): Promise<Result<void>> {
   const { podRoundId, guildId, messageId } = params
 
   const target = await deps.prisma.podRoundTarget.findUnique({
     where: { podRoundId_guildId: { podRoundId, guildId } },
   })
   if (!target) {
-    throw new NotFoundError('Pod round target not found')
+    return err(notFound('Pod round target not found'))
   }
 
   await deps.prisma.podRoundTarget.update({
     where: { podRoundId_guildId: { podRoundId, guildId } },
     data: { messageId },
   })
+  return ok(undefined)
 }
 
 export interface RecordSignupParams {
@@ -184,7 +185,7 @@ async function fireRound(
 export async function recordSignup(
   deps: PodServiceDeps,
   params: RecordSignupParams
-): Promise<RecordSignupResult> {
+): Promise<Result<RecordSignupResult>> {
   const { podRoundId, discordId, username, sourceGuildId, action } = params
   const status = action === 'leave' ? 'LEFT' : 'IN'
 
@@ -193,7 +194,7 @@ export async function recordSignup(
     include: { organizer: true },
   })
   if (!round) {
-    throw new NotFoundError('Pod round not found')
+    return err(notFound('Pod round not found'))
   }
 
   await deps.prisma.podRoundSignup.upsert({
@@ -227,7 +228,7 @@ export async function recordSignup(
     messageId: t.messageId,
   }))
 
-  return {
+  return ok({
     count,
     threshold: round.threshold,
     setCode: round.setCode,
@@ -236,7 +237,7 @@ export async function recordSignup(
     shareUrl,
     originGuildName: round.originGuildName,
     targets,
-  }
+  })
 }
 
 export interface CancelPodParams {
@@ -245,21 +246,22 @@ export interface CancelPodParams {
 }
 
 // INTEGRATIONS.md §7.5 step 5.
-export async function cancelPod(deps: PodServiceDeps, params: CancelPodParams): Promise<void> {
+export async function cancelPod(deps: PodServiceDeps, params: CancelPodParams): Promise<Result<void>> {
   const { podRoundId, requestedBy } = params
 
   const round = await deps.prisma.podRound.findUnique({ where: { id: podRoundId } })
   if (!round) {
-    throw new NotFoundError('Pod round not found')
+    return err(notFound('Pod round not found'))
   }
   if (round.organizerDiscordId !== requestedBy) {
-    throw new ForbiddenError('Only the organizer who started this round can cancel it')
+    return err(forbidden('Only the organizer who started this round can cancel it'))
   }
 
   await deps.prisma.podRound.update({
     where: { id: podRoundId },
     data: { status: 'CANCELLED' },
   })
+  return ok(undefined)
 }
 
 export interface CancelActiveRoundResult {
@@ -295,7 +297,15 @@ export async function cancelActiveRound(
     return null
   }
 
-  await cancelPod(deps, { podRoundId: round.id, requestedBy: organizerDiscordId })
+  const cancelResult = await cancelPod(deps, { podRoundId: round.id, requestedBy: organizerDiscordId })
+  if (!cancelResult.ok) {
+    // Unreachable in practice — round was just found scoped to this exact
+    // organizerDiscordId above, so cancelPod's own not-found/forbidden
+    // checks can't fire here. A real Error (not a ServiceError) since
+    // reaching this would mean an actual invariant violation, not a
+    // business-rule outcome.
+    throw new Error(`cancelPod unexpectedly failed for a round just found by the same organizer: ${cancelResult.error.kind}`)
+  }
 
   const targetRows = await deps.prisma.podRoundTarget.findMany({ where: { podRoundId: round.id } })
   return {

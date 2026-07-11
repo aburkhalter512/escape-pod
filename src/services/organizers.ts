@@ -2,7 +2,7 @@ import type { AppPrismaClient } from '../prismaClient.js'
 import type { PtpClient } from '../ptp/client.js'
 import { encryptToken } from '../crypto/tokenCrypto.js'
 import { decodeJwtPayloadUnverified } from '../util/jwt.js'
-import { ValidationError } from './errors.js'
+import { ok, err, validationError, type Result } from './errors.js'
 
 export interface OrganizerServiceDeps {
   prisma: AppPrismaClient
@@ -25,17 +25,17 @@ export interface LinkOrganizerResult {
 export async function linkOrganizer(
   deps: OrganizerServiceDeps,
   params: LinkOrganizerParams
-): Promise<LinkOrganizerResult> {
+): Promise<Result<LinkOrganizerResult>> {
   const { discordId, token } = params
 
   const isValid = await deps.ptp.validateToken(token)
   if (!isValid) {
-    throw new ValidationError('PTP rejected this token')
+    return err(validationError('PTP rejected this token'))
   }
 
   const payload = decodeJwtPayloadUnverified(token)
   if (!payload) {
-    throw new ValidationError('Could not read token payload')
+    return err(validationError('Could not read token payload'))
   }
 
   await deps.prisma.organizer.upsert({
@@ -53,11 +53,20 @@ export async function linkOrganizer(
     },
   })
 
-  return { username: payload.username }
+  return ok({ username: payload.username })
 }
 
 export interface EligibleGuild {
   guildId: string
+}
+
+export interface ListEligibleGuildsResult {
+  guilds: EligibleGuild[]
+  // False only distinguishes "no guild anywhere is subscribed" from "guilds
+  // are subscribed but this organizer isn't eligible for any of them" —
+  // the caller (commands/startPod.ts) uses it to show which actually
+  // happened instead of one message covering both.
+  anySubscribed: boolean
 }
 
 // INTEGRATIONS.md §7.4/§7.5 step 1 — guilds this organizer may fan a round
@@ -69,13 +78,20 @@ export interface EligibleGuild {
 export async function listEligibleGuilds(
   deps: OrganizerServiceDeps,
   organizerDiscordId: string
-): Promise<EligibleGuild[]> {
-  const guilds = await deps.prisma.guildSubscription.findMany({
+): Promise<ListEligibleGuildsResult> {
+  const eligible = await deps.prisma.guildSubscription.findMany({
     where: {
       unsubscribedAt: null,
       OR: [{ postingPolicy: 'OPEN' }, { allowlist: { some: { organizerDiscordId } } }],
     },
   })
+  const guilds = eligible.map((guild) => ({ guildId: guild.guildId }))
+  if (guilds.length > 0) {
+    return { guilds, anySubscribed: true }
+  }
 
-  return guilds.map((guild) => ({ guildId: guild.guildId }))
+  // Only queried when the first result is empty — avoids a second
+  // round-trip in the common (eligible-guilds-exist) case.
+  const subscribedCount = await deps.prisma.guildSubscription.count({ where: { unsubscribedAt: null } })
+  return { guilds, anySubscribed: subscribedCount > 0 }
 }

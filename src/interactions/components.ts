@@ -93,7 +93,17 @@ export async function handleMessageComponent(
           embeds: body.embeds,
           components: body.components,
         })
-        await backend.recordMessagePosted(podRoundId, target.guildId, message.id)
+        const recorded = await backend.recordMessagePosted(podRoundId, target.guildId, message.id)
+        if (!recorded.ok) {
+          // Not exception-based control flow — recordMessagePosted itself
+          // never throws. This re-synthesizes a rejection purely so the
+          // per-target counting/logging below (already built around
+          // Promise.allSettled's rejection-based aggregation) keeps
+          // working uniformly for both this and a genuine postMessage
+          // failure, since neither this loop nor its caller distinguishes
+          // *why* a given target failed, only whether it did.
+          throw new Error(`recordMessagePosted failed: ${recorded.error.message}`)
+        }
       })
     )
     // Promise.allSettled only exposes each rejection's reason on the
@@ -130,7 +140,15 @@ export async function handleMessageComponent(
       return ephemeral('Could not determine your Discord identity.')
     }
 
-    const result = await backend.recordSignup(podRoundId, discordId, username, interaction.guild_id ?? '', action)
+    const signupResult = await backend.recordSignup(podRoundId, discordId, username, interaction.guild_id ?? '', action)
+    if (!signupResult.ok) {
+      // Today's only case is "round not found" (e.g. a click on a very
+      // old/stale message) — worth a specific message here rather than
+      // letting it propagate uncaught to server.ts's generic top-level
+      // fallback.
+      return ephemeral(signupResult.error.message)
+    }
+    const result = signupResult.value
 
     const body = buildPodRoundMessage({
       podRoundId,
@@ -203,20 +221,15 @@ export async function handleModalSubmit(
     return ephemeral('That token has already expired — grab a fresh one from /api/auth/token.')
   }
 
-  try {
-    const { username } = await backend.linkOrganizer(discordId, token)
-    return ephemeral(`Linked as **${username}** ✅ — you can now run \`/start-pod\`.`)
-  } catch (err) {
-    // Was previously a bare `catch {}` — swallowed the real cause
-    // entirely (PTP genuinely rejecting the token vs. a Prisma error vs.
-    // anything else all produced the exact same message, and nothing was
-    // logged anywhere to tell them apart). console.error always reaches
-    // CloudWatch via the awslogs driver regardless of Fastify's own
-    // logger config, and this function has no request/reply to log
-    // through instead.
-    console.error('connect-ptp linkOrganizer failed:', err)
-    return ephemeral("PTP didn't accept that token. Grab a fresh one from /api/auth/token and try again.")
+  const result = await backend.linkOrganizer(discordId, token)
+  if (!result.ok) {
+    // Surfaces the real reason (e.g. "PTP rejected this token" vs. "Could
+    // not read token payload") instead of one fixed message regardless of
+    // cause. Any genuinely unexpected failure (not this Result's concern)
+    // propagates uncaught to server.ts's single /interactions catch-all.
+    return ephemeral(result.error.message)
   }
+  return ephemeral(`Linked as **${result.value.username}** ✅ — you can now run \`/start-pod\`.`)
 }
 
 function ephemeral(content: string): APIInteractionResponse {

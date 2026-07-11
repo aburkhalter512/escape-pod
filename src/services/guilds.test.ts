@@ -3,7 +3,6 @@ import type { AppPrismaClient } from '../prismaClient.js'
 import { createFakePrismaClient } from '../testUtils/fakePrismaClient.js'
 import { stub } from '../testUtils/stub.js'
 import { deepEqual } from '../testUtils/deepEqual.js'
-import { ValidationError } from './errors.js'
 import { subscribeGuild, unsubscribeGuild, type GuildServiceDeps } from './guilds.js'
 
 type GuildSubscriptionRow = Awaited<ReturnType<AppPrismaClient['guildSubscription']['create']>>
@@ -27,16 +26,19 @@ function buildDeps(overrides: Parameters<typeof createFakePrismaClient>[0] = {})
 }
 
 describe('subscribeGuild', () => {
-  it('throws ValidationError (without writing anything) when a never-subscribed guild omits the channel', async () => {
+  it('returns a validation error (without writing anything) when a never-subscribed guild omits the channel', async () => {
     const findUnique = stub(async () => null)
     const create = stub(async () => {
       throw new Error('create should not have been called')
     })
     const deps = buildDeps({ guildSubscription: { findUnique, create } })
 
-    await expect(subscribeGuild(deps, { guildId: 'guild-1', installedBy: 'admin-1' })).rejects.toBeInstanceOf(
-      ValidationError
-    )
+    const result = await subscribeGuild(deps, { guildId: 'guild-1', installedBy: 'admin-1' })
+
+    expect(result).toEqual({
+      ok: false,
+      error: { kind: 'validation', message: 'A channel is required the first time this server subscribes.' },
+    })
     expect(create.calls).toHaveLength(0)
   })
 
@@ -53,7 +55,7 @@ describe('subscribeGuild', () => {
 
     const result = await subscribeGuild(deps, { guildId: 'guild-1', installedBy: 'admin-1', channelId: 'channel-1' })
 
-    expect(result).toEqual({ subscribed: true, broadcastChannelId: 'channel-1', postingPolicy: 'ALLOWLIST' })
+    expect(result).toEqual({ ok: true, value: { subscribed: true, broadcastChannelId: 'channel-1', postingPolicy: 'ALLOWLIST' } })
   })
 
   it('creates a new subscription with an explicit OPEN policy when given', async () => {
@@ -71,7 +73,7 @@ describe('subscribeGuild', () => {
       policy: 'OPEN',
     })
 
-    expect(result.postingPolicy).toBe('OPEN')
+    expect(result.ok && result.value.postingPolicy).toBe('OPEN')
   })
 
   it('reads back current settings without writing anything when neither channel nor policy is given', async () => {
@@ -83,7 +85,7 @@ describe('subscribeGuild', () => {
 
     const result = await subscribeGuild(deps, { guildId: 'guild-1', installedBy: 'admin-1' })
 
-    expect(result).toEqual({ subscribed: true, broadcastChannelId: 'channel-9', postingPolicy: 'OPEN' })
+    expect(result).toEqual({ ok: true, value: { subscribed: true, broadcastChannelId: 'channel-9', postingPolicy: 'OPEN' } })
     expect(update.calls).toHaveLength(0)
   })
 
@@ -101,7 +103,7 @@ describe('subscribeGuild', () => {
 
     const result = await subscribeGuild(deps, { guildId: 'guild-1', installedBy: 'admin-1', channelId: 'channel-2' })
 
-    expect(result).toEqual({ subscribed: true, broadcastChannelId: 'channel-2', postingPolicy: 'OPEN' })
+    expect(result).toEqual({ ok: true, value: { subscribed: true, broadcastChannelId: 'channel-2', postingPolicy: 'OPEN' } })
   })
 
   it('updates only the policy when only a policy is given, leaving the channel alone', async () => {
@@ -118,7 +120,7 @@ describe('subscribeGuild', () => {
 
     const result = await subscribeGuild(deps, { guildId: 'guild-1', installedBy: 'admin-1', policy: 'OPEN' })
 
-    expect(result).toEqual({ subscribed: true, broadcastChannelId: 'channel-1', postingPolicy: 'OPEN' })
+    expect(result).toEqual({ ok: true, value: { subscribed: true, broadcastChannelId: 'channel-1', postingPolicy: 'OPEN' } })
   })
 
   it('never includes installedByDiscordId in an update — set once at creation, not reassigned on reconfigure', async () => {
@@ -145,7 +147,7 @@ describe('subscribeGuild', () => {
 
     const result = await subscribeGuild(deps, { guildId: 'guild-1', installedBy: 'admin-1' })
 
-    expect(result).toEqual({ subscribed: false, broadcastChannelId: 'channel-1', postingPolicy: 'OPEN' })
+    expect(result).toEqual({ ok: true, value: { subscribed: false, broadcastChannelId: 'channel-1', postingPolicy: 'OPEN' } })
     expect(update.calls).toHaveLength(0)
   })
 
@@ -163,7 +165,7 @@ describe('subscribeGuild', () => {
 
     const result = await subscribeGuild(deps, { guildId: 'guild-1', installedBy: 'admin-1', channelId: 'channel-3' })
 
-    expect(result).toEqual({ subscribed: true, broadcastChannelId: 'channel-3', postingPolicy: 'ALLOWLIST' })
+    expect(result).toEqual({ ok: true, value: { subscribed: true, broadcastChannelId: 'channel-3', postingPolicy: 'ALLOWLIST' } })
   })
 
   it('does not reactivate on a policy-only call while unsubscribed (still reports subscribed: false)', async () => {
@@ -175,7 +177,7 @@ describe('subscribeGuild', () => {
 
     const result = await subscribeGuild(deps, { guildId: 'guild-1', installedBy: 'admin-1', policy: 'OPEN' })
 
-    expect(result.subscribed).toBe(false)
+    expect(result.ok && result.value.subscribed).toBe(false)
     expect(update.calls).toHaveLength(0)
   })
 })

@@ -151,6 +151,7 @@ describe('handleMessageComponent', () => {
           (guildId === 'g1' && podRoundId === 'round-1' && messageId === 'msg-1') ||
           (guildId === 'g2' && podRoundId === 'round-1' && messageId === 'msg-2')
         if (!valid) throw new Error(`unexpected recordMessagePosted args: ${podRoundId} ${guildId} ${messageId}`)
+        return { ok: true as const, value: undefined }
       })
       const postMessage = stub(async (channelId: string, _body: RESTPostAPIChannelMessageJSONBody) => {
         if (channelId === 'channel-1') return { id: 'msg-1' } as RESTPostAPIChannelMessageResult
@@ -183,7 +184,7 @@ describe('handleMessageComponent', () => {
 
       await handleMessageComponent(
         interaction({ values: ['g1'] }),
-        createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: stub(async () => undefined) }),
+        createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: stub(async () => ({ ok: true as const, value: undefined })) }),
         createFakeDiscordRest({ postMessage, getGuild: fakeGetGuild({ 'guild-1': 'Origin Guild' }) })
       )
 
@@ -206,7 +207,7 @@ describe('handleMessageComponent', () => {
 
       await handleMessageComponent(
         interaction({ values: ['g1'] }),
-        createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: stub(async () => undefined) }),
+        createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: stub(async () => ({ ok: true as const, value: undefined })) }),
         createFakeDiscordRest({ postMessage, getGuild })
       )
 
@@ -224,7 +225,7 @@ describe('handleMessageComponent', () => {
 
       await handleMessageComponent(
         interaction({ values: ['g1'] }),
-        createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: stub(async () => undefined) }),
+        createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: stub(async () => ({ ok: true as const, value: undefined })) }),
         createFakeDiscordRest({ postMessage, getGuild: fakeGetGuild({ 'guild-1': 'Origin Guild' }) })
       )
 
@@ -244,7 +245,7 @@ describe('handleMessageComponent', () => {
           { guildId: 'g2', channelId: 'channel-2' },
         ],
       }))
-      const recordMessagePostedMock = stub(async (_podRoundId: string, _guildId: string, _messageId: string) => undefined)
+      const recordMessagePostedMock = stub(async (_podRoundId: string, _guildId: string, _messageId: string) => ({ ok: true as const, value: undefined }))
       const postMessage = stub(async (channelId: string, _body: RESTPostAPIChannelMessageJSONBody) => {
         if (channelId === 'channel-1') return { id: 'msg-1' } as RESTPostAPIChannelMessageResult
         throw new Error('Missing Access')
@@ -302,7 +303,7 @@ describe('handleMessageComponent', () => {
 
       await handleMessageComponent(
         deadlineInteraction,
-        createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: stub(async () => undefined) }),
+        createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: stub(async () => ({ ok: true as const, value: undefined })) }),
         createFakeDiscordRest({ postMessage, getGuild: fakeGetGuild({ 'guild-1': 'Origin Guild' }) })
       )
 
@@ -325,7 +326,7 @@ describe('handleMessageComponent', () => {
 
       await handleMessageComponent(
         noDeadlineInteraction,
-        createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: stub(async () => undefined) }),
+        createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: stub(async () => ({ ok: true as const, value: undefined })) }),
         createFakeDiscordRest({ postMessage: stub(async () => ({ id: 'msg-1' }) as RESTPostAPIChannelMessageResult), getGuild: fakeGetGuild({ 'guild-1': 'Origin Guild' }) })
       )
     })
@@ -340,19 +341,24 @@ describe('handleMessageComponent', () => {
       })
     }
 
+    // Builds the ok() Result recordSignup now returns, not the bare value —
+    // every call site here only ever uses this as a recordSignupMock return.
     function signupResult(overrides: Record<string, unknown> = {}) {
       return {
-        count: 5,
-        threshold: 8,
-        setCode: 'JTL',
-        full: false,
-        podCreated: false,
-        originGuildName: null,
-        targets: [
-          { guildId: 'guild-1', channelId: 'channel-1', messageId: 'msg-1' },
-          { guildId: 'guild-2', channelId: 'channel-2', messageId: 'msg-2' },
-        ],
-        ...overrides,
+        ok: true as const,
+        value: {
+          count: 5,
+          threshold: 8,
+          setCode: 'JTL',
+          full: false,
+          podCreated: false,
+          originGuildName: null,
+          targets: [
+            { guildId: 'guild-1', channelId: 'channel-1', messageId: 'msg-1' },
+            { guildId: 'guild-2', channelId: 'channel-2', messageId: 'msg-2' },
+          ],
+          ...overrides,
+        },
       }
     }
 
@@ -544,7 +550,7 @@ describe('handleModalSubmit', () => {
     const token = fakeJwt({ discord_id: 'user-1', username: 'PlayerOne', exp: FUTURE_EXP() })
     const linkOrganizerMock = stub(async (discordId: string, t: string) => {
       if (discordId !== 'user-1' || t !== token) throw new Error(`unexpected linkOrganizer args: ${discordId} ${t}`)
-      return { username: 'PlayerOne' }
+      return { ok: true as const, value: { username: 'PlayerOne' } }
     })
     const interaction = fakeModalSubmitInteraction({
       customId: 'connect-ptp:submit',
@@ -621,11 +627,12 @@ describe('handleModalSubmit', () => {
     expect(responseData(response).content).toMatch(/already expired/i)
   })
 
-  it('surfaces a friendly error when the backend rejects the token (e.g. PTP says it is invalid)', async () => {
+  it("surfaces the service's specific validation error message when the backend rejects the token (e.g. PTP says it is invalid)", async () => {
     const token = fakeJwt({ discord_id: 'user-1', username: 'PlayerOne', exp: FUTURE_EXP() })
-    const linkOrganizerMock = stub(async (_discordId: string, _t: string) => {
-      throw new Error('Backend request failed: 422')
-    })
+    const linkOrganizerMock = stub(async (_discordId: string, _t: string) => ({
+      ok: false as const,
+      error: { kind: 'validation' as const, message: 'PTP rejected this token' },
+    }))
     const interaction = fakeModalSubmitInteraction({
       customId: 'connect-ptp:submit',
       components: actionRowWithToken(token),
@@ -633,7 +640,7 @@ describe('handleModalSubmit', () => {
 
     const response = await handleModalSubmit(interaction, createFakeBackendClient({ linkOrganizer: linkOrganizerMock }))
 
-    expect(responseData(response).content).toMatch(/didn't accept that token/i)
+    expect(responseData(response).content).toMatch(/PTP rejected this token/)
   })
 
   it('documents current behavior: a token with no embedded discord_id skips the anti-mistake check', async () => {
@@ -647,7 +654,7 @@ describe('handleModalSubmit', () => {
     const token = fakeJwt({ username: 'NoDiscordLink', exp: FUTURE_EXP() })
     const linkOrganizerMock = stub(async (discordId: string, t: string) => {
       if (discordId !== 'user-1' || t !== token) throw new Error(`unexpected linkOrganizer args: ${discordId} ${t}`)
-      return { username: 'NoDiscordLink' }
+      return { ok: true as const, value: { username: 'NoDiscordLink' } }
     })
     const interaction = fakeModalSubmitInteraction({
       customId: 'connect-ptp:submit',

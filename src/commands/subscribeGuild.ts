@@ -1,7 +1,6 @@
 import { ApplicationCommandOptionType } from 'discord-api-types/v10'
 import { ephemeral, getOption } from './helpers.js'
 import type { CommandHandler } from './types.js'
-import { ValidationError } from '../services/errors.js'
 
 const POLICY_LABEL: Record<'OPEN' | 'ALLOWLIST', string> = {
   OPEN: 'Open — any linked organizer can post',
@@ -32,29 +31,25 @@ export const subscribeGuild: CommandHandler = async ({ interaction, backend }) =
       ? (policyOption.value as 'OPEN' | 'ALLOWLIST')
       : undefined
 
-  let result
-  try {
-    result = await backend.subscribeGuild(guildId, invokerId, { channelId, policy })
-  } catch (err) {
-    if (err instanceof ValidationError) {
-      return ephemeral(err.message)
-    }
-    throw err
+  const result = await backend.subscribeGuild(guildId, invokerId, { channelId, policy })
+  if (!result.ok) {
+    return ephemeral(result.error.message)
   }
+  const { value } = result
 
-  if (!result.subscribed) {
+  if (!value.subscribed) {
     return ephemeral(
-      `This server isn't currently subscribed (last channel: <#${result.broadcastChannelId}>, policy: ${POLICY_LABEL[result.postingPolicy]}). ` +
+      `This server isn't currently subscribed (last channel: <#${value.broadcastChannelId}>, policy: ${POLICY_LABEL[value.postingPolicy]}). ` +
         'Run this command again with a channel to resume.'
     )
   }
 
   const changedSomething = channelId !== undefined || policy !== undefined
-  const summary = `Channel: <#${result.broadcastChannelId}>. Policy: ${POLICY_LABEL[result.postingPolicy]}.`
+  const summary = `Channel: <#${value.broadcastChannelId}>. Policy: ${POLICY_LABEL[value.postingPolicy]}.`
 
   return ephemeral(
     (changedSomething ? 'Updated. ' : 'Current settings — ') +
       summary +
-      (result.postingPolicy === 'ALLOWLIST' ? ' Use `/allow-organizer` to approve organizers.' : '')
+      (value.postingPolicy === 'ALLOWLIST' ? ' Use `/allow-organizer` to approve organizers.' : '')
   )
 }
