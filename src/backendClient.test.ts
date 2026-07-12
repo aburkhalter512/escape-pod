@@ -3,6 +3,7 @@ import { LocalBackendClient } from './backendClient.js'
 import { createFakePrismaClient, type FakePrismaOverrides } from './testUtils/fakePrismaClient.js'
 import { createFakePtpClient } from './testUtils/fakePtpClient.js'
 import { stub } from './testUtils/stub.js'
+import type { OnFiringHook } from './services/pods.js'
 
 const TOKEN_KEY = '00'.repeat(32)
 
@@ -151,6 +152,144 @@ describe('LocalBackendClient', () => {
 
     expect(result.podRoundId).toBe('round-1')
     expect(create.calls).toHaveLength(1)
+  })
+
+  it('forwards onFiring through to podsService.recordSignup and threads chatUrl/signupDiscordIds back out', async () => {
+    // podRound.findUnique here is generic in AppPrismaClient (called both
+    // with and without `include: { organizer: true }` elsewhere), so a
+    // small function wrapper is needed instead of a plain stub() — same
+    // pattern as services/pods.test.ts and the cancelPod test below.
+    const { encryptToken } = await import('./crypto/tokenCrypto.js')
+    const TOKEN_KEY_LOCAL = '00'.repeat(32)
+    function findUnique() {
+      return Promise.resolve({
+        id: 'round-1',
+        organizerDiscordId: 'organizer-1',
+        setCode: 'JTL',
+        threshold: 8,
+        status: 'COLLECTING' as const,
+        scheduledFor: null,
+        ptpPodShareId: null,
+        originGuildName: null,
+        originGuildId: null,
+        createdAt: new Date(),
+        organizer: {
+          discordId: 'organizer-1',
+          username: 'OrganizerOne',
+          encryptedToken: encryptToken('a-real-token', TOKEN_KEY_LOCAL),
+          expiresAt: new Date(),
+          linkedAt: new Date(),
+        },
+      }) as never
+    }
+    const upsert = stub(async (_args: unknown) => ({
+      podRoundId: 'round-1',
+      discordId: 'p8',
+      usernameSnapshot: 'P8',
+      sourceGuildId: 'g1',
+      status: 'IN' as const,
+      signedUpAt: new Date(),
+    }))
+    const count = stub(async (_args: unknown) => 8)
+    const findManySignups = stub(async (_args: unknown) => [
+      { podRoundId: 'round-1', discordId: 'p8', usernameSnapshot: 'P8', sourceGuildId: 'g1', status: 'IN' as const, signedUpAt: new Date() },
+    ])
+    const findManyTargets = stub(async (_args: unknown) => [])
+    const updateMany = stub(async (_args: unknown) => ({ count: 1 }))
+    const update = stub(async (_args: unknown) => ({
+      id: 'round-1',
+      organizerDiscordId: 'organizer-1',
+      setCode: 'JTL',
+      threshold: 8,
+      status: 'POD_CREATED' as const,
+      scheduledFor: null,
+      ptpPodShareId: 'share-1',
+      originGuildName: null,
+      originGuildId: null,
+      createdAt: new Date(),
+    }))
+    const createPod = stub(async (_token: string, _params: unknown) => ({
+      id: 'ptp-pod-1',
+      shareId: 'share-1',
+      shareUrl: 'https://www.protectthepod.com/draft/share-1',
+      createdAt: '2026-01-01T00:00:00Z',
+    }))
+
+    const onFiring = stub(async (_ctx: Parameters<OnFiringHook>[0]) => 'https://discord.com/invite/abc123')
+
+    const backendClient = new LocalBackendClient({
+      prisma: createFakePrismaClient({
+        podRound: { findUnique, updateMany, update },
+        podRoundSignup: { upsert, count, findMany: findManySignups },
+        podRoundTarget: { findMany: findManyTargets },
+      }),
+      ptp: createFakePtpClient({ createPod }),
+      tokenEncryptionKey: TOKEN_KEY_LOCAL,
+      logger: { error: () => {} },
+    })
+
+    const result = await backendClient.recordSignup('round-1', 'p8', 'P8', 'g1', 'in', onFiring)
+
+    expect(onFiring.calls).toHaveLength(1)
+    expect(result.ok).toBe(true)
+    expect(result.ok && result.value).toMatchObject({
+      podCreated: true,
+      shareUrl: 'https://www.protectthepod.com/draft/share-1',
+      chatUrl: 'https://discord.com/invite/abc123',
+      signupDiscordIds: ['p8'],
+    })
+  })
+
+  it('recordSignup works with onFiring omitted entirely (regression guard)', async () => {
+    const { encryptToken } = await import('./crypto/tokenCrypto.js')
+    const TOKEN_KEY_LOCAL = '00'.repeat(32)
+    function findUnique() {
+      return Promise.resolve({
+        id: 'round-1',
+        organizerDiscordId: 'organizer-1',
+        setCode: 'JTL',
+        threshold: 8,
+        status: 'COLLECTING' as const,
+        scheduledFor: null,
+        ptpPodShareId: null,
+        originGuildName: null,
+        originGuildId: null,
+        createdAt: new Date(),
+        organizer: {
+          discordId: 'organizer-1',
+          username: 'OrganizerOne',
+          encryptedToken: encryptToken('a-real-token', TOKEN_KEY_LOCAL),
+          expiresAt: new Date(),
+          linkedAt: new Date(),
+        },
+      }) as never
+    }
+    const upsert = stub(async (_args: unknown) => ({
+      podRoundId: 'round-1',
+      discordId: 'p8',
+      usernameSnapshot: 'P8',
+      sourceGuildId: 'g1',
+      status: 'IN' as const,
+      signedUpAt: new Date(),
+    }))
+    const count = stub(async (_args: unknown) => 3) // below POD_CAPACITY — no fire, no findMany needed
+    const findManyTargets = stub(async (_args: unknown) => [])
+
+    const backendClient = new LocalBackendClient({
+      prisma: createFakePrismaClient({
+        podRound: { findUnique },
+        podRoundSignup: { upsert, count },
+        podRoundTarget: { findMany: findManyTargets },
+      }),
+      ptp: createFakePtpClient(),
+      tokenEncryptionKey: TOKEN_KEY_LOCAL,
+      logger: { error: () => {} },
+    })
+
+    const result = await backendClient.recordSignup('round-1', 'p8', 'P8', 'g1', 'in')
+
+    expect(result.ok).toBe(true)
+    expect(result.ok && result.value).toMatchObject({ full: false, podCreated: false, chatUrl: undefined })
   })
 
   it('delegates cancelPod to podRound.findUnique + update, returning a forbidden error for a non-organizer requester', async () => {

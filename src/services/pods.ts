@@ -112,6 +112,7 @@ export interface RecordSignupParams {
   username: string
   sourceGuildId: string
   action: 'in' | 'leave'
+  onFiring?: OnFiringHook
 }
 
 export interface RecordSignupResult {
@@ -121,6 +122,8 @@ export interface RecordSignupResult {
   full: boolean
   podCreated: boolean
   shareUrl?: string
+  chatUrl?: string
+  signupDiscordIds?: string[]
   originGuildName: string | null
   targets: Array<{ guildId: string; channelId: string; messageId: string | null }>
 }
@@ -131,7 +134,25 @@ interface FireRoundResult {
   claimed: boolean
   podCreated: boolean
   shareUrl?: string
+  chatUrl?: string
+  signupDiscordIds?: string[]
 }
+
+// Opaque, plain-data hook invoked between claiming a round for firing and
+// actually creating the PTP pod — lets a Discord-touching caller (e.g.
+// creating a shared chat channel + invite, see discord/podChat.ts) run at
+// exactly that point in the sequence without this file importing anything
+// Discord-specific. Keeps the Discord-agnostic-services boundary described
+// on cancelActiveRound above intact: fireRound only ever deals in plain
+// data in and a plain optional URL back out, never discordRest itself.
+// Documented (at the one real implementation, createPodChatSpace) as never
+// throwing/rejecting — fireRound awaits it directly, no extra guarding.
+export type OnFiringHook = (ctx: {
+  setCode: string
+  organizerDiscordId: string
+  originGuildId: string | null
+  signupDiscordIds: string[]
+}) => Promise<string | undefined>
 
 // Atomically claims a COLLECTING round for firing (see tasks/001) and, if
 // this call won the claim, creates the PTP pod sized to exactly the
@@ -143,7 +164,8 @@ interface FireRoundResult {
 async function fireRound(
   deps: PodServiceDeps,
   round: RoundWithOrganizer,
-  playerCount: number
+  playerCount: number,
+  onFiring?: OnFiringHook
 ): Promise<FireRoundResult> {
   // A plain read-then-write here is racy — two callers (a signup and a
   // concurrent sweep, or two signups) landing close together could both
@@ -161,6 +183,25 @@ async function fireRound(
     return { claimed: false, podCreated: false }
   }
 
+  // Fetched once, unconditionally — needed for onFiring's permission
+  // overwrites below *and* for the caller to DM these same players once
+  // this returns, so both consumers share the one query regardless of
+  // whether onFiring was even passed.
+  const signups = await deps.prisma.podRoundSignup.findMany({
+    where: { podRoundId: round.id, status: 'IN' },
+  })
+  const signupDiscordIds = signups.map((s) => s.discordId)
+
+  let chatUrl: string | undefined
+  if (onFiring) {
+    chatUrl = await onFiring({
+      setCode: round.setCode,
+      organizerDiscordId: round.organizerDiscordId,
+      originGuildId: round.originGuildId,
+      signupDiscordIds,
+    })
+  }
+
   try {
     const token = decryptToken(round.organizer.encryptedToken, deps.tokenEncryptionKey)
     const result = await deps.ptp.createPod(token, {
@@ -171,7 +212,7 @@ async function fireRound(
       where: { id: round.id },
       data: { status: 'POD_CREATED', ptpPodShareId: result.shareId },
     })
-    return { claimed: true, podCreated: true, shareUrl: result.shareUrl }
+    return { claimed: true, podCreated: true, shareUrl: result.shareUrl, chatUrl, signupDiscordIds }
   } catch (err) {
     // Pod creation failed (e.g. expired/revoked token) even though we've
     // hit the fire condition — the claim above already recorded
@@ -179,7 +220,7 @@ async function fireRound(
     // subsequent signup or sweep. Needs an operator-facing alert path, not
     // yet built.
     deps.logger.error({ err, podRoundId: round.id }, 'PTP pod creation failed after threshold reached')
-    return { claimed: true, podCreated: false }
+    return { claimed: true, podCreated: false, chatUrl, signupDiscordIds }
   }
 }
 
@@ -192,7 +233,7 @@ export async function recordSignup(
   deps: PodServiceDeps,
   params: RecordSignupParams
 ): Promise<Result<RecordSignupResult>> {
-  const { podRoundId, discordId, username, sourceGuildId, action } = params
+  const { podRoundId, discordId, username, sourceGuildId, action, onFiring } = params
   const status = action === 'leave' ? 'LEFT' : 'IN'
 
   const round = await deps.prisma.podRound.findUnique({
@@ -216,11 +257,15 @@ export async function recordSignup(
   const full = count >= POD_CAPACITY
   let podCreated = false
   let shareUrl: string | undefined
+  let chatUrl: string | undefined
+  let signupDiscordIds: string[] | undefined
 
   if (full && round.status === 'COLLECTING') {
-    const fireResult = await fireRound(deps, round, count)
+    const fireResult = await fireRound(deps, round, count, onFiring)
     podCreated = fireResult.podCreated
     shareUrl = fireResult.shareUrl
+    chatUrl = fireResult.chatUrl
+    signupDiscordIds = fireResult.signupDiscordIds
   }
 
   // Every target for the round, not just sourceGuildId's — the caller
@@ -241,6 +286,8 @@ export async function recordSignup(
     full,
     podCreated,
     shareUrl,
+    chatUrl,
+    signupDiscordIds,
     originGuildName: round.originGuildName,
     targets,
   })
@@ -342,6 +389,8 @@ export type ExpiredRoundInfo =
       count: number
       threshold: number
       shareUrl?: string
+      chatUrl?: string
+      signupDiscordIds?: string[]
       originGuildName: string | null
       targets: ExpiredRoundTarget[]
     }
@@ -357,7 +406,7 @@ export type ExpiredRoundInfo =
 // safe even if a signup is racing the same round toward
 // THRESHOLD_REACHED at the same moment — whichever conditional update
 // lands first wins, the other sees count: 0 and no-ops.
-export async function expireOverdueRounds(deps: PodServiceDeps): Promise<ExpiredRoundInfo[]> {
+export async function expireOverdueRounds(deps: PodServiceDeps, onFiring?: OnFiringHook): Promise<ExpiredRoundInfo[]> {
   const candidates = await deps.prisma.podRound.findMany({
     where: { status: 'COLLECTING', scheduledFor: { lte: new Date() } },
     include: { organizer: true },
@@ -370,7 +419,7 @@ export async function expireOverdueRounds(deps: PodServiceDeps): Promise<Expired
     })
 
     if (count >= round.threshold) {
-      const fireResult = await fireRound(deps, round, count)
+      const fireResult = await fireRound(deps, round, count, onFiring)
       if (!fireResult.podCreated) continue
 
       const targetRows = await deps.prisma.podRoundTarget.findMany({ where: { podRoundId: round.id } })
@@ -381,6 +430,8 @@ export async function expireOverdueRounds(deps: PodServiceDeps): Promise<Expired
         count,
         threshold: round.threshold,
         shareUrl: fireResult.shareUrl,
+        chatUrl: fireResult.chatUrl,
+        signupDiscordIds: fireResult.signupDiscordIds,
         originGuildName: round.originGuildName,
         targets: targetRows.map((t) => ({ channelId: t.channelId, messageId: t.messageId })),
       })

@@ -52,6 +52,7 @@ export function createFakePrismaClient(overrides: FakePrismaOverrides = {}): App
     podRoundSignup: {
       count: unimplemented('podRoundSignup.count'),
       upsert: unimplemented('podRoundSignup.upsert'),
+      findMany: unimplemented('podRoundSignup.findMany'),
       ...overrides.podRoundSignup,
     },
   }
