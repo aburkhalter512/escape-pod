@@ -172,6 +172,7 @@ describe('handleMessageComponent', () => {
         threshold: 8,
         scheduledFor: undefined,
         originGuildName: 'Origin Guild',
+        originGuildId: 'guild-1',
         guildIds: ['g1', 'g2'],
       })
     })
@@ -250,7 +251,7 @@ describe('handleMessageComponent', () => {
 
     it('starts the round, posts the RSVP message to every target, and records each message id', async () => {
       const pendingStartPods = createInMemoryPendingStartPodStore()
-      const token = seedPending(pendingStartPods, { originGuildName: 'Origin Guild' })
+      const token = seedPending(pendingStartPods, { originGuildName: 'Origin Guild', originGuildId: 'guild-1' })
 
       const startPodMock = stub(
         async (params: {
@@ -260,6 +261,7 @@ describe('handleMessageComponent', () => {
           guildIds: string[]
           scheduledFor?: Date
           originGuildName?: string
+          originGuildId?: string
         }) => {
         const expected = {
           organizerDiscordId: 'organizer-1',
@@ -268,6 +270,7 @@ describe('handleMessageComponent', () => {
           guildIds: ['g1', 'g2'],
           scheduledFor: undefined,
           originGuildName: 'Origin Guild',
+          originGuildId: 'guild-1',
         }
         if (!deepEqual(params, expected)) throw new Error(`unexpected startPod args: ${JSON.stringify(params)}`)
         return {

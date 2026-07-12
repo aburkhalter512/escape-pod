@@ -68,6 +68,11 @@ export async function handleMessageComponent(
     // (INTEGRATIONS.md §1) sees where it came from. No guild_id (e.g. a
     // DM-context invocation) or a failed lookup both just omit it.
     let originGuildName: string | undefined
+    // The raw ID is already in hand from the interaction itself — no
+    // lookup needed — and is carried alongside the display name so a
+    // firing round can later create its chat channel in this guild (see
+    // discord/podChat.ts).
+    const originGuildId: string | undefined = interaction.guild_id
     if (interaction.guild_id) {
       try {
         originGuildName = (await discordRest.getGuild(interaction.guild_id)).name
@@ -99,6 +104,7 @@ export async function handleMessageComponent(
       threshold,
       scheduledFor,
       originGuildName,
+      originGuildId,
       guildIds,
     })
 
@@ -141,7 +147,7 @@ export async function handleMessageComponent(
       }
     }
     pendingStartPods.delete(token)
-    const { organizerDiscordId, setCode, threshold, scheduledFor, originGuildName, guildIds } = pending
+    const { organizerDiscordId, setCode, threshold, scheduledFor, originGuildName, originGuildId, guildIds } = pending
 
     // §7.5 steps 1-2: backend creates the PodRound + PodRoundTarget rows and
     // returns each target's resolved channel; this posts the actual RSVP
@@ -154,6 +160,7 @@ export async function handleMessageComponent(
       guildIds,
       scheduledFor,
       originGuildName,
+      originGuildId,
     })
 
     const postOutcomes = await Promise.allSettled(

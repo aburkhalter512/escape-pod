@@ -28,6 +28,11 @@ export interface StartPodParams {
   // invocation has no guild, and a resolution failure shouldn't block
   // creating the round over a cosmetic display value.
   originGuildName?: string
+  // Discord ID counterpart to originGuildName above, resolved and stored
+  // the same way and for the same reason — needed so a firing round can
+  // later create its private chat channel in this guild (see
+  // discord/podChat.ts). Same optionality rationale as originGuildName.
+  originGuildId?: string
 }
 
 export interface StartPodResult {
@@ -41,7 +46,7 @@ export interface StartPodResult {
 // the interaction handlers' job (via discordRest), using the `targets`
 // this returns.
 export async function startPod(deps: PodServiceDeps, params: StartPodParams): Promise<StartPodResult> {
-  const { organizerDiscordId, setCode, threshold, guildIds, scheduledFor, originGuildName } = params
+  const { organizerDiscordId, setCode, threshold, guildIds, scheduledFor, originGuildName, originGuildId } = params
 
   const subscriptions = await deps.prisma.guildSubscription.findMany({
     where: { guildId: { in: guildIds }, unsubscribedAt: null },
@@ -61,6 +66,7 @@ export async function startPod(deps: PodServiceDeps, params: StartPodParams): Pr
       threshold,
       scheduledFor,
       originGuildName,
+      originGuildId,
       targets: {
         create: resolvedTargets.map((t) => ({ guildId: t.guildId, channelId: t.channelId })),
       },

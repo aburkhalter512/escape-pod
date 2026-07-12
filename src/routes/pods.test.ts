@@ -38,6 +38,7 @@ function fakePodRoundRow(overrides: Partial<PodRoundRow> = {}): PodRoundRow {
     scheduledFor: null,
     ptpPodShareId: null,
     originGuildName: null,
+    originGuildId: null,
     createdAt: new Date(),
     ...overrides,
   }
@@ -139,6 +140,7 @@ describe('POST /pods/start', () => {
           threshold: 8,
           scheduledFor: undefined,
           originGuildName: undefined,
+          originGuildId: undefined,
           targets: {
             create: [
               { guildId: 'g1', channelId: 'channel-1' },

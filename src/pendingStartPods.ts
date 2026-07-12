@@ -13,6 +13,7 @@ export interface PendingStartPod {
   threshold: number
   scheduledFor?: Date
   originGuildName?: string
+  originGuildId?: string
   guildIds: string[]
 }
 

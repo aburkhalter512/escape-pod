@@ -109,6 +109,7 @@ describe('LocalBackendClient', () => {
       scheduledFor: null,
       ptpPodShareId: null,
       originGuildName: null,
+      originGuildId: null,
       createdAt: new Date(),
     }))
 
@@ -120,6 +121,36 @@ describe('LocalBackendClient', () => {
     })
 
     expect(result).toEqual({ podRoundId: 'round-1', targets: [{ guildId: 'g1', channelId: 'channel-1' }] })
+  })
+
+  it('forwards originGuildId through startPod to podRound.create', async () => {
+    const findMany = stub(async (_args: unknown) => [])
+    const create = stub(async (args: { data: { originGuildId?: string | null } }) => {
+      expect(args.data.originGuildId).toBe('guild-123')
+      return {
+        id: 'round-1',
+        organizerDiscordId: 'org-1',
+        setCode: 'JTL',
+        threshold: 8,
+        status: 'COLLECTING' as const,
+        scheduledFor: null,
+        ptpPodShareId: null,
+        originGuildName: null,
+        originGuildId: 'guild-123',
+        createdAt: new Date(),
+      }
+    })
+
+    const result = await client({ guildSubscription: { findMany }, podRound: { create } }).startPod({
+      organizerDiscordId: 'org-1',
+      setCode: 'JTL',
+      threshold: 8,
+      guildIds: [],
+      originGuildId: 'guild-123',
+    })
+
+    expect(result.podRoundId).toBe('round-1')
+    expect(create.calls).toHaveLength(1)
   })
 
   it('delegates cancelPod to podRound.findUnique + update, returning a forbidden error for a non-organizer requester', async () => {

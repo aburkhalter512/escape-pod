@@ -40,6 +40,7 @@ export interface BackendClient {
     guildIds: string[]
     scheduledFor?: Date
     originGuildName?: string
+    originGuildId?: string
   }): Promise<{ podRoundId: string; targets: Array<{ guildId: string; channelId: string }> }>
   recordMessagePosted(podRoundId: string, guildId: string, messageId: string): Promise<Result<void>>
   recordSignup(
@@ -124,6 +125,7 @@ export class LocalBackendClient implements BackendClient {
     guildIds: string[]
     scheduledFor?: Date
     originGuildName?: string
+    originGuildId?: string
   }): Promise<{ podRoundId: string; targets: Array<{ guildId: string; channelId: string }> }> {
     return podsService.startPod(this.deps, params)
   }

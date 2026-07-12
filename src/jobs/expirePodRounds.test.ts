@@ -26,7 +26,9 @@ function stubPodRoundFindMany<Result>(impl: () => Promise<Result[]>) {
 // (see prismaClient.ts) since a round that reached its threshold needs the
 // organizer's token to fire — so every fixture here carries one, even
 // though the expire-path tests below never actually read it.
-function fakePodRoundRow(overrides: { threshold?: number; originGuildName?: string | null } = {}) {
+function fakePodRoundRow(
+  overrides: { threshold?: number; originGuildName?: string | null; originGuildId?: string | null } = {}
+) {
   return {
     id: 'round-1',
     organizerDiscordId: 'organizer-1',
@@ -36,6 +38,7 @@ function fakePodRoundRow(overrides: { threshold?: number; originGuildName?: stri
     scheduledFor: new Date('2026-01-01T00:00:00Z'),
     ptpPodShareId: null,
     originGuildName: overrides.originGuildName ?? null,
+    originGuildId: overrides.originGuildId ?? null,
     createdAt: new Date(),
     organizer: {
       discordId: 'organizer-1',
