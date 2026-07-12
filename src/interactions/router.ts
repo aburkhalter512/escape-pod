@@ -6,6 +6,7 @@ import {
 } from 'discord-api-types/v10'
 import type { DiscordRestClient } from '../discord/rest.js'
 import type { BackendClient } from '../backendClient.js'
+import type { PendingStartPodStore } from '../pendingStartPods.js'
 import { commandHandlers } from '../commands/index.js'
 import { handleMessageComponent, handleModalSubmit } from './components.js'
 
@@ -16,6 +17,11 @@ export interface RouterDeps {
   // occurred in needs the bot token, which the interaction response itself
   // can't do (§7.5 step 3).
   discordRest: DiscordRestClient
+  // Only handleMessageComponent's start-pod:select-guilds:/confirm:/cancel:
+  // branches use this — holds a guild selection between the "select
+  // servers" step and the "Send" confirmation click (see
+  // pendingStartPods.ts for why this can't just live in a custom_id).
+  pendingStartPods: PendingStartPodStore
 }
 
 export async function routeInteraction(
@@ -40,7 +46,7 @@ export async function routeInteraction(
     }
 
     case InteractionType.MessageComponent:
-      return handleMessageComponent(interaction, deps.backend, deps.discordRest)
+      return handleMessageComponent(interaction, deps.backend, deps.discordRest, deps.pendingStartPods)
 
     case InteractionType.ModalSubmit:
       return handleModalSubmit(interaction, deps.backend)

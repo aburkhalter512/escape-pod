@@ -17,6 +17,7 @@ import { fakeMember, fakeMessageComponentInteraction, fakeModalSubmitInteraction
 import { responseData } from '../testUtils/responseData.js'
 import { stub } from '../testUtils/stub.js'
 import { deepEqual } from '../testUtils/deepEqual.js'
+import { createInMemoryPendingStartPodStore, type PendingStartPod, type PendingStartPodStore } from '../pendingStartPods.js'
 
 function fakeJwt(payload: Record<string, unknown>): string {
   const encode = (obj: Record<string, unknown>) => Buffer.from(JSON.stringify(obj)).toString('base64url')
@@ -101,7 +102,12 @@ describe('handleMessageComponent', () => {
     const interaction = fakeMessageComponentInteraction({
       data: { custom_id: 'connect-ptp:open-modal', component_type: ComponentType.Button },
     })
-    const response = await handleMessageComponent(interaction, createFakeBackendClient(), createFakeDiscordRest())
+    const response = await handleMessageComponent(
+      interaction,
+      createFakeBackendClient(),
+      createFakeDiscordRest(),
+      createInMemoryPendingStartPodStore()
+    )
 
     expect(response.type).toBe(InteractionResponseType.Modal)
     expect(responseData(response).custom_id).toBe('connect-ptp:submit')
@@ -119,7 +125,133 @@ describe('handleMessageComponent', () => {
       })
     }
 
+    function buttonsOf(response: Awaited<ReturnType<typeof handleMessageComponent>>) {
+      const row = responseData(response).components?.[0] as { components: Array<{ label: string; custom_id: string }> }
+      return row.components
+    }
+
+    it('shows a summary of the selected servers (by name) with Send/Cancel buttons, without posting or creating anything yet', async () => {
+      const startPodMock = stub(async (_params: unknown) => {
+        throw new Error('startPod should not have been called before Send is pressed')
+      })
+      const postMessage = stub(async (_channelId: string, _body: RESTPostAPIChannelMessageJSONBody) => {
+        throw new Error('postMessage should not have been called before Send is pressed')
+      })
+      const pendingStartPods = createInMemoryPendingStartPodStore()
+
+      const response = await handleMessageComponent(
+        interaction(),
+        createFakeBackendClient({ startPod: startPodMock }),
+        createFakeDiscordRest({ postMessage, getGuild: fakeGetGuild({ g1: 'Alpha', g2: 'Beta' }) }),
+        pendingStartPods
+      )
+
+      expect(response.type).toBe(InteractionResponseType.UpdateMessage)
+      expect(responseData(response).content).toContain('Alpha')
+      expect(responseData(response).content).toContain('Beta')
+      const buttons = buttonsOf(response)
+      expect(buttons.map((b) => b.label)).toEqual(['Send', 'Cancel'])
+      expect(buttons[0].custom_id).toMatch(/^start-pod:confirm:/)
+      expect(buttons[1].custom_id).toMatch(/^start-pod:cancel:/)
+    })
+
+    it('stores the pending selection (including the resolved origin guild name) keyed by the Send button token', async () => {
+      const pendingStartPods = createInMemoryPendingStartPodStore()
+
+      const response = await handleMessageComponent(
+        interaction(),
+        createFakeBackendClient(),
+        createFakeDiscordRest({ getGuild: fakeGetGuild({ 'guild-1': 'Origin Guild', g1: 'Alpha', g2: 'Beta' }) }),
+        pendingStartPods
+      )
+
+      const sendToken = buttonsOf(response)[0].custom_id.replace('start-pod:confirm:', '')
+      expect(pendingStartPods.get(sendToken)).toEqual({
+        organizerDiscordId: 'organizer-1',
+        setCode: 'JTL',
+        threshold: 8,
+        scheduledFor: undefined,
+        originGuildName: 'Origin Guild',
+        guildIds: ['g1', 'g2'],
+      })
+    })
+
+    it('falls back to the raw guildId in the summary when a name lookup fails', async () => {
+      const getGuild = stub(async (guildId: string) => {
+        if (guildId === 'g2') throw new Error('bot is no longer in this guild')
+        return { id: guildId, name: 'Alpha' } as never
+      })
+
+      const response = await handleMessageComponent(
+        interaction(),
+        createFakeBackendClient(),
+        createFakeDiscordRest({ getGuild }),
+        createInMemoryPendingStartPodStore()
+      )
+
+      expect(responseData(response).content).toContain('Alpha')
+      expect(responseData(response).content).toContain('g2')
+    })
+
+    it('includes the deadline note in the summary text when a deadline was set', async () => {
+      const deadlineEpoch = Math.floor(Date.now() / 1000) + 7200
+      const deadlineInteraction = fakeMessageComponentInteraction({
+        data: {
+          custom_id: `start-pod:select-guilds:JTL:8:${deadlineEpoch}`,
+          component_type: ComponentType.StringSelect,
+          values: ['g1'],
+        },
+        member: fakeMember({ user: fakeUser({ id: 'organizer-1' }) }),
+      })
+
+      const response = await handleMessageComponent(
+        deadlineInteraction,
+        createFakeBackendClient(),
+        createFakeDiscordRest({ getGuild: fakeGetGuild({ g1: 'Alpha' }) }),
+        createInMemoryPendingStartPodStore()
+      )
+
+      expect(responseData(response).content).toContain(`<t:${deadlineEpoch}:R>`)
+    })
+
+    it('rejects a guild-select submission when the organizer id cannot be determined', async () => {
+      const startPodMock = stub(async (_params: unknown) => {
+        throw new Error('startPod should not have been called')
+      })
+
+      const response = await handleMessageComponent(
+        interaction({ member: undefined }),
+        createFakeBackendClient({ startPod: startPodMock }),
+        createFakeDiscordRest(),
+        createInMemoryPendingStartPodStore()
+      )
+
+      expect(responseData(response).content).toMatch(/could not determine your discord user id/i)
+    })
+  })
+
+  describe('start-pod:confirm:', () => {
+    function seedPending(store: PendingStartPodStore, overrides: Partial<PendingStartPod> = {}): string {
+      return store.create({
+        organizerDiscordId: 'organizer-1',
+        setCode: 'JTL',
+        threshold: 8,
+        guildIds: ['g1', 'g2'],
+        ...overrides,
+      })
+    }
+
+    function confirmInteraction(token: string) {
+      return fakeMessageComponentInteraction({
+        data: { custom_id: `start-pod:confirm:${token}`, component_type: ComponentType.Button },
+        member: fakeMember({ user: fakeUser({ id: 'organizer-1' }) }),
+      })
+    }
+
     it('starts the round, posts the RSVP message to every target, and records each message id', async () => {
+      const pendingStartPods = createInMemoryPendingStartPodStore()
+      const token = seedPending(pendingStartPods, { originGuildName: 'Origin Guild' })
+
       const startPodMock = stub(
         async (params: {
           organizerDiscordId: string
@@ -160,9 +292,10 @@ describe('handleMessageComponent', () => {
       })
 
       const response = await handleMessageComponent(
-        interaction(),
+        confirmInteraction(token),
         createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: recordMessagePostedMock }),
-        createFakeDiscordRest({ postMessage, getGuild: fakeGetGuild({ 'guild-1': 'Origin Guild' }) })
+        createFakeDiscordRest({ postMessage }),
+        pendingStartPods
       )
 
       expect(postMessage.calls).toHaveLength(2)
@@ -172,6 +305,8 @@ describe('handleMessageComponent', () => {
     })
 
     it("includes the origin guild's name in the posted message's footer", async () => {
+      const pendingStartPods = createInMemoryPendingStartPodStore()
+      const token = seedPending(pendingStartPods, { originGuildName: 'Origin Guild', guildIds: ['g1'] })
       const startPodMock = stub(async (_params: unknown) => ({
         podRoundId: 'round-1',
         targets: [{ guildId: 'g1', channelId: 'channel-1' }],
@@ -183,38 +318,18 @@ describe('handleMessageComponent', () => {
       })
 
       await handleMessageComponent(
-        interaction({ values: ['g1'] }),
+        confirmInteraction(token),
         createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: stub(async () => ({ ok: true as const, value: undefined })) }),
-        createFakeDiscordRest({ postMessage, getGuild: fakeGetGuild({ 'guild-1': 'Origin Guild' }) })
-      )
-
-      expect(postMessage.calls).toHaveLength(1)
-    })
-
-    it('omits the origin guild footer (does not fail the round) when the lookup fails', async () => {
-      const startPodMock = stub(async (_params: unknown) => ({
-        podRoundId: 'round-1',
-        targets: [{ guildId: 'g1', channelId: 'channel-1' }],
-      }))
-      const postMessage = stub(async (_channelId: string, body: RESTPostAPIChannelMessageJSONBody) => {
-        const embeds = body.embeds as Array<{ footer?: { text: string } }>
-        expect(embeds[0].footer).toBeUndefined()
-        return { id: 'msg-1' } as RESTPostAPIChannelMessageResult
-      })
-      const getGuild = stub(async (_guildId: string) => {
-        throw new Error('Missing Access')
-      })
-
-      await handleMessageComponent(
-        interaction({ values: ['g1'] }),
-        createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: stub(async () => ({ ok: true as const, value: undefined })) }),
-        createFakeDiscordRest({ postMessage, getGuild })
+        createFakeDiscordRest({ postMessage }),
+        pendingStartPods
       )
 
       expect(postMessage.calls).toHaveLength(1)
     })
 
     it("posts an initial embed showing 0 signups with I'm in / Leave buttons, not the count directly", async () => {
+      const pendingStartPods = createInMemoryPendingStartPodStore()
+      const token = seedPending(pendingStartPods, { guildIds: ['g1'] })
       const startPodMock = stub(async (_params: unknown) => ({
         podRoundId: 'round-1',
         targets: [{ guildId: 'g1', channelId: 'channel-1' }],
@@ -224,9 +339,10 @@ describe('handleMessageComponent', () => {
       )
 
       await handleMessageComponent(
-        interaction({ values: ['g1'] }),
+        confirmInteraction(token),
         createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: stub(async () => ({ ok: true as const, value: undefined })) }),
-        createFakeDiscordRest({ postMessage, getGuild: fakeGetGuild({ 'guild-1': 'Origin Guild' }) })
+        createFakeDiscordRest({ postMessage }),
+        pendingStartPods
       )
 
       const [, postBody] = postMessage.calls[0]
@@ -238,6 +354,8 @@ describe('handleMessageComponent', () => {
     })
 
     it('reports a partial-failure count when one target fails to post, without dropping the others', async () => {
+      const pendingStartPods = createInMemoryPendingStartPodStore()
+      const token = seedPending(pendingStartPods)
       const startPodMock = stub(async (_params: unknown) => ({
         podRoundId: 'round-1',
         targets: [
@@ -252,9 +370,10 @@ describe('handleMessageComponent', () => {
       })
 
       const response = await handleMessageComponent(
-        interaction(),
+        confirmInteraction(token),
         createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: recordMessagePostedMock }),
-        createFakeDiscordRest({ postMessage, getGuild: fakeGetGuild({ 'guild-1': 'Origin Guild' }) })
+        createFakeDiscordRest({ postMessage }),
+        pendingStartPods
       )
 
       // The failing guild never got recordMessagePosted called for it, but
@@ -265,70 +384,108 @@ describe('handleMessageComponent', () => {
       expect(responseData(response).content).toMatch(/1 server\(s\) failed to post/i)
     })
 
-    it('rejects a guild-select submission when the organizer id cannot be determined', async () => {
-      const startPodMock = stub(async (_params: unknown) => {
-        throw new Error('startPod should not have been called')
-      })
-
-      const response = await handleMessageComponent(
-        interaction({ member: undefined }),
-        createFakeBackendClient({ startPod: startPodMock }),
-        createFakeDiscordRest()
-      )
-
-      expect(responseData(response).content).toMatch(/could not determine your discord user id/i)
-    })
-
-    it('parses the deadline segment into scheduledFor and threads it through to startPod and the posted message', async () => {
-      const deadlineEpoch = Math.floor(Date.now() / 1000) + 7200
-      const deadlineInteraction = fakeMessageComponentInteraction({
-        data: {
-          custom_id: `start-pod:select-guilds:JTL:8:${deadlineEpoch}`,
-          component_type: ComponentType.StringSelect,
-          values: ['g1'],
-        },
-        member: fakeMember({ user: fakeUser({ id: 'organizer-1' }) }),
-      })
+    it('threads a seeded deadline through to startPod and the posted message', async () => {
+      const scheduledFor = new Date(Date.now() + 2 * 60 * 60_000)
+      const pendingStartPods = createInMemoryPendingStartPodStore()
+      const token = seedPending(pendingStartPods, { guildIds: ['g1'], scheduledFor })
       const startPodMock = stub(async (params: { scheduledFor?: Date }) => {
-        expect(params.scheduledFor).toEqual(new Date(deadlineEpoch * 1000))
+        expect(params.scheduledFor).toEqual(scheduledFor)
         return { podRoundId: 'round-1', targets: [{ guildId: 'g1', channelId: 'channel-1' }] }
       })
-      const postMessage = stub(
-        async (_channelId: string, body: RESTPostAPIChannelMessageJSONBody) => {
-          const embeds = body.embeds as Array<{ description: string }>
-          expect(embeds[0].description).toContain(`<t:${deadlineEpoch}:R>`)
-          return { id: 'msg-1' } as RESTPostAPIChannelMessageResult
-        }
-      )
+      const postMessage = stub(async (_channelId: string, body: RESTPostAPIChannelMessageJSONBody) => {
+        const embeds = body.embeds as Array<{ description: string }>
+        expect(embeds[0].description).toContain(`<t:${Math.floor(scheduledFor.getTime() / 1000)}:R>`)
+        return { id: 'msg-1' } as RESTPostAPIChannelMessageResult
+      })
 
       await handleMessageComponent(
-        deadlineInteraction,
+        confirmInteraction(token),
         createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: stub(async () => ({ ok: true as const, value: undefined })) }),
-        createFakeDiscordRest({ postMessage, getGuild: fakeGetGuild({ 'guild-1': 'Origin Guild' }) })
+        createFakeDiscordRest({ postMessage }),
+        pendingStartPods
       )
 
       expect(postMessage.calls).toHaveLength(1)
     })
 
-    it('treats a missing deadline segment (custom_id ending in a bare colon) the same as no deadline at all', async () => {
-      const noDeadlineInteraction = fakeMessageComponentInteraction({
-        data: {
-          custom_id: 'start-pod:select-guilds:JTL:8:',
-          component_type: ComponentType.StringSelect,
-          values: ['g1'],
-        },
-        member: fakeMember({ user: fakeUser({ id: 'organizer-1' }) }),
-      })
-      const startPodMock = stub(async (params: { scheduledFor?: Date }) => {
-        expect(params.scheduledFor).toBeUndefined()
-        return { podRoundId: 'round-1', targets: [{ guildId: 'g1', channelId: 'channel-1' }] }
+    it('shows an expired message (does not create or post anything) for an unknown/already-used token', async () => {
+      const startPodMock = stub(async (_params: unknown) => {
+        throw new Error('startPod should not have been called for an expired token')
       })
 
-      await handleMessageComponent(
-        noDeadlineInteraction,
-        createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: stub(async () => ({ ok: true as const, value: undefined })) }),
-        createFakeDiscordRest({ postMessage: stub(async () => ({ id: 'msg-1' }) as RESTPostAPIChannelMessageResult), getGuild: fakeGetGuild({ 'guild-1': 'Origin Guild' }) })
+      const response = await handleMessageComponent(
+        confirmInteraction('never-seeded-token'),
+        createFakeBackendClient({ startPod: startPodMock }),
+        createFakeDiscordRest(),
+        createInMemoryPendingStartPodStore()
       )
+
+      expect(responseData(response).content).toMatch(/expired/i)
+    })
+
+    it('deletes the pending entry once confirmed, so the same token cannot be confirmed twice', async () => {
+      const pendingStartPods = createInMemoryPendingStartPodStore()
+      const token = seedPending(pendingStartPods, { guildIds: ['g1'] })
+      const startPodMock = stub(async (_params: unknown) => ({
+        podRoundId: 'round-1',
+        targets: [{ guildId: 'g1', channelId: 'channel-1' }],
+      }))
+      const backend = createFakeBackendClient({
+        startPod: startPodMock,
+        recordMessagePosted: stub(async () => ({ ok: true as const, value: undefined })),
+      })
+      const discordRest = createFakeDiscordRest({
+        postMessage: stub(async () => ({ id: 'msg-1' }) as RESTPostAPIChannelMessageResult),
+      })
+
+      await handleMessageComponent(confirmInteraction(token), backend, discordRest, pendingStartPods)
+      const secondResponse = await handleMessageComponent(confirmInteraction(token), backend, discordRest, pendingStartPods)
+
+      expect(responseData(secondResponse).content).toMatch(/expired/i)
+      expect(startPodMock.calls).toHaveLength(1)
+    })
+  })
+
+  describe('start-pod:cancel:', () => {
+    it('deletes the pending entry and replies with a simple cancelled message, without creating or posting anything', async () => {
+      const pendingStartPods = createInMemoryPendingStartPodStore()
+      const token = pendingStartPods.create({
+        organizerDiscordId: 'organizer-1',
+        setCode: 'JTL',
+        threshold: 8,
+        guildIds: ['g1'],
+      })
+      const startPodMock = stub(async (_params: unknown) => {
+        throw new Error('startPod should not have been called on cancel')
+      })
+      const interaction = fakeMessageComponentInteraction({
+        data: { custom_id: `start-pod:cancel:${token}`, component_type: ComponentType.Button },
+      })
+
+      const response = await handleMessageComponent(
+        interaction,
+        createFakeBackendClient({ startPod: startPodMock }),
+        createFakeDiscordRest(),
+        pendingStartPods
+      )
+
+      expect(responseData(response).content).toMatch(/cancelled/i)
+      expect(pendingStartPods.get(token)).toBeUndefined()
+    })
+
+    it('is a no-op (still replies) for an unknown token', async () => {
+      const interaction = fakeMessageComponentInteraction({
+        data: { custom_id: 'start-pod:cancel:never-seeded-token', component_type: ComponentType.Button },
+      })
+
+      const response = await handleMessageComponent(
+        interaction,
+        createFakeBackendClient(),
+        createFakeDiscordRest(),
+        createInMemoryPendingStartPodStore()
+      )
+
+      expect(responseData(response).content).toMatch(/cancelled/i)
     })
   })
 
@@ -377,7 +534,8 @@ describe('handleMessageComponent', () => {
         // cross-guild edit fan-out (§7.5 step 3) irrelevant to this test.
         createFakeDiscordRest({
           editMessage: stub(async (_channelId: string, _messageId: string, _body: RESTPatchAPIChannelMessageJSONBody) => ({}) as RESTPatchAPIChannelMessageResult),
-        })
+        }),
+        createInMemoryPendingStartPodStore()
       )
 
       expect(response.type).toBe(InteractionResponseType.UpdateMessage)
@@ -398,7 +556,8 @@ describe('handleMessageComponent', () => {
         createFakeBackendClient({ recordSignup: recordSignupMock }),
         createFakeDiscordRest({
           editMessage: stub(async (_channelId: string, _messageId: string, _body: RESTPatchAPIChannelMessageJSONBody) => ({}) as RESTPatchAPIChannelMessageResult),
-        })
+        }),
+        createInMemoryPendingStartPodStore()
       )
 
       expect(recordSignupMock.calls).toHaveLength(1)
@@ -419,7 +578,8 @@ describe('handleMessageComponent', () => {
       await handleMessageComponent(
         interaction(), // guild_id: 'guild-1'
         createFakeBackendClient({ recordSignup: recordSignupMock }),
-        createFakeDiscordRest({ editMessage })
+        createFakeDiscordRest({ editMessage }),
+        createInMemoryPendingStartPodStore()
       )
 
       // Only guild-2's message should be REST-edited — guild-1's is handled
@@ -443,7 +603,8 @@ describe('handleMessageComponent', () => {
       await handleMessageComponent(
         interaction(),
         createFakeBackendClient({ recordSignup: recordSignupMock }),
-        createFakeDiscordRest({ editMessage })
+        createFakeDiscordRest({ editMessage }),
+        createInMemoryPendingStartPodStore()
       )
     })
 
@@ -458,7 +619,8 @@ describe('handleMessageComponent', () => {
       const response = await handleMessageComponent(
         interaction(),
         createFakeBackendClient({ recordSignup: recordSignupMock }),
-        createFakeDiscordRest({ editMessage })
+        createFakeDiscordRest({ editMessage }),
+        createInMemoryPendingStartPodStore()
       )
 
       expect(response.type).toBe(InteractionResponseType.UpdateMessage)
@@ -481,7 +643,8 @@ describe('handleMessageComponent', () => {
         // cross-guild edit fan-out (§7.5 step 3) irrelevant to this test.
         createFakeDiscordRest({
           editMessage: stub(async (_channelId: string, _messageId: string, _body: RESTPatchAPIChannelMessageJSONBody) => ({}) as RESTPatchAPIChannelMessageResult),
-        })
+        }),
+        createInMemoryPendingStartPodStore()
       )
 
       const data = responseData(response)
@@ -499,7 +662,8 @@ describe('handleMessageComponent', () => {
       const response = await handleMessageComponent(
         interaction({ member: undefined }),
         createFakeBackendClient({ recordSignup: recordSignupMock }),
-        createFakeDiscordRest()
+        createFakeDiscordRest(),
+        createInMemoryPendingStartPodStore()
       )
 
       expect(responseData(response).content).toMatch(/could not determine your discord identity/i)
@@ -513,7 +677,8 @@ describe('handleMessageComponent', () => {
       const response = await handleMessageComponent(
         interaction({ member: memberWithoutUser() }),
         createFakeBackendClient({ recordSignup: recordSignupMock }),
-        createFakeDiscordRest()
+        createFakeDiscordRest(),
+        createInMemoryPendingStartPodStore()
       )
 
       expect(responseData(response).content).toMatch(/could not determine your discord identity/i)
@@ -524,7 +689,12 @@ describe('handleMessageComponent', () => {
     const interaction = fakeMessageComponentInteraction({
       data: { custom_id: 'something-unexpected', component_type: ComponentType.Button },
     })
-    const response = await handleMessageComponent(interaction, createFakeBackendClient(), createFakeDiscordRest())
+    const response = await handleMessageComponent(
+      interaction,
+      createFakeBackendClient(),
+      createFakeDiscordRest(),
+      createInMemoryPendingStartPodStore()
+    )
     expect(responseData(response).content).toMatch(/unrecognized interaction/i)
   })
 })

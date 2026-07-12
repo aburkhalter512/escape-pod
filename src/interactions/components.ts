@@ -1,4 +1,5 @@
 import {
+  ButtonStyle,
   ComponentType,
   InteractionResponseType,
   MessageFlags,
@@ -10,13 +11,15 @@ import {
 } from 'discord-api-types/v10'
 import type { DiscordRestClient } from '../discord/rest.js'
 import type { BackendClient, SignupAction } from '../backendClient.js'
+import type { PendingStartPodStore } from '../pendingStartPods.js'
 import { buildPodRoundMessage } from '../discord/podMessage.js'
 import { decodeJwtPayloadUnverified } from '../util/jwt.js'
 
 export async function handleMessageComponent(
   interaction: APIMessageComponentInteraction,
   backend: BackendClient,
-  discordRest: DiscordRestClient
+  discordRest: DiscordRestClient,
+  pendingStartPods: PendingStartPodStore
 ): Promise<APIInteractionResponse> {
   const customId = interaction.data.custom_id
 
@@ -73,12 +76,79 @@ export async function handleMessageComponent(
       }
     }
 
+    // Resolved for display only — Discord's select-menu interaction only
+    // echoes back the raw selected values, not the option labels shown in
+    // the picker, so this needs resolving again to show real names in the
+    // confirmation summary below. Bounded by the same ≤25 select-menu cap
+    // as the original picker (§7.4).
+    const guildNameLookups = await Promise.allSettled(guildIds.map((id) => discordRest.getGuild(id)))
+    const guildLabels = guildIds.map((id, i) => {
+      const lookup = guildNameLookups[i]
+      return lookup.status === 'fulfilled' ? lookup.value.name : id
+    })
+
+    // Doesn't create the round or post anything yet — that only happens
+    // once the organizer reviews this summary and presses Send
+    // (start-pod:confirm: below). guildIds can't travel in the button's
+    // own custom_id (up to 25 Discord snowflakes blows past its 100-char
+    // limit), so the pending selection is held server-side instead — see
+    // pendingStartPods.ts.
+    const token = pendingStartPods.create({
+      organizerDiscordId: organizerId,
+      setCode,
+      threshold,
+      scheduledFor,
+      originGuildName,
+      guildIds,
+    })
+
+    const deadlineNote = scheduledFor ? `, deadline <t:${Math.floor(scheduledFor.getTime() / 1000)}:R>` : ''
+
+    return {
+      type: InteractionResponseType.UpdateMessage,
+      data: {
+        content: `Ready to post this ${setCode} round (min ${threshold}${deadlineNote}) to: ${guildLabels.join(', ')}.`,
+        components: [
+          {
+            type: ComponentType.ActionRow,
+            components: [
+              {
+                type: ComponentType.Button,
+                style: ButtonStyle.Success,
+                label: 'Send',
+                custom_id: `start-pod:confirm:${token}`,
+              },
+              {
+                type: ComponentType.Button,
+                style: ButtonStyle.Secondary,
+                label: 'Cancel',
+                custom_id: `start-pod:cancel:${token}`,
+              },
+            ],
+          },
+        ],
+      },
+    }
+  }
+
+  if (customId.startsWith('start-pod:confirm:')) {
+    const [, , token] = customId.split(':')
+    const pending = pendingStartPods.get(token)
+    if (!pending) {
+      return {
+        type: InteractionResponseType.UpdateMessage,
+        data: { content: "This selection has expired — run `/start-pod` again.", components: [] },
+      }
+    }
+    pendingStartPods.delete(token)
+    const { organizerDiscordId, setCode, threshold, scheduledFor, originGuildName, guildIds } = pending
+
     // §7.5 steps 1-2: backend creates the PodRound + PodRoundTarget rows and
     // returns each target's resolved channel; this posts the actual RSVP
     // message into each one and records the resulting message ID so a
     // later signup's fan-out (step 3) knows what to edit.
     const { podRoundId, targets } = await backend.startPod({
-      organizerDiscordId: organizerId,
+      organizerDiscordId,
       setCode,
       threshold,
       guildIds,
@@ -120,12 +190,26 @@ export async function handleMessageComponent(
     }
     const failureCount = postOutcomes.filter((outcome) => outcome.status === 'rejected').length
 
-    return ephemeral(
-      `Round started for ${setCode} (min ${threshold}) across ${targets.length} server(s).` +
-        (failureCount > 0
-          ? ` ${failureCount} server(s) failed to post — check the bot has permission in their channel.`
-          : '')
-    )
+    return {
+      type: InteractionResponseType.UpdateMessage,
+      data: {
+        content:
+          `Round started for ${setCode} (min ${threshold}) across ${targets.length} server(s).` +
+          (failureCount > 0
+            ? ` ${failureCount} server(s) failed to post — check the bot has permission in their channel.`
+            : ''),
+        components: [],
+      },
+    }
+  }
+
+  if (customId.startsWith('start-pod:cancel:')) {
+    const [, , token] = customId.split(':')
+    pendingStartPods.delete(token)
+    return {
+      type: InteractionResponseType.UpdateMessage,
+      data: { content: 'Cancelled.', components: [] },
+    }
   }
 
   if (customId.startsWith('pod-signup:')) {

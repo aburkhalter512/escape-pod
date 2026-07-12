@@ -3,6 +3,7 @@ import { ComponentType, InteractionResponseType } from 'discord-api-types/v10'
 import { routeInteraction, type RouterDeps } from './router.js'
 import { createFakeBackendClient } from '../testUtils/fakeBackendClient.js'
 import { createFakeDiscordRest } from '../testUtils/fakeDiscordRest.js'
+import { createInMemoryPendingStartPodStore } from '../pendingStartPods.js'
 import {
   fakeAutocompleteInteraction,
   fakeChatInputInteraction,
@@ -13,7 +14,11 @@ import {
 import { responseData } from '../testUtils/responseData.js'
 
 function deps(): RouterDeps {
-  return { backend: createFakeBackendClient(), discordRest: createFakeDiscordRest() }
+  return {
+    backend: createFakeBackendClient(),
+    discordRest: createFakeDiscordRest(),
+    pendingStartPods: createInMemoryPendingStartPodStore(),
+  }
 }
 
 describe('routeInteraction', () => {

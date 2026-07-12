@@ -13,6 +13,7 @@ import { registerGuildRoutes } from './routes/guilds.js'
 import { registerPodRoutes } from './routes/pods.js'
 import { ephemeral } from './commands/helpers.js'
 import { expireOverduePodRounds } from './jobs/expirePodRounds.js'
+import { createInMemoryPendingStartPodStore } from './pendingStartPods.js'
 
 // All required config up front, fail-fast at boot — a missing var is a
 // clear crash-loop with a log line, not a silent runtime failure. This
@@ -31,6 +32,7 @@ requireEnv('DATABASE_URL')
 const prisma = new PrismaClient()
 const ptp = new HttpPtpClient({ baseUrl: ptpBaseUrl })
 const discordRest = createDiscordRest(discordBotToken)
+const pendingStartPods = createInMemoryPendingStartPodStore()
 
 // Fastify's default is logger: false — silent on every request/response/
 // error, which made a live "this command timed out" report undiagnosable
@@ -91,7 +93,7 @@ app.post('/interactions', async (request, reply) => {
 
   const interaction = request.body as APIInteraction
   try {
-    const response = await routeInteraction(interaction, { backend, discordRest })
+    const response = await routeInteraction(interaction, { backend, discordRest, pendingStartPods })
     return reply.send(response)
   } catch (err) {
     // An uncaught throw here would otherwise become a raw 500 — not a
