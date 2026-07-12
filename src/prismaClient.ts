@@ -70,5 +70,9 @@ export interface AppPrismaClient {
   podRoundSignup: {
     count: Method<PrismaClient['podRoundSignup']['count']>
     upsert: Method<PrismaClient['podRoundSignup']['upsert']>
+    // Fetched unconditionally on every successful fireRound claim
+    // (services/pods.ts) — needed both for onFiring's permission
+    // overwrites and for the caller to DM these same players afterward.
+    findMany: Method<PrismaClient['podRoundSignup']['findMany']>
   }
 }

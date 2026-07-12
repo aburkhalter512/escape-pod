@@ -76,7 +76,7 @@ describe('expireOverduePodRounds', () => {
           findMany: stubPodRoundFindMany(async () => [fakePodRoundRow({ threshold: 6 })]),
           updateMany: stub(async () => ({ count: 1 })),
         },
-        podRoundSignup: { count: stub(async () => 3) }, // below threshold: 6
+        podRoundSignup: { count: stub(async () => 3), findMany: stub(async () => []) }, // below threshold: 6
         podRoundTarget: {
           findMany: stub(async () => [
             { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
@@ -105,7 +105,7 @@ describe('expireOverduePodRounds', () => {
           updateMany: stub(async () => ({ count: 1 })),
           update: stub(async () => fakePodRoundRow()),
         },
-        podRoundSignup: { count: stub(async () => 5) }, // >= threshold (2), short of POD_CAPACITY (8)
+        podRoundSignup: { count: stub(async () => 5), findMany: stub(async () => []) }, // >= threshold (2), short of POD_CAPACITY (8)
         podRoundTarget: {
           findMany: stub(async () => [
             { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
@@ -166,7 +166,7 @@ describe('expireOverduePodRounds', () => {
           updateMany: stub(async () => ({ count: 1 })),
           update: stub(async () => fakePodRoundRow()),
         },
-        podRoundSignup: { count: stub(async () => 5) },
+        podRoundSignup: { count: stub(async () => 5), findMany: stub(async () => []) },
         podRoundTarget: {
           findMany: stub(async () => [
             { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },

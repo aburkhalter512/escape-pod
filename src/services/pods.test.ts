@@ -15,6 +15,7 @@ import {
   expireOverdueRounds,
   startPod,
   type PodServiceDeps,
+  type OnFiringHook,
 } from './pods.js'
 
 const TOKEN_KEY = '00'.repeat(32)
@@ -38,6 +39,12 @@ function fakePodRoundRow(overrides: Partial<PodRoundRow> = {}): PodRoundRow {
     scheduledFor: null,
     ptpPodShareId: null,
     originGuildName: null,
+    // originGuildId is owned by a sibling in-progress slice (origin-guild-
+    // ID plumbing) that hasn't landed in this worktree's schema.prisma yet
+    // — only its generated Prisma client type currently requires this
+    // field (see final report). Defaulting to null here just keeps this
+    // fixture typechecking against that not-yet-merged client shape.
+    originGuildId: null,
     createdAt: new Date(),
     ...overrides,
   }
@@ -134,6 +141,7 @@ describe('recordSignup', () => {
     const update = stub(async () => fakePodRoundRow())
     const upsert = stub(async (_args: PodRoundSignupUpsertArgs) => fakePodRoundSignupRow())
     const count = stub(async () => 8)
+    const findManySignups = stub(async () => [fakePodRoundSignupRow({ discordId: 'p7' }), fakePodRoundSignupRow({ discordId: 'p8' })])
     const createPod = stub(async (_token: string, _params: CreatePodParams) => ({
       id: 'ptp-pod-1',
       shareId: 'share-1',
@@ -143,7 +151,7 @@ describe('recordSignup', () => {
     const deps: PodServiceDeps = {
       prisma: createFakePrismaClient({
         podRound: { findUnique, update, updateMany },
-        podRoundSignup: { upsert, count },
+        podRoundSignup: { upsert, count, findMany: findManySignups },
         podRoundTarget: { findMany: stub(async () => []) },
       }),
       ptp: createFakePtpClient({ createPod }),
@@ -168,6 +176,7 @@ describe('recordSignup', () => {
     const updateMany = stub(async () => ({ count: 1 }))
     const upsert = stub(async () => fakePodRoundSignupRow())
     const count = stub(async () => 8)
+    const findManySignups = stub(async () => [fakePodRoundSignupRow({ discordId: 'p8' })])
     const createPod = stub(async () => {
       throw new Error('PTP pod creation failed: 401')
     })
@@ -175,7 +184,7 @@ describe('recordSignup', () => {
     const deps: PodServiceDeps = {
       prisma: createFakePrismaClient({
         podRound: { findUnique, updateMany },
-        podRoundSignup: { upsert, count },
+        podRoundSignup: { upsert, count, findMany: findManySignups },
         podRoundTarget: { findMany: stub(async () => []) },
       }),
       ptp: createFakePtpClient({ createPod }),
@@ -192,7 +201,7 @@ describe('recordSignup', () => {
     })
 
     expect(result.ok).toBe(true)
-    expect(result.ok && result.value).toMatchObject({ full: true, podCreated: false })
+    expect(result.ok && result.value).toMatchObject({ full: true, podCreated: false, signupDiscordIds: ['p8'] })
     expect(errors).toHaveLength(1)
   })
 
@@ -228,6 +237,202 @@ describe('recordSignup', () => {
 
     expect(result.ok).toBe(true)
     expect(result.ok && result.value).toMatchObject({ count: 3, threshold: 2, full: false, podCreated: false })
+  })
+
+  it('invokes onFiring with the right ctx exactly once, before ptp.createPod, and threads its chatUrl through', async () => {
+    const round = fakeRoundWithOrganizer({ id: 'round-1', setCode: 'JTL', organizerDiscordId: 'organizer-1' })
+    const findUnique = stubPodRoundFindUnique(async () => round)
+    const updateMany = stub(async () => ({ count: 1 }))
+    const update = stub(async () => fakePodRoundRow())
+    const upsert = stub(async () => fakePodRoundSignupRow())
+    const count = stub(async () => 8)
+    const findManySignups = stub(async () => [fakePodRoundSignupRow({ discordId: 'p7' }), fakePodRoundSignupRow({ discordId: 'p8' })])
+
+    const callOrder: string[] = []
+    const onFiring = stub(async (ctx: Parameters<OnFiringHook>[0]) => {
+      callOrder.push('onFiring')
+      expect(ctx).toEqual({
+        setCode: 'JTL',
+        organizerDiscordId: 'organizer-1',
+        originGuildId: round.originGuildId,
+        signupDiscordIds: ['p7', 'p8'],
+      })
+      return 'https://discord.com/invite/abc123'
+    })
+    const createPod = stub(async () => {
+      callOrder.push('createPod')
+      return {
+        id: 'ptp-pod-1',
+        shareId: 'share-1',
+        shareUrl: 'https://www.protectthepod.com/draft/share-1',
+        createdAt: '2026-01-01T00:00:00Z',
+      }
+    })
+    const deps: PodServiceDeps = {
+      prisma: createFakePrismaClient({
+        podRound: { findUnique, update, updateMany },
+        podRoundSignup: { upsert, count, findMany: findManySignups },
+        podRoundTarget: { findMany: stub(async () => []) },
+      }),
+      ptp: createFakePtpClient({ createPod }),
+      tokenEncryptionKey: TOKEN_KEY,
+      logger: { error: () => {} },
+    }
+
+    const result = await recordSignup(deps, {
+      podRoundId: 'round-1',
+      discordId: 'p8',
+      username: 'P8',
+      sourceGuildId: 'g1',
+      action: 'in',
+      onFiring,
+    })
+
+    expect(onFiring.calls).toHaveLength(1)
+    expect(callOrder).toEqual(['onFiring', 'createPod'])
+    expect(result.ok).toBe(true)
+    expect(result.ok && result.value).toMatchObject({
+      podCreated: true,
+      shareUrl: 'https://www.protectthepod.com/draft/share-1',
+      chatUrl: 'https://discord.com/invite/abc123',
+      signupDiscordIds: ['p7', 'p8'],
+    })
+  })
+
+  it('still runs onFiring before ptp.createPod even when createPod then rejects — the hook already ran and cannot be undone', async () => {
+    const round = fakeRoundWithOrganizer()
+    const findUnique = stubPodRoundFindUnique(async () => round)
+    const updateMany = stub(async () => ({ count: 1 }))
+    const upsert = stub(async () => fakePodRoundSignupRow())
+    const count = stub(async () => 8)
+    const findManySignups = stub(async () => [fakePodRoundSignupRow({ discordId: 'p8' })])
+
+    const callOrder: string[] = []
+    const onFiring = stub(async () => {
+      callOrder.push('onFiring')
+      return 'https://discord.com/invite/abc123'
+    })
+    const createPod = stub(async () => {
+      callOrder.push('createPod')
+      throw new Error('PTP pod creation failed: 401')
+    })
+    const errors: unknown[] = []
+    const deps: PodServiceDeps = {
+      prisma: createFakePrismaClient({
+        podRound: { findUnique, updateMany },
+        podRoundSignup: { upsert, count, findMany: findManySignups },
+        podRoundTarget: { findMany: stub(async () => []) },
+      }),
+      ptp: createFakePtpClient({ createPod }),
+      tokenEncryptionKey: TOKEN_KEY,
+      logger: { error: (obj) => errors.push(obj) },
+    }
+
+    const result = await recordSignup(deps, {
+      podRoundId: 'round-1',
+      discordId: 'p8',
+      username: 'P8',
+      sourceGuildId: 'g1',
+      action: 'in',
+      onFiring,
+    })
+
+    expect(callOrder).toEqual(['onFiring', 'createPod'])
+    expect(result.ok).toBe(true)
+    // The hook already ran and returned a chatUrl by the time createPod
+    // rejected — podCreated correctly reflects only ptp.createPod's
+    // outcome, but chatUrl/signupDiscordIds still come back since onFiring
+    // itself succeeded before the failure.
+    expect(result.ok && result.value).toMatchObject({
+      podCreated: false,
+      chatUrl: 'https://discord.com/invite/abc123',
+      signupDiscordIds: ['p8'],
+    })
+  })
+
+  it('omitting onFiring entirely does not change podCreated/shareUrl outcomes (regression guard)', async () => {
+    const round = fakeRoundWithOrganizer()
+    const findUnique = stubPodRoundFindUnique(async () => round)
+    const updateMany = stub(async () => ({ count: 1 }))
+    const update = stub(async () => fakePodRoundRow())
+    const upsert = stub(async () => fakePodRoundSignupRow())
+    const count = stub(async () => 8)
+    const findManySignups = stub(async () => [fakePodRoundSignupRow({ discordId: 'p8' })])
+    const createPod = stub(async () => ({
+      id: 'ptp-pod-1',
+      shareId: 'share-1',
+      shareUrl: 'https://www.protectthepod.com/draft/share-1',
+      createdAt: '2026-01-01T00:00:00Z',
+    }))
+    const deps: PodServiceDeps = {
+      prisma: createFakePrismaClient({
+        podRound: { findUnique, update, updateMany },
+        podRoundSignup: { upsert, count, findMany: findManySignups },
+        podRoundTarget: { findMany: stub(async () => []) },
+      }),
+      ptp: createFakePtpClient({ createPod }),
+      tokenEncryptionKey: TOKEN_KEY,
+      logger: { error: () => {} },
+    }
+
+    const result = await recordSignup(deps, {
+      podRoundId: 'round-1',
+      discordId: 'p8',
+      username: 'P8',
+      sourceGuildId: 'g1',
+      action: 'in',
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.ok && result.value).toMatchObject({
+      podCreated: true,
+      shareUrl: 'https://www.protectthepod.com/draft/share-1',
+      chatUrl: undefined,
+      signupDiscordIds: ['p8'],
+    })
+  })
+
+  it('onFiring resolving to undefined leaves chatUrl undefined without affecting podCreated/shareUrl', async () => {
+    const round = fakeRoundWithOrganizer()
+    const findUnique = stubPodRoundFindUnique(async () => round)
+    const updateMany = stub(async () => ({ count: 1 }))
+    const update = stub(async () => fakePodRoundRow())
+    const upsert = stub(async () => fakePodRoundSignupRow())
+    const count = stub(async () => 8)
+    const findManySignups = stub(async () => [fakePodRoundSignupRow({ discordId: 'p8' })])
+    const onFiring: OnFiringHook = async () => undefined
+    const createPod = stub(async () => ({
+      id: 'ptp-pod-1',
+      shareId: 'share-1',
+      shareUrl: 'https://www.protectthepod.com/draft/share-1',
+      createdAt: '2026-01-01T00:00:00Z',
+    }))
+    const deps: PodServiceDeps = {
+      prisma: createFakePrismaClient({
+        podRound: { findUnique, update, updateMany },
+        podRoundSignup: { upsert, count, findMany: findManySignups },
+        podRoundTarget: { findMany: stub(async () => []) },
+      }),
+      ptp: createFakePtpClient({ createPod }),
+      tokenEncryptionKey: TOKEN_KEY,
+      logger: { error: () => {} },
+    }
+
+    const result = await recordSignup(deps, {
+      podRoundId: 'round-1',
+      discordId: 'p8',
+      username: 'P8',
+      sourceGuildId: 'g1',
+      action: 'in',
+      onFiring,
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.ok && result.value).toMatchObject({
+      podCreated: true,
+      shareUrl: 'https://www.protectthepod.com/draft/share-1',
+      chatUrl: undefined,
+    })
   })
 })
 
@@ -461,13 +666,14 @@ describe('expireOverdueRounds', () => {
         createdAt: '2026-01-01T00:00:00Z',
       }
     })
+    const findManySignups = stub(async () => [fakePodRoundSignupRow({ discordId: 'p1' })])
     const findManyTargets = stub(async () => [
       { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
     ])
     const deps: PodServiceDeps = {
       prisma: createFakePrismaClient({
         podRound: { findMany: findManyRounds, updateMany, update },
-        podRoundSignup: { count },
+        podRoundSignup: { count, findMany: findManySignups },
         podRoundTarget: { findMany: findManyTargets },
       }),
       ptp: createFakePtpClient({ createPod }),
@@ -485,6 +691,8 @@ describe('expireOverdueRounds', () => {
         count: 5,
         threshold: 2,
         shareUrl: 'https://www.protectthepod.com/draft/share-1',
+        chatUrl: undefined,
+        signupDiscordIds: ['p1'],
         originGuildName: null,
         targets: [{ channelId: 'channel-1', messageId: 'msg-1' }],
       },
@@ -499,11 +707,12 @@ describe('expireOverdueRounds', () => {
     const createPod = stub(async () => {
       throw new Error('PTP pod creation failed: 401')
     })
+    const findManySignups = stub(async () => [fakePodRoundSignupRow({ discordId: 'p1' })])
     const errors: unknown[] = []
     const deps: PodServiceDeps = {
       prisma: createFakePrismaClient({
         podRound: { findMany: findManyRounds, updateMany },
-        podRoundSignup: { count },
+        podRoundSignup: { count, findMany: findManySignups },
       }),
       ptp: createFakePtpClient({ createPod }),
       tokenEncryptionKey: TOKEN_KEY,
@@ -514,6 +723,113 @@ describe('expireOverdueRounds', () => {
 
     expect(result).toEqual([])
     expect(errors).toHaveLength(1)
+  })
+
+  it('invokes onFiring with the right ctx before ptp.createPod, and threads chatUrl into the fired result', async () => {
+    const round = fakeRoundWithOrganizer({ id: 'round-1', setCode: 'JTL', threshold: 2, organizerDiscordId: 'organizer-1' })
+    const findManyRounds = stubPodRoundFindMany(async () => [round])
+    const count = stub(async () => 5)
+    const updateMany = stub(async () => ({ count: 1 }))
+    const update = stub(async () => fakePodRoundRow())
+    const findManySignups = stub(async () => [fakePodRoundSignupRow({ discordId: 'p1' }), fakePodRoundSignupRow({ discordId: 'p2' })])
+
+    const callOrder: string[] = []
+    const onFiring = stub(async (ctx: Parameters<OnFiringHook>[0]) => {
+      callOrder.push('onFiring')
+      expect(ctx).toEqual({
+        setCode: 'JTL',
+        organizerDiscordId: 'organizer-1',
+        originGuildId: round.originGuildId,
+        signupDiscordIds: ['p1', 'p2'],
+      })
+      return 'https://discord.com/invite/xyz789'
+    })
+    const createPod = stub(async () => {
+      callOrder.push('createPod')
+      return {
+        id: 'ptp-pod-1',
+        shareId: 'share-1',
+        shareUrl: 'https://www.protectthepod.com/draft/share-1',
+        createdAt: '2026-01-01T00:00:00Z',
+      }
+    })
+    const findManyTargets = stub(async () => [
+      { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
+    ])
+    const deps: PodServiceDeps = {
+      prisma: createFakePrismaClient({
+        podRound: { findMany: findManyRounds, updateMany, update },
+        podRoundSignup: { count, findMany: findManySignups },
+        podRoundTarget: { findMany: findManyTargets },
+      }),
+      ptp: createFakePtpClient({ createPod }),
+      tokenEncryptionKey: TOKEN_KEY,
+      logger: { error: () => {} },
+    }
+
+    const result = await expireOverdueRounds(deps, onFiring)
+
+    expect(onFiring.calls).toHaveLength(1)
+    expect(callOrder).toEqual(['onFiring', 'createPod'])
+    expect(result).toEqual([
+      {
+        podRoundId: 'round-1',
+        setCode: 'JTL',
+        outcome: 'fired',
+        count: 5,
+        threshold: 2,
+        shareUrl: 'https://www.protectthepod.com/draft/share-1',
+        chatUrl: 'https://discord.com/invite/xyz789',
+        signupDiscordIds: ['p1', 'p2'],
+        originGuildName: null,
+        targets: [{ channelId: 'channel-1', messageId: 'msg-1' }],
+      },
+    ])
+  })
+
+  it('omitting onFiring entirely does not change the fired outcome (regression guard)', async () => {
+    const round = fakeRoundWithOrganizer({ id: 'round-1', setCode: 'JTL', threshold: 2 })
+    const findManyRounds = stubPodRoundFindMany(async () => [round])
+    const count = stub(async () => 5)
+    const updateMany = stub(async () => ({ count: 1 }))
+    const update = stub(async () => fakePodRoundRow())
+    const findManySignups = stub(async () => [fakePodRoundSignupRow({ discordId: 'p1' })])
+    const createPod = stub(async () => ({
+      id: 'ptp-pod-1',
+      shareId: 'share-1',
+      shareUrl: 'https://www.protectthepod.com/draft/share-1',
+      createdAt: '2026-01-01T00:00:00Z',
+    }))
+    const findManyTargets = stub(async () => [
+      { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
+    ])
+    const deps: PodServiceDeps = {
+      prisma: createFakePrismaClient({
+        podRound: { findMany: findManyRounds, updateMany, update },
+        podRoundSignup: { count, findMany: findManySignups },
+        podRoundTarget: { findMany: findManyTargets },
+      }),
+      ptp: createFakePtpClient({ createPod }),
+      tokenEncryptionKey: TOKEN_KEY,
+      logger: { error: () => {} },
+    }
+
+    const result = await expireOverdueRounds(deps)
+
+    expect(result).toEqual([
+      {
+        podRoundId: 'round-1',
+        setCode: 'JTL',
+        outcome: 'fired',
+        count: 5,
+        threshold: 2,
+        shareUrl: 'https://www.protectthepod.com/draft/share-1',
+        chatUrl: undefined,
+        signupDiscordIds: ['p1'],
+        originGuildName: null,
+        targets: [{ channelId: 'channel-1', messageId: 'msg-1' }],
+      },
+    ])
   })
 
   it('skips a round that another concurrent sweep (or a racing signup) already claimed', async () => {

@@ -465,6 +465,7 @@ describe('POST /pods/:id/signup', () => {
     })
     const upsert = stub(async (_args: PodRoundSignupUpsertArgs) => fakePodRoundSignupRow())
     const count = stub(async (_args: PodRoundSignupCountArgs) => 8)
+    const findManySignups = stub(async (_args: unknown) => [fakePodRoundSignupRow({ discordId: 'player-8' })])
     const findManyTargets = stub(async (_args: PodRoundTargetFindManyArgs) => targetRows)
     const createPod = stub(async (token: string, params: CreatePodParams) => {
       const validArgs = token === 'a-real-token' && deepEqual(params, { setCode: 'JTL', maxPlayers: 8 })
@@ -479,7 +480,7 @@ describe('POST /pods/:id/signup', () => {
     const { app } = buildApp({
       prisma: {
         podRound: { findUnique, update, updateMany },
-        podRoundSignup: { upsert, count },
+        podRoundSignup: { upsert, count, findMany: findManySignups },
         podRoundTarget: { findMany: findManyTargets },
       },
       ptp: { createPod },
@@ -498,6 +499,7 @@ describe('POST /pods/:id/signup', () => {
       full: true,
       podCreated: true,
       shareUrl: 'https://www.protectthepod.com/draft/share-1',
+      signupDiscordIds: ['player-8'],
       originGuildName: null,
       targets: targetRows.map((t) => ({ guildId: t.guildId, channelId: t.channelId, messageId: t.messageId })),
     })
@@ -528,6 +530,7 @@ describe('POST /pods/:id/signup', () => {
     })
     const upsert = stub(async (_args: PodRoundSignupUpsertArgs) => fakePodRoundSignupRow())
     const count = stub(async (_args: PodRoundSignupCountArgs) => 8)
+    const findManySignups = stub(async (_args: unknown) => [fakePodRoundSignupRow({ discordId: 'player-7' })])
     const createPod = stub(async (_token: string, _params: CreatePodParams) => ({
       id: 'ptp-pod-1',
       shareId: 'share-1',
@@ -535,7 +538,7 @@ describe('POST /pods/:id/signup', () => {
       createdAt: '2026-01-01T00:00:00Z',
     }))
     const { app } = buildApp({
-      prisma: { podRound: { findUnique, update, updateMany }, podRoundSignup: { upsert, count } },
+      prisma: { podRound: { findUnique, update, updateMany }, podRoundSignup: { upsert, count, findMany: findManySignups } },
       ptp: { createPod },
     })
 
@@ -581,11 +584,12 @@ describe('POST /pods/:id/signup', () => {
     })
     const upsert = stub(async (_args: PodRoundSignupUpsertArgs) => fakePodRoundSignupRow())
     const count = stub(async (_args: PodRoundSignupCountArgs) => 8)
+    const findManySignups = stub(async (_args: unknown) => [fakePodRoundSignupRow({ discordId: 'player-8' })])
     const createPod = stub(async (_token: string, _params: CreatePodParams) => {
       throw new Error('PTP pod creation failed: 401')
     })
     const { app } = buildApp({
-      prisma: { podRound: { findUnique, update, updateMany }, podRoundSignup: { upsert, count } },
+      prisma: { podRound: { findUnique, update, updateMany }, podRoundSignup: { upsert, count, findMany: findManySignups } },
       ptp: { createPod },
     })
 

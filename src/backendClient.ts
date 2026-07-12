@@ -10,6 +10,7 @@ import type { PostingPolicy } from '@prisma/client'
 import type { AppPrismaClient } from './prismaClient.js'
 import type { PtpClient } from './ptp/client.js'
 import type { Logger, Result } from './services/errors.js'
+import type { OnFiringHook } from './services/pods.js'
 import * as podsService from './services/pods.js'
 import * as organizersService from './services/organizers.js'
 import * as guildsService from './services/guilds.js'
@@ -47,7 +48,8 @@ export interface BackendClient {
     discordId: string,
     username: string,
     sourceGuildId: string,
-    action: SignupAction
+    action: SignupAction,
+    onFiring?: OnFiringHook
   ): Promise<
     Result<{
       count: number
@@ -56,6 +58,8 @@ export interface BackendClient {
       full: boolean
       podCreated: boolean
       shareUrl?: string
+      chatUrl?: string
+      signupDiscordIds?: string[]
       originGuildName: string | null
       targets: Array<{ guildId: string; channelId: string; messageId: string | null }>
     }>
@@ -142,7 +146,8 @@ export class LocalBackendClient implements BackendClient {
     discordId: string,
     username: string,
     sourceGuildId: string,
-    action: SignupAction
+    action: SignupAction,
+    onFiring?: OnFiringHook
   ): Promise<
     Result<{
       count: number
@@ -151,11 +156,13 @@ export class LocalBackendClient implements BackendClient {
       full: boolean
       podCreated: boolean
       shareUrl?: string
+      chatUrl?: string
+      signupDiscordIds?: string[]
       originGuildName: string | null
       targets: Array<{ guildId: string; channelId: string; messageId: string | null }>
     }>
   > {
-    return podsService.recordSignup(this.deps, { podRoundId, discordId, username, sourceGuildId, action })
+    return podsService.recordSignup(this.deps, { podRoundId, discordId, username, sourceGuildId, action, onFiring })
   }
 
   // §7.5 step 5: cancel a round.
