@@ -9,6 +9,9 @@ export function createFakeDiscordRest(overrides: Partial<DiscordRestClient> = {}
     postMessage: unimplemented('postMessage'),
     editMessage: unimplemented('editMessage'),
     getGuild: unimplemented('getGuild'),
+    createChannel: unimplemented('createChannel'),
+    createInvite: unimplemented('createInvite'),
+    createDmChannel: unimplemented('createDmChannel'),
     ...overrides,
   }
 }

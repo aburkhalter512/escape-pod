@@ -37,3 +37,39 @@ describe('HttpDiscordRest.getGuild', () => {
     expect(result).toEqual({ id: 'guild-1', name: 'My Server' })
   })
 })
+
+describe('HttpDiscordRest.createChannel', () => {
+  it('POSTs to the guild channels route with the given body', async () => {
+    const post = stub(async (_route: string, _options?: unknown) => ({ id: 'channel-1' }))
+    const rest = new HttpDiscordRest({ get: stub(async () => ({})), post, patch: stub(async () => ({})) })
+
+    const result = await rest.createChannel('guild-1', { name: 'pod-chat' })
+
+    expect(post.calls[0]).toEqual(['/guilds/guild-1/channels', { body: { name: 'pod-chat' } }])
+    expect(result).toEqual({ id: 'channel-1' })
+  })
+})
+
+describe('HttpDiscordRest.createInvite', () => {
+  it('POSTs to the channel invites route with a 6h max_age', async () => {
+    const post = stub(async (_route: string, _options?: unknown) => ({ code: 'abc123' }))
+    const rest = new HttpDiscordRest({ get: stub(async () => ({})), post, patch: stub(async () => ({})) })
+
+    const result = await rest.createInvite('channel-1')
+
+    expect(post.calls[0]).toEqual(['/channels/channel-1/invites', { body: { max_age: 21600 } }])
+    expect(result).toEqual({ code: 'abc123' })
+  })
+})
+
+describe('HttpDiscordRest.createDmChannel', () => {
+  it('POSTs to the current-user channels route with the recipient id', async () => {
+    const post = stub(async (_route: string, _options?: unknown) => ({ id: 'dm-1' }))
+    const rest = new HttpDiscordRest({ get: stub(async () => ({})), post, patch: stub(async () => ({})) })
+
+    const result = await rest.createDmChannel('user-1')
+
+    expect(post.calls[0]).toEqual(['/users/@me/channels', { body: { recipient_id: 'user-1' } }])
+    expect(result).toEqual({ id: 'dm-1' })
+  })
+})

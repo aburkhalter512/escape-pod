@@ -34,6 +34,12 @@ export interface PodRoundMessageState {
    * knows where it originated. Resolved once at round-creation time (see
    * services/pods.ts's StartPodParams), not looked up here. */
   originGuildName?: string | null
+  /** Invite link to the temporary per-round chat channel created in the
+   * origin guild once the round fires (see discord/podChat.ts) — only ever
+   * populated alongside shareUrl (the fired state), never during
+   * COLLECTING. Absent when chat-channel creation itself failed (best-
+   * effort; see createPodChatSpace) or the round has no origin guild. */
+  chatUrl?: string
 }
 
 // Shared across every message state below (collecting, fired, cancelled,
@@ -76,6 +82,16 @@ export function buildPodRoundMessage(state: PodRoundMessageState): PodRoundMessa
               label: 'Join the draft',
               url: state.shareUrl,
             },
+            ...(state.chatUrl
+              ? [
+                  {
+                    type: ComponentType.Button as const,
+                    style: ButtonStyle.Link as const,
+                    label: 'Join the chat',
+                    url: state.chatUrl,
+                  },
+                ]
+              : []),
           ],
         },
       ],

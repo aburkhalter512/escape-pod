@@ -119,6 +119,46 @@ describe('buildPodRoundMessage', () => {
 
     expect(body.embeds[0].footer?.text).toContain('Sister Community')
   })
+
+  it('adds a "Join the chat" link button alongside "Join the draft" once fired, when chatUrl is present', () => {
+    const body = buildPodRoundMessage({
+      podRoundId: 'round-1',
+      setCode: 'JTL',
+      threshold: 8,
+      count: 8,
+      shareUrl: 'https://www.protectthepod.com/draft/share-1',
+      chatUrl: 'https://discord.com/invite/abc123',
+    })
+
+    const buttons = body.components[0].components
+    expect(buttons).toHaveLength(2)
+    expect(buttons[0]).toMatchObject({
+      type: ComponentType.Button,
+      style: ButtonStyle.Link,
+      label: 'Join the draft',
+      url: 'https://www.protectthepod.com/draft/share-1',
+    })
+    expect(buttons[1]).toMatchObject({
+      type: ComponentType.Button,
+      style: ButtonStyle.Link,
+      label: 'Join the chat',
+      url: 'https://discord.com/invite/abc123',
+    })
+  })
+
+  it('omits the "Join the chat" button (unchanged current behavior) when chatUrl is absent', () => {
+    const body = buildPodRoundMessage({
+      podRoundId: 'round-1',
+      setCode: 'JTL',
+      threshold: 8,
+      count: 8,
+      shareUrl: 'https://www.protectthepod.com/draft/share-1',
+    })
+
+    const buttons = body.components[0].components
+    expect(buttons).toHaveLength(1)
+    expect(buttons.some((b) => (b as { label?: string }).label === 'Join the chat')).toBe(false)
+  })
 })
 
 describe('buildCancelledPodMessage', () => {

@@ -6,6 +6,10 @@ import {
   type RESTPatchAPIChannelMessageJSONBody,
   type RESTPatchAPIChannelMessageResult,
   type RESTGetAPIGuildResult,
+  type RESTPostAPIGuildChannelJSONBody,
+  type RESTPostAPIGuildChannelResult,
+  type RESTPostAPIChannelInviteResult,
+  type RESTPostAPICurrentUserCreateDMChannelResult,
 } from 'discord-api-types/v10'
 
 // The contract the app depends on for talking to Discord — scoped to the
@@ -24,6 +28,16 @@ export interface DiscordRestClient {
   // name for the eligible-guilds select menu in /start-pod means fetching
   // and storing it once here rather than on every /start-pod call.
   getGuild(guildId: string): Promise<RESTGetAPIGuildResult>
+  // src/discord/podChat.ts's only use of this — creates the private
+  // per-round chat channel in the organizer's origin guild.
+  createChannel(guildId: string, body: RESTPostAPIGuildChannelJSONBody): Promise<RESTPostAPIGuildChannelResult>
+  // Scoped to the channel just created above; a 6h max_age keeps this a
+  // "temporary" invite that expires on its own rather than needing cleanup.
+  createInvite(channelId: string): Promise<RESTPostAPIChannelInviteResult>
+  // src/discord/dmSignups.ts's only use of this — opens (or reuses) a DM
+  // channel with a given user so postMessage can send into it, same as
+  // any other channel ID.
+  createDmChannel(userId: string): Promise<RESTPostAPICurrentUserCreateDMChannelResult>
 }
 
 // The raw @discordjs/rest surface HttpDiscordRest wraps. A real REST
@@ -63,6 +77,25 @@ export class HttpDiscordRest implements DiscordRestClient {
 
   async getGuild(guildId: string): Promise<RESTGetAPIGuildResult> {
     return this.#raw.get(Routes.guild(guildId)) as Promise<RESTGetAPIGuildResult>
+  }
+
+  async createChannel(
+    guildId: string,
+    body: RESTPostAPIGuildChannelJSONBody
+  ): Promise<RESTPostAPIGuildChannelResult> {
+    return this.#raw.post(Routes.guildChannels(guildId), { body }) as Promise<RESTPostAPIGuildChannelResult>
+  }
+
+  async createInvite(channelId: string): Promise<RESTPostAPIChannelInviteResult> {
+    return this.#raw.post(Routes.channelInvites(channelId), {
+      body: { max_age: 21600 },
+    }) as Promise<RESTPostAPIChannelInviteResult>
+  }
+
+  async createDmChannel(userId: string): Promise<RESTPostAPICurrentUserCreateDMChannelResult> {
+    return this.#raw.post(Routes.userChannels(), {
+      body: { recipient_id: userId },
+    }) as Promise<RESTPostAPICurrentUserCreateDMChannelResult>
   }
 }
 
