@@ -264,10 +264,10 @@ describe('cancelActiveRound', () => {
     expect(result).toBeNull()
   })
 
-  it('queries for the most recent COLLECTING/THRESHOLD_REACHED round, scoped to this organizer', async () => {
+  it('queries for the most recent round of any status, scoped to this organizer', async () => {
     const findFirst = stub(async (args: unknown) => {
       const expected = {
-        where: { organizerDiscordId: 'organizer-1', status: { in: ['COLLECTING', 'THRESHOLD_REACHED'] } },
+        where: { organizerDiscordId: 'organizer-1' },
         orderBy: { createdAt: 'desc' },
       }
       if (!deepEqual(args, expected)) throw new Error(`unexpected findFirst args: ${JSON.stringify(args)}`)
@@ -281,6 +281,32 @@ describe('cancelActiveRound', () => {
     await cancelActiveRound(deps, 'organizer-1')
 
     expect(findFirst.calls).toHaveLength(1)
+  })
+
+  it('returns null (does not reach back to an older round) when the most recent round already fired', async () => {
+    // Regression: the query used to filter to cancellable statuses
+    // first, so it would silently skip a more recent already-fired round
+    // and cancel an older still-COLLECTING one instead — cancelling a
+    // round the organizer had already moved on from.
+    const findFirst = stub(async () => fakePodRoundRow({ id: 'round-2', status: 'POD_CREATED' }))
+    const update = stub(async () => {
+      throw new Error('podRound.update should not have been called')
+    })
+    const deps = buildDeps({ podRound: { findFirst, update } })
+
+    const result = await cancelActiveRound(deps, 'organizer-1')
+
+    expect(result).toBeNull()
+    expect(update.calls).toHaveLength(0)
+  })
+
+  it('returns null when the most recent round was already cancelled or expired', async () => {
+    const findFirst = stub(async () => fakePodRoundRow({ id: 'round-2', status: 'EXPIRED' }))
+    const deps = buildDeps({ podRound: { findFirst } })
+
+    const result = await cancelActiveRound(deps, 'organizer-1')
+
+    expect(result).toBeNull()
   })
 
   it('cancels the found round and returns its setCode + targets', async () => {

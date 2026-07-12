@@ -272,12 +272,21 @@ export interface CancelActiveRoundResult {
 }
 
 // /cancel-pod takes no arguments (INTEGRATIONS.md's cancel-pod command
-// definition has none) — it cancels whichever round the calling organizer
-// most recently started that hasn't already finished (POD_CREATED),
-// failed (EXPIRED), or already been cancelled. Nothing today prevents an
+// definition has none) — it cancels the calling organizer's single most
+// recently started round, and only if that specific round is still
+// cancellable (COLLECTING/THRESHOLD_REACHED). Nothing today prevents an
 // organizer from starting more than one round concurrently (no unique
 // constraint on organizerDiscordId + active status), so "most recent" is
 // a deliberate, documented choice for that edge case, not an oversight.
+//
+// Deliberately queries for the most recent round of ANY status first,
+// then checks its status — not "most recent round that's still
+// cancellable" (a bug this used to have): filtering the WHERE clause to
+// cancellable statuses picks the most recent *matching* round, which can
+// silently skip past an organizer's actual latest round (already fired,
+// expired, or cancelled) and reach back to an older still-COLLECTING one
+// instead. That reached back past what the organizer meant by "my
+// current round" and cancelled a stale one they'd already moved on from.
 // Reuses cancelPod above for the actual status update (and its ownership
 // check, redundant here since the query below already scopes by
 // organizerDiscordId, but cheap and keeps this from silently diverging if
@@ -290,10 +299,10 @@ export async function cancelActiveRound(
   organizerDiscordId: string
 ): Promise<CancelActiveRoundResult | null> {
   const round = await deps.prisma.podRound.findFirst({
-    where: { organizerDiscordId, status: { in: ['COLLECTING', 'THRESHOLD_REACHED'] } },
+    where: { organizerDiscordId },
     orderBy: { createdAt: 'desc' },
   })
-  if (!round) {
+  if (!round || (round.status !== 'COLLECTING' && round.status !== 'THRESHOLD_REACHED')) {
     return null
   }
 
