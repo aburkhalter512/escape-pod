@@ -38,6 +38,7 @@ function fakePodRoundRow(overrides: Partial<PodRoundRow> = {}): PodRoundRow {
     scheduledFor: null,
     ptpPodShareId: null,
     originGuildName: null,
+    originGuildId: null,
     createdAt: new Date(),
     ...overrides,
   }
@@ -385,6 +386,25 @@ describe('startPod', () => {
       threshold: 8,
       guildIds: [],
       originGuildName: 'Sister Community',
+    })
+
+    expect(create.calls).toHaveLength(1)
+  })
+
+  it('stores originGuildId on the created round when provided', async () => {
+    const create = stub(async (args: PodRoundCreateArgs) => {
+      expect(args.data.originGuildId).toBe('guild-123')
+      return fakePodRoundRow()
+    })
+    const findMany = stub(async (_args: unknown) => [])
+    const deps = buildDeps({ podRound: { create }, guildSubscription: { findMany } })
+
+    await startPod(deps, {
+      organizerDiscordId: 'organizer-1',
+      setCode: 'JTL',
+      threshold: 8,
+      guildIds: [],
+      originGuildId: 'guild-123',
     })
 
     expect(create.calls).toHaveLength(1)

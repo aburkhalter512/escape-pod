@@ -107,6 +107,12 @@ model PodRound {
   // resolution failure at creation time also falls back to null rather
   // than blocking round creation over a cosmetic lookup.
   originGuildName   String?        @map("origin_guild_name")
+  // Discord ID counterpart to originGuildName above, resolved and stored
+  // the same way (live, once, at creation, from interaction.guild_id) —
+  // needed so a firing round can create its private chat channel in this
+  // guild (see discord/podChat.ts). Same nullable/no-block-on-failure
+  // semantics as originGuildName.
+  originGuildId     String?        @map("origin_guild_id")
 
   organizer Organizer         @relation(fields: [organizerDiscordId], references: [discordId])
   targets   PodRoundTarget[]
