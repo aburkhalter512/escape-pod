@@ -1,7 +1,9 @@
 import { buildExpiredPodMessage, buildPodRoundMessage } from '../discord/podMessage.js'
+import { createPodChatSpace } from '../discord/podChat.js'
+import { notifyPlayersByDm } from '../discord/dmSignups.js'
 import type { DiscordRestClient } from '../discord/rest.js'
 import * as podsService from '../services/pods.js'
-import type { PodServiceDeps } from '../services/pods.js'
+import type { PodServiceDeps, OnFiringHook } from '../services/pods.js'
 
 // Intended to run on a periodic schedule (see server.ts's setInterval) —
 // unlike jobs/refreshTokens.ts's job body, this one needs Discord access
@@ -12,7 +14,17 @@ export async function expireOverduePodRounds(
   deps: PodServiceDeps,
   discordRest: DiscordRestClient
 ): Promise<{ expired: number; fired: number }> {
-  const results = await podsService.expireOverdueRounds(deps)
+  // Same "create the chat channel and invite everyone before the PTP pod"
+  // sequencing as interactions/components.ts's pod-signup: handler — see
+  // services/pods.ts's fireRound for where this actually runs.
+  const onFiring: OnFiringHook = (ctx) =>
+    ctx.originGuildId
+      ? createPodChatSpace(discordRest, { ...ctx, originGuildId: ctx.originGuildId }, (err, msg) =>
+          deps.logger.error({ err }, msg)
+        )
+      : Promise.resolve(undefined)
+
+  const results = await podsService.expireOverdueRounds(deps, onFiring)
 
   let expired = 0
   let fired = 0
@@ -27,6 +39,7 @@ export async function expireOverduePodRounds(
         count: round.count,
         shareUrl: round.shareUrl,
         originGuildName: round.originGuildName,
+        chatUrl: round.chatUrl,
       })
     } else {
       expired++
@@ -50,6 +63,15 @@ export async function expireOverduePodRounds(
           `failed to edit message for ${round.outcome} pod round`
         )
       }
+    }
+
+    // Best-effort DM supplement, only once a round has actually fired (a
+    // stuck THRESHOLD_REACHED round from a failed PTP call never reaches
+    // 'fired' — see fireRound — so there's no "Starting!" state to DM out).
+    if (round.outcome === 'fired') {
+      await notifyPlayersByDm(discordRest, round.signupDiscordIds ?? [], body, (err, msg) =>
+        deps.logger.error({ err }, msg)
+      )
     }
   }
 

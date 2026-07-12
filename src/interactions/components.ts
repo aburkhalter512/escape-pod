@@ -12,7 +12,10 @@ import {
 import type { DiscordRestClient } from '../discord/rest.js'
 import type { BackendClient, SignupAction } from '../backendClient.js'
 import type { PendingStartPodStore } from '../pendingStartPods.js'
+import type { OnFiringHook } from '../services/pods.js'
 import { buildPodRoundMessage } from '../discord/podMessage.js'
+import { createPodChatSpace } from '../discord/podChat.js'
+import { notifyPlayersByDm } from '../discord/dmSignups.js'
 import { decodeJwtPayloadUnverified } from '../util/jwt.js'
 
 export async function handleMessageComponent(
@@ -231,7 +234,23 @@ export async function handleMessageComponent(
       return ephemeral('Could not determine your Discord identity.')
     }
 
-    const signupResult = await backend.recordSignup(podRoundId, discordId, username, interaction.guild_id ?? '', action)
+    // Creates the round's temporary chat channel (in its origin guild) and
+    // invites everyone signed up so far, before the PTP pod itself gets
+    // created (see services/pods.ts's fireRound) — best-effort, never
+    // throws, so a permissions problem in that guild can't block firing.
+    const onFiring: OnFiringHook = (ctx) =>
+      ctx.originGuildId
+        ? createPodChatSpace(discordRest, { ...ctx, originGuildId: ctx.originGuildId }, (err, msg) => console.error(msg, err))
+        : Promise.resolve(undefined)
+
+    const signupResult = await backend.recordSignup(
+      podRoundId,
+      discordId,
+      username,
+      interaction.guild_id ?? '',
+      action,
+      onFiring
+    )
     if (!signupResult.ok) {
       // Today's only case is "round not found" (e.g. a click on a very
       // old/stale message) — worth a specific message here rather than
@@ -248,6 +267,7 @@ export async function handleMessageComponent(
       count: result.count,
       shareUrl: result.shareUrl,
       originGuildName: result.originGuildName,
+      chatUrl: result.chatUrl,
     })
 
     // Fan the same update out to every OTHER target guild's message — the
@@ -259,17 +279,24 @@ export async function handleMessageComponent(
     // away some headroom against Discord's 3-second interaction-response
     // budget as the guild count grows — fine at the scale this is designed
     // for (a handful of sister communities), worth revisiting if rounds
-    // start fanning out to dozens of guilds.
-    await Promise.allSettled(
-      result.targets
-        .filter((target) => target.guildId !== interaction.guild_id && target.messageId)
-        .map((target) =>
-          discordRest.editMessage(target.channelId, target.messageId as string, {
-            embeds: body.embeds,
-            components: body.components,
-          })
-        )
-    )
+    // start fanning out to dozens of guilds. Runs alongside a best-effort
+    // DM to every signed-up player (a supplement, not a replacement — see
+    // discord/dmSignups.ts), only once the round has actually fired.
+    await Promise.all([
+      Promise.allSettled(
+        result.targets
+          .filter((target) => target.guildId !== interaction.guild_id && target.messageId)
+          .map((target) =>
+            discordRest.editMessage(target.channelId, target.messageId as string, {
+              embeds: body.embeds,
+              components: body.components,
+            })
+          )
+      ),
+      result.podCreated
+        ? notifyPlayersByDm(discordRest, result.signupDiscordIds ?? [], body, (err, msg) => console.error(msg, err))
+        : Promise.resolve(),
+    ])
 
     return {
       type: InteractionResponseType.UpdateMessage,

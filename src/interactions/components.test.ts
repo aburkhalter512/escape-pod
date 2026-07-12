@@ -657,6 +657,83 @@ describe('handleMessageComponent', () => {
       expect((buttons[0] as { custom_id?: string }).custom_id).toBeUndefined()
     })
 
+    it('also shows a "Join the chat" button when the backend result carries a chatUrl (a chat space was created)', async () => {
+      const recordSignupMock = stub(async () =>
+        signupResult({
+          count: 8,
+          full: true,
+          podCreated: true,
+          shareUrl: 'https://www.protectthepod.com/draft/share-1',
+          chatUrl: 'https://discord.com/invite/abc123',
+          signupDiscordIds: [],
+        })
+      )
+
+      const response = await handleMessageComponent(
+        interaction(),
+        createFakeBackendClient({ recordSignup: recordSignupMock }),
+        createFakeDiscordRest({
+          editMessage: stub(async () => ({}) as RESTPatchAPIChannelMessageResult),
+        }),
+        createInMemoryPendingStartPodStore()
+      )
+
+      const data = responseData(response)
+      const buttons = (data.components?.[0] as { components: unknown[] }).components
+      expect(buttons).toEqual([
+        expect.objectContaining({ url: 'https://www.protectthepod.com/draft/share-1' }),
+        expect.objectContaining({ url: 'https://discord.com/invite/abc123' }),
+      ])
+    })
+
+    it('DMs every signed-up player (as a supplement, not a replacement) once the pod fires', async () => {
+      const recordSignupMock = stub(async () =>
+        signupResult({
+          count: 8,
+          full: true,
+          podCreated: true,
+          shareUrl: 'https://www.protectthepod.com/draft/share-1',
+          signupDiscordIds: ['player-1', 'player-2'],
+        })
+      )
+      const dmChannelIds: Record<string, string> = { 'player-1': 'dm-channel-1', 'player-2': 'dm-channel-2' }
+      const createDmChannel = stub(async (userId: string) => ({ id: dmChannelIds[userId] }) as never)
+      const postMessage = stub(async (_channelId: string, _body: RESTPostAPIChannelMessageJSONBody) => ({}) as RESTPostAPIChannelMessageResult)
+
+      await handleMessageComponent(
+        interaction(),
+        createFakeBackendClient({ recordSignup: recordSignupMock }),
+        createFakeDiscordRest({
+          editMessage: stub(async () => ({}) as RESTPatchAPIChannelMessageResult),
+          createDmChannel,
+          postMessage,
+        }),
+        createInMemoryPendingStartPodStore()
+      )
+
+      expect(createDmChannel.calls.map((c) => c[0]).sort()).toEqual(['player-1', 'player-2'])
+      expect(postMessage.calls.map((c) => c[0]).sort()).toEqual(['dm-channel-1', 'dm-channel-2'])
+    })
+
+    it('does not attempt to DM anyone while the round is still just collecting (podCreated: false)', async () => {
+      const recordSignupMock = stub(async () => signupResult({ podCreated: false }))
+      const createDmChannel = stub(async () => {
+        throw new Error('createDmChannel should not have been called')
+      })
+
+      await handleMessageComponent(
+        interaction(),
+        createFakeBackendClient({ recordSignup: recordSignupMock }),
+        createFakeDiscordRest({
+          editMessage: stub(async () => ({}) as RESTPatchAPIChannelMessageResult),
+          createDmChannel,
+        }),
+        createInMemoryPendingStartPodStore()
+      )
+
+      expect(createDmChannel.calls).toHaveLength(0)
+    })
+
     it('rejects a signup click when the Discord identity cannot be determined', async () => {
       const recordSignupMock = stub(async (_podRoundId: string, _discordId: string, _username: string, _sourceGuildId: string) => {
         throw new Error('recordSignup should not have been called')

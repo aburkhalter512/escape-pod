@@ -191,6 +191,102 @@ describe('expireOverduePodRounds', () => {
     expect(firedEdit.calls).toHaveLength(1)
   })
 
+  it('creates a chat space in the origin guild and DMs every signed-up player when a round fires', async () => {
+    const editMessage = stub(async (_channelId: string, _messageId: string, _body: unknown) => ({}) as never)
+    const createChannel = stub(async (_guildId: string, _body: unknown) => ({ id: 'chat-channel-1' }) as never)
+    const createInvite = stub(async () => ({ code: 'abc123' }) as never)
+    const createDmChannel = stub(async (userId: string) => ({ id: `dm-${userId}` }) as never)
+    const postMessage = stub(async (_channelId: string, _body: unknown) => ({}) as never)
+    const deps: PodServiceDeps = {
+      prisma: createFakePrismaClient({
+        podRound: {
+          findMany: stubPodRoundFindMany(async () => [fakePodRoundRow({ threshold: 2, originGuildId: 'origin-guild-1' })]),
+          updateMany: stub(async () => ({ count: 1 })),
+          update: stub(async () => fakePodRoundRow()),
+        },
+        podRoundSignup: {
+          count: stub(async () => 5),
+          findMany: stub(async () => [
+            { podRoundId: 'round-1', discordId: 'p1', usernameSnapshot: 'P1', sourceGuildId: 'g1', status: 'IN' as const, signedUpAt: new Date() },
+            { podRoundId: 'round-1', discordId: 'p2', usernameSnapshot: 'P2', sourceGuildId: 'g1', status: 'IN' as const, signedUpAt: new Date() },
+          ]),
+        },
+        podRoundTarget: {
+          findMany: stub(async () => [
+            { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
+          ]),
+        },
+      }),
+      ptp: createFakePtpClient({
+        createPod: stub(async () => ({
+          id: 'ptp-pod-1',
+          shareId: 'share-1',
+          shareUrl: 'https://www.protectthepod.com/draft/share-1',
+          createdAt: '2026-01-01T00:00:00Z',
+        })),
+      }),
+      tokenEncryptionKey: TOKEN_KEY,
+      logger: { error: () => {} },
+    }
+
+    const result = await expireOverduePodRounds(
+      deps,
+      createFakeDiscordRest({ editMessage, createChannel, createInvite, createDmChannel, postMessage })
+    )
+
+    expect(result).toEqual({ expired: 0, fired: 1 })
+    expect(createChannel.calls).toHaveLength(1)
+    expect(createChannel.calls[0][0]).toBe('origin-guild-1')
+    expect(createInvite.calls).toHaveLength(1)
+    expect(createDmChannel.calls.map((c) => c[0]).sort()).toEqual(['p1', 'p2'])
+    // The chat invite reaches the same body that got edited into every
+    // target guild's message, not just the DMs.
+    expect(editMessage.calls[0][2]).toMatchObject({
+      components: [{ components: expect.arrayContaining([expect.objectContaining({ url: 'https://discord.com/invite/abc123' })]) }],
+    })
+  })
+
+  it('does not attempt a chat space or any DMs for a round with no recorded origin guild', async () => {
+    const editMessage = stub(async () => ({}) as never)
+    const createChannel = stub(async () => {
+      throw new Error('createChannel should not have been called')
+    })
+    const createDmChannel = stub(async () => {
+      throw new Error('createDmChannel should not have been called')
+    })
+    const deps: PodServiceDeps = {
+      prisma: createFakePrismaClient({
+        podRound: {
+          findMany: stubPodRoundFindMany(async () => [fakePodRoundRow({ threshold: 2, originGuildId: null })]),
+          updateMany: stub(async () => ({ count: 1 })),
+          update: stub(async () => fakePodRoundRow()),
+        },
+        podRoundSignup: { count: stub(async () => 5), findMany: stub(async () => []) },
+        podRoundTarget: {
+          findMany: stub(async () => [
+            { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
+          ]),
+        },
+      }),
+      ptp: createFakePtpClient({
+        createPod: stub(async () => ({
+          id: 'ptp-pod-1',
+          shareId: 'share-1',
+          shareUrl: 'https://www.protectthepod.com/draft/share-1',
+          createdAt: '2026-01-01T00:00:00Z',
+        })),
+      }),
+      tokenEncryptionKey: TOKEN_KEY,
+      logger: { error: () => {} },
+    }
+
+    const result = await expireOverduePodRounds(deps, createFakeDiscordRest({ editMessage, createChannel, createDmChannel }))
+
+    expect(result).toEqual({ expired: 0, fired: 1 })
+    expect(createChannel.calls).toHaveLength(0)
+    expect(createDmChannel.calls).toHaveLength(0)
+  })
+
   it('logs (not throws) when editing a message fails for one target', async () => {
     const editMessage = stub(async () => {
       throw new Error('Missing Access')
