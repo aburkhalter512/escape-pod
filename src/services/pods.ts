@@ -3,7 +3,7 @@ import type { Prisma } from '@prisma/client'
 import type { PtpClient } from '../ptp/client.js'
 import { decryptToken } from '../crypto/tokenCrypto.js'
 import { POD_CAPACITY } from '../podConfig.js'
-import { ok, err, notFound, forbidden, type Logger, type Result } from './errors.js'
+import { ok, err, notFound, forbidden, validationError, type Logger, type Result } from './errors.js'
 
 export interface PodServiceDeps {
   prisma: AppPrismaClient
@@ -243,6 +243,28 @@ export async function recordSignup(
   })
   if (!round) {
     return err(notFound('Pod round not found'))
+  }
+
+  // The round may have already left COLLECTING before this call started —
+  // fired by an earlier signup that hit POD_CAPACITY, fired by the
+  // periodic deadline sweep (jobs/expirePodRounds.ts), cancelled via
+  // /cancel-pod, or expired. In every one of those cases the correct RSVP
+  // message already reflects that terminal state; upserting the signup
+  // and building a "still collecting" response here would let a late
+  // click stomp that correct message with a stale one (the fields that
+  // signal a terminal state — podCreated/shareUrl/chatUrl — only ever get
+  // set a few lines down, inside the `full && round.status === 'COLLECTING'`
+  // check, so any other status silently fell through to a bogus in-progress
+  // response). Bail out before the upsert/count so a resolved round is
+  // never touched by a late signup at all.
+  if (round.status === 'THRESHOLD_REACHED' || round.status === 'POD_CREATED') {
+    return err(validationError('This round has already started — no need to sign up.'))
+  }
+  if (round.status === 'CANCELLED') {
+    return err(validationError('This round was cancelled by the organizer.'))
+  }
+  if (round.status === 'EXPIRED') {
+    return err(validationError('This round expired before enough players joined.'))
   }
 
   await deps.prisma.podRoundSignup.upsert({

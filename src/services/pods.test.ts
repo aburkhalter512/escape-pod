@@ -119,6 +119,52 @@ describe('recordSignup', () => {
     expect(result).toEqual({ ok: false, error: { kind: 'not_found', message: 'Pod round not found' } })
   })
 
+  // Regression guard (bug found live): a round can leave COLLECTING for a
+  // reason unrelated to this specific call — an earlier signup already
+  // pushed it to POD_CAPACITY, the periodic deadline sweep
+  // (jobs/expirePodRounds.ts) already fired or expired it, or /cancel-pod
+  // already cancelled it. The correct RSVP message for all of those is
+  // already in place; recordSignup used to still upsert the signup and
+  // build a "still collecting" response regardless, which let a late click
+  // overwrite that correct terminal-state message with a stale one. Each
+  // case below asserts both the status-appropriate error AND that neither
+  // the upsert nor the count query ever runs.
+  const terminalStatusCases: Array<{ status: 'THRESHOLD_REACHED' | 'POD_CREATED' | 'CANCELLED' | 'EXPIRED'; message: string }> = [
+    { status: 'THRESHOLD_REACHED', message: 'This round has already started — no need to sign up.' },
+    { status: 'POD_CREATED', message: 'This round has already started — no need to sign up.' },
+    { status: 'CANCELLED', message: 'This round was cancelled by the organizer.' },
+    { status: 'EXPIRED', message: 'This round expired before enough players joined.' },
+  ]
+
+  for (const { status, message } of terminalStatusCases) {
+    it(`returns a validation error and does not upsert/count when the round is already ${status}`, async () => {
+      const round = fakeRoundWithOrganizer({ status })
+      const findUnique = stubPodRoundFindUnique(async () => round)
+      const upsert = stub(async () => {
+        throw new Error('podRoundSignup.upsert should not have been called for a non-COLLECTING round')
+      })
+      const count = stub(async () => {
+        throw new Error('podRoundSignup.count should not have been called for a non-COLLECTING round')
+      })
+      const deps = buildDeps({
+        podRound: { findUnique },
+        podRoundSignup: { upsert, count },
+      })
+
+      const result = await recordSignup(deps, {
+        podRoundId: 'round-1',
+        discordId: 'p1',
+        username: 'P1',
+        sourceGuildId: 'g1',
+        action: 'in',
+      })
+
+      expect(result).toEqual({ ok: false, error: { kind: 'validation', message } })
+      expect(upsert.calls).toHaveLength(0)
+      expect(count.calls).toHaveLength(0)
+    })
+  }
+
   it('only calls PTP once when two signups race to push the round past threshold (tasks/001)', async () => {
     const round = fakeRoundWithOrganizer()
     const findUnique = stubPodRoundFindUnique(async () => round)

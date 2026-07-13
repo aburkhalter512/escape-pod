@@ -784,6 +784,34 @@ describe('handleMessageComponent', () => {
 
       expect(responseData(response).content).toMatch(/could not determine your discord identity/i)
     })
+
+    // Regression guard (bug found live): if the round already left
+    // COLLECTING before this click (fired by an earlier signup, the
+    // periodic deadline sweep, /cancel-pod, or expiry), the backend now
+    // returns an err() rather than a stale "still collecting" ok() value
+    // (see services/pods.test.ts). This asserts the existing
+    // `if (!signupResult.ok)` branch already does the right thing with
+    // that: an ephemeral, private reply to the clicker, and — critically —
+    // no edit/post/DM fan-out that could stomp the correct public message
+    // other processes already left in place. createFakeDiscordRest() with
+    // no overrides already throws on any call, so any fan-out attempt
+    // fails this test.
+    it('shows an ephemeral, status-appropriate message and does not touch Discord when the round already resolved', async () => {
+      const recordSignupMock = stub(async () => ({
+        ok: false as const,
+        error: { kind: 'validation' as const, message: 'This round was cancelled by the organizer.' },
+      }))
+
+      const response = await handleMessageComponent(
+        interaction(),
+        createFakeBackendClient({ recordSignup: recordSignupMock }),
+        createFakeDiscordRest(),
+        createInMemoryPendingStartPodStore()
+      )
+
+      expect(response.type).toBe(InteractionResponseType.ChannelMessageWithSource)
+      expect(responseData(response).content).toBe('This round was cancelled by the organizer.')
+    })
   })
 
   it('falls back to a generic message for an unrecognized custom_id', async () => {

@@ -611,15 +611,21 @@ describe('POST /pods/:id/signup', () => {
     expect(response.json().shareUrl).toBeUndefined()
   })
 
-  it('does not re-trigger PTP pod creation for a round that already reached POD_CREATED', async () => {
-    // e.g. a player leaving and re-joining after the pod already exists.
+  it('rejects a signup for a round that already reached POD_CREATED, without touching the signup table or PTP', async () => {
+    // e.g. a player clicking a stale RSVP button after the pod already
+    // exists — recordSignup now bails out before upserting/counting for
+    // any round no longer COLLECTING (see services/pods.test.ts).
     const round = fakeRoundWithOrganizer({ status: 'POD_CREATED' })
     const findUnique = stubPodRoundFindUnique(async () => round)
     const update = stub(async (_args: PodRoundUpdateArgs) => {
       throw new Error('podRound.update should not have been called')
     })
-    const upsert = stub(async (_args: PodRoundSignupUpsertArgs) => fakePodRoundSignupRow())
-    const count = stub(async (_args: PodRoundSignupCountArgs) => 8)
+    const upsert = stub(async (_args: PodRoundSignupUpsertArgs) => {
+      throw new Error('podRoundSignup.upsert should not have been called')
+    })
+    const count = stub(async (_args: PodRoundSignupCountArgs) => {
+      throw new Error('podRoundSignup.count should not have been called')
+    })
     const createPod = stub(async (_token: string, _params: CreatePodParams) => {
       throw new Error('createPod should not have been called')
     })
@@ -634,7 +640,8 @@ describe('POST /pods/:id/signup', () => {
       payload: { discordId: 'player-9', username: 'PlayerNine', sourceGuildId: 'guild-1', action: 'in' },
     })
 
-    expect(response.json()).toMatchObject({ full: true, podCreated: false })
+    expect(response.statusCode).toBe(422)
+    expect(response.json()).toEqual({ error: 'This round has already started — no need to sign up.' })
   })
 
   it('rejects a signup body missing a required field with 400, before reading the round', async () => {
