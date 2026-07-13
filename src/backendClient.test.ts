@@ -111,6 +111,7 @@ describe('LocalBackendClient', () => {
       ptpPodShareId: null,
       originGuildName: null,
       originGuildId: null,
+      chatChannelId: null,
       createdAt: new Date(),
     }))
 
@@ -138,6 +139,7 @@ describe('LocalBackendClient', () => {
         ptpPodShareId: null,
         originGuildName: null,
         originGuildId: 'guild-123',
+        chatChannelId: null,
         createdAt: new Date(),
       }
     })
@@ -206,6 +208,7 @@ describe('LocalBackendClient', () => {
       ptpPodShareId: 'share-1',
       originGuildName: null,
       originGuildId: null,
+      chatChannelId: 'chat-channel-1',
       createdAt: new Date(),
     }))
     const createPod = stub(async (_token: string, _params: unknown) => ({
@@ -320,6 +323,47 @@ describe('LocalBackendClient', () => {
     expect(result).toEqual({
       ok: false,
       error: { kind: 'forbidden', message: 'Only the organizer who started this round can cancel it' },
+    })
+  })
+
+  it('delegates concludeActiveRound to podRound.findFirst + update, returning a validation error for a non-concludable round', async () => {
+    const findFirst = stub(async (_args: unknown) => ({
+      id: 'round-1',
+      organizerDiscordId: 'org-1',
+      setCode: 'JTL',
+      threshold: 8,
+      status: 'COLLECTING' as const,
+      scheduledFor: null,
+      ptpPodShareId: null,
+      originGuildName: null,
+      originGuildId: null,
+      chatChannelId: null,
+      createdAt: new Date(),
+    }))
+    function findUnique() {
+      return Promise.resolve({
+        id: 'round-1',
+        organizerDiscordId: 'org-1',
+        setCode: 'JTL',
+        threshold: 8,
+        status: 'COLLECTING' as const,
+        scheduledFor: null,
+        ptpPodShareId: null,
+        originGuildName: null,
+        originGuildId: null,
+        chatChannelId: null,
+        createdAt: new Date(),
+      }) as never
+    }
+
+    const result = await client({ podRound: { findFirst, findUnique } }).concludeActiveRound('org-1')
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        kind: 'validation',
+        message: "This round hasn't fired yet — nothing to conclude. Did you mean `/cancel-pod`?",
+      },
     })
   })
 })

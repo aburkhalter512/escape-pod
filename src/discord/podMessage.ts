@@ -12,6 +12,7 @@ const COLLECTING_COLOR = 0x5865f2 // Discord blurple
 const POD_FULL_COLOR = 0x57f287 // green
 const CANCELLED_COLOR = 0xed4245 // Discord red
 const EXPIRED_COLOR = 0xfaa61a // Discord orange — distinct from CANCELLED
+const CONCLUDED_COLOR = 0x99aab5 // Discord greyple — muted, distinct from all four above
 
 export interface PodRoundMessageState {
   podRoundId: string
@@ -164,6 +165,26 @@ export function buildExpiredPodMessage(setCode: string, originGuildName?: string
         title: `${setCode} Draft Pod — Expired`,
         description: 'Not enough players joined before the deadline.',
         color: EXPIRED_COLOR,
+        footer: originFooter(originGuildName),
+      },
+    ],
+    components: [],
+  }
+}
+
+// What every target guild's RSVP message gets edited to when the organizer
+// manually runs /conclude-pod on a fired (POD_CREATED) round — see
+// services/pods.ts's concludePod/concludeActiveRound. Same no-buttons shape
+// as buildCancelledPodMessage/buildExpiredPodMessage, but its own title,
+// copy, and color: this is the "the draft actually finished" terminal
+// state, distinct from a round that never got off the ground.
+export function buildConcludedPodMessage(setCode: string, originGuildName?: string | null): PodRoundMessageBody {
+  return {
+    embeds: [
+      {
+        title: `${setCode} Draft Pod — Concluded`,
+        description: 'This draft has concluded.',
+        color: CONCLUDED_COLOR,
         footer: originFooter(originGuildName),
       },
     ],

@@ -5,7 +5,7 @@ import { stub } from '../testUtils/stub.js'
 describe('HttpDiscordRest.postMessage', () => {
   it('POSTs to the channel messages route with the given body', async () => {
     const post = stub(async (_route: string, _options?: unknown) => ({ id: 'msg-1' }))
-    const rest = new HttpDiscordRest({ get: stub(async () => ({})), post, patch: stub(async () => ({})) })
+    const rest = new HttpDiscordRest({ get: stub(async () => ({})), post, patch: stub(async () => ({})), delete: stub(async () => ({})) })
 
     const result = await rest.postMessage('channel-1', { content: 'hello' })
 
@@ -17,7 +17,7 @@ describe('HttpDiscordRest.postMessage', () => {
 describe('HttpDiscordRest.editMessage', () => {
   it('PATCHes the specific message route with the given body', async () => {
     const patch = stub(async (_route: string, _options?: unknown) => ({ id: 'msg-1', content: 'updated' }))
-    const rest = new HttpDiscordRest({ get: stub(async () => ({})), post: stub(async () => ({})), patch })
+    const rest = new HttpDiscordRest({ get: stub(async () => ({})), post: stub(async () => ({})), patch, delete: stub(async () => ({})) })
 
     const result = await rest.editMessage('channel-1', 'msg-1', { content: 'updated' })
 
@@ -29,7 +29,7 @@ describe('HttpDiscordRest.editMessage', () => {
 describe('HttpDiscordRest.getGuild', () => {
   it('GETs the specific guild route', async () => {
     const get = stub(async (_route: string, _options?: unknown) => ({ id: 'guild-1', name: 'My Server' }))
-    const rest = new HttpDiscordRest({ get, post: stub(async () => ({})), patch: stub(async () => ({})) })
+    const rest = new HttpDiscordRest({ get, post: stub(async () => ({})), patch: stub(async () => ({})), delete: stub(async () => ({})) })
 
     const result = await rest.getGuild('guild-1')
 
@@ -41,7 +41,7 @@ describe('HttpDiscordRest.getGuild', () => {
 describe('HttpDiscordRest.createChannel', () => {
   it('POSTs to the guild channels route with the given body', async () => {
     const post = stub(async (_route: string, _options?: unknown) => ({ id: 'channel-1' }))
-    const rest = new HttpDiscordRest({ get: stub(async () => ({})), post, patch: stub(async () => ({})) })
+    const rest = new HttpDiscordRest({ get: stub(async () => ({})), post, patch: stub(async () => ({})), delete: stub(async () => ({})) })
 
     const result = await rest.createChannel('guild-1', { name: 'pod-chat' })
 
@@ -53,7 +53,7 @@ describe('HttpDiscordRest.createChannel', () => {
 describe('HttpDiscordRest.createInvite', () => {
   it('POSTs to the channel invites route with a 6h max_age', async () => {
     const post = stub(async (_route: string, _options?: unknown) => ({ code: 'abc123' }))
-    const rest = new HttpDiscordRest({ get: stub(async () => ({})), post, patch: stub(async () => ({})) })
+    const rest = new HttpDiscordRest({ get: stub(async () => ({})), post, patch: stub(async () => ({})), delete: stub(async () => ({})) })
 
     const result = await rest.createInvite('channel-1')
 
@@ -65,11 +65,28 @@ describe('HttpDiscordRest.createInvite', () => {
 describe('HttpDiscordRest.createDmChannel', () => {
   it('POSTs to the current-user channels route with the recipient id', async () => {
     const post = stub(async (_route: string, _options?: unknown) => ({ id: 'dm-1' }))
-    const rest = new HttpDiscordRest({ get: stub(async () => ({})), post, patch: stub(async () => ({})) })
+    const rest = new HttpDiscordRest({ get: stub(async () => ({})), post, patch: stub(async () => ({})), delete: stub(async () => ({})) })
 
     const result = await rest.createDmChannel('user-1')
 
     expect(post.calls[0]).toEqual(['/users/@me/channels', { body: { recipient_id: 'user-1' } }])
     expect(result).toEqual({ id: 'dm-1' })
+  })
+})
+
+describe('HttpDiscordRest.deleteChannel', () => {
+  it('DELETEs the specific channel route', async () => {
+    const del = stub(async (_route: string, _options?: unknown) => ({}))
+    const rest = new HttpDiscordRest({
+      get: stub(async () => ({})),
+      post: stub(async () => ({})),
+      patch: stub(async () => ({})),
+      delete: del,
+    })
+
+    const result = await rest.deleteChannel('channel-1')
+
+    expect(del.calls[0]).toEqual(['/channels/channel-1'])
+    expect(result).toBeUndefined()
   })
 })

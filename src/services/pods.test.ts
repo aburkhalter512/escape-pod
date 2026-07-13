@@ -11,6 +11,8 @@ import {
   recordSignup,
   cancelPod,
   cancelActiveRound,
+  concludePod,
+  concludeActiveRound,
   recordTargetMessage,
   expireOverdueRounds,
   startPod,
@@ -40,6 +42,7 @@ function fakePodRoundRow(overrides: Partial<PodRoundRow> = {}): PodRoundRow {
     ptpPodShareId: null,
     originGuildName: null,
     originGuildId: null,
+    chatChannelId: null,
     createdAt: new Date(),
     ...overrides,
   }
@@ -645,6 +648,173 @@ describe('cancelActiveRound', () => {
     const result = await cancelActiveRound(deps, 'organizer-1')
 
     expect(result?.originGuildName).toBe('Sister Community')
+  })
+})
+
+describe('concludePod', () => {
+  it('returns a not_found error when the round does not exist', async () => {
+    const findUnique = stubPodRoundFindUnique(async () => null)
+    const deps = buildDeps({ podRound: { findUnique } })
+
+    const result = await concludePod(deps, { podRoundId: 'round-1', requestedBy: 'organizer-1' })
+
+    expect(result).toEqual({ ok: false, error: { kind: 'not_found', message: 'Pod round not found' } })
+  })
+
+  it("returns a forbidden error when the requester is not the round's organizer", async () => {
+    const findUnique = stubPodRoundFindUnique(async () => fakePodRoundRow({ status: 'POD_CREATED' }))
+    const deps = buildDeps({ podRound: { findUnique } })
+
+    const result = await concludePod(deps, { podRoundId: 'round-1', requestedBy: 'someone-else' })
+
+    expect(result).toEqual({
+      ok: false,
+      error: { kind: 'forbidden', message: 'Only the organizer who started this round can conclude it' },
+    })
+  })
+
+  it.each([
+    ['COLLECTING', "This round hasn't fired yet — nothing to conclude. Did you mean `/cancel-pod`?"],
+    ['THRESHOLD_REACHED', "This round hasn't fired yet — nothing to conclude. Did you mean `/cancel-pod`?"],
+    ['CANCELLED', 'This round was already cancelled.'],
+    ['EXPIRED', 'This round already expired.'],
+    ['CONCLUDED', 'This round has already been concluded.'],
+  ] as const)('returns a validation error with a distinct message when status is %s', async (status, message) => {
+    const findUnique = stubPodRoundFindUnique(async () => fakePodRoundRow({ status }))
+    const deps = buildDeps({ podRound: { findUnique } })
+
+    const result = await concludePod(deps, { podRoundId: 'round-1', requestedBy: 'organizer-1' })
+
+    expect(result).toEqual({ ok: false, error: { kind: 'validation', message } })
+  })
+
+  it('transitions POD_CREATED to CONCLUDED and returns ok', async () => {
+    const findUnique = stubPodRoundFindUnique(async () => fakePodRoundRow({ status: 'POD_CREATED' }))
+    const update = stub(async (args: PodRoundUpdateArgs) => {
+      const expected: PodRoundUpdateArgs = { where: { id: 'round-1' }, data: { status: 'CONCLUDED' } }
+      if (!deepEqual(args, expected)) throw new Error(`unexpected update args: ${JSON.stringify(args)}`)
+      return fakePodRoundRow({ status: 'CONCLUDED' })
+    })
+    const deps = buildDeps({ podRound: { findUnique, update } })
+
+    const result = await concludePod(deps, { podRoundId: 'round-1', requestedBy: 'organizer-1' })
+
+    expect(result).toEqual({ ok: true, value: undefined })
+    expect(update.calls).toHaveLength(1)
+  })
+})
+
+describe('concludeActiveRound', () => {
+  it('returns a not_found error when the organizer has no round at all', async () => {
+    const findFirst = stub(async () => null)
+    const deps = buildDeps({ podRound: { findFirst } })
+
+    const result = await concludeActiveRound(deps, 'organizer-1')
+
+    expect(result).toEqual({ ok: false, error: { kind: 'not_found', message: "You don't have a pod round to conclude." } })
+  })
+
+  it('queries for the most recent round of any status, scoped to this organizer', async () => {
+    const findFirst = stub(async (args: unknown) => {
+      const expected = {
+        where: { organizerDiscordId: 'organizer-1' },
+        orderBy: { createdAt: 'desc' },
+      }
+      if (!deepEqual(args, expected)) throw new Error(`unexpected findFirst args: ${JSON.stringify(args)}`)
+      return fakePodRoundRow({ id: 'round-1', organizerDiscordId: 'organizer-1', status: 'POD_CREATED' })
+    })
+    const findUnique = stubPodRoundFindUnique(async () =>
+      fakePodRoundRow({ id: 'round-1', organizerDiscordId: 'organizer-1', status: 'POD_CREATED' })
+    )
+    const update = stub(async () => fakePodRoundRow({ status: 'CONCLUDED' }))
+    const findMany = stub(async () => [])
+    const deps = buildDeps({ podRound: { findFirst, findUnique, update }, podRoundTarget: { findMany } })
+
+    await concludeActiveRound(deps, 'organizer-1')
+
+    expect(findFirst.calls).toHaveLength(1)
+  })
+
+  it('does not reach back to an older round when the most recent round is already CANCELLED', async () => {
+    // Regression guard mirroring cancelActiveRound's own: filtering the
+    // WHERE clause to concludable statuses would silently skip a more
+    // recent non-concludable round and reach back to an older POD_CREATED
+    // one instead.
+    const findFirst = stub(async () => fakePodRoundRow({ id: 'round-2', status: 'CANCELLED' }))
+    const findUnique = stubPodRoundFindUnique(async () => fakePodRoundRow({ id: 'round-2', status: 'CANCELLED' }))
+    const update = stub(async () => {
+      throw new Error('podRound.update should not have been called')
+    })
+    const deps = buildDeps({ podRound: { findFirst, findUnique, update } })
+
+    const result = await concludeActiveRound(deps, 'organizer-1')
+
+    expect(result).toEqual({ ok: false, error: { kind: 'validation', message: 'This round was already cancelled.' } })
+    expect(update.calls).toHaveLength(0)
+  })
+
+  it.each([
+    ['COLLECTING', "This round hasn't fired yet — nothing to conclude. Did you mean `/cancel-pod`?"],
+    ['THRESHOLD_REACHED', "This round hasn't fired yet — nothing to conclude. Did you mean `/cancel-pod`?"],
+    ['CANCELLED', 'This round was already cancelled.'],
+    ['EXPIRED', 'This round already expired.'],
+    ['CONCLUDED', 'This round has already been concluded.'],
+  ] as const)('surfaces a distinct validation message when the most recent round has status %s', async (status, message) => {
+    const findFirst = stub(async () => fakePodRoundRow({ id: 'round-1', status }))
+    const findUnique = stubPodRoundFindUnique(async () => fakePodRoundRow({ id: 'round-1', status }))
+    const deps = buildDeps({ podRound: { findFirst, findUnique } })
+
+    const result = await concludeActiveRound(deps, 'organizer-1')
+
+    expect(result).toEqual({ ok: false, error: { kind: 'validation', message } })
+  })
+
+  it('concludes the found round and returns its setCode, chatChannelId, and targets', async () => {
+    const findFirst = stub(async () =>
+      fakePodRoundRow({ id: 'round-1', organizerDiscordId: 'organizer-1', setCode: 'JTL', status: 'POD_CREATED', chatChannelId: 'chat-1' })
+    )
+    const findUnique = stubPodRoundFindUnique(async () =>
+      fakePodRoundRow({ id: 'round-1', organizerDiscordId: 'organizer-1', setCode: 'JTL', status: 'POD_CREATED', chatChannelId: 'chat-1' })
+    )
+    const update = stub(async (args: PodRoundUpdateArgs) => {
+      const expected: PodRoundUpdateArgs = { where: { id: 'round-1' }, data: { status: 'CONCLUDED' } }
+      if (!deepEqual(args, expected)) throw new Error(`unexpected update args: ${JSON.stringify(args)}`)
+      return fakePodRoundRow({ status: 'CONCLUDED' })
+    })
+    const findMany = stub(async () => [
+      { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
+      { podRoundId: 'round-1', guildId: 'g2', channelId: 'channel-2', messageId: null, approvalStatus: null, postedAt: new Date() },
+    ])
+    const deps = buildDeps({ podRound: { findFirst, findUnique, update }, podRoundTarget: { findMany } })
+
+    const result = await concludeActiveRound(deps, 'organizer-1')
+
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        podRoundId: 'round-1',
+        setCode: 'JTL',
+        originGuildName: null,
+        chatChannelId: 'chat-1',
+        targets: [
+          { channelId: 'channel-1', messageId: 'msg-1' },
+          { channelId: 'channel-2', messageId: null },
+        ],
+      },
+    })
+  })
+
+  it('returns a null chatChannelId when the round never got a chat channel', async () => {
+    const findFirst = stub(async () => fakePodRoundRow({ id: 'round-1', status: 'POD_CREATED', chatChannelId: null }))
+    const findUnique = stubPodRoundFindUnique(async () => fakePodRoundRow({ id: 'round-1', status: 'POD_CREATED', chatChannelId: null }))
+    const update = stub(async () => fakePodRoundRow({ status: 'CONCLUDED' }))
+    const findMany = stub(async () => [])
+    const deps = buildDeps({ podRound: { findFirst, findUnique, update }, podRoundTarget: { findMany } })
+
+    const result = await concludeActiveRound(deps, 'organizer-1')
+
+    expect(result.ok).toBe(true)
+    expect(result.ok && result.value.chatChannelId).toBeNull()
   })
 })
 

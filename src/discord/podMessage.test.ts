@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ButtonStyle, ComponentType } from 'discord-api-types/v10'
-import { buildCancelledPodMessage, buildExpiredPodMessage, buildPodRoundMessage } from './podMessage.js'
+import { buildCancelledPodMessage, buildConcludedPodMessage, buildExpiredPodMessage, buildPodRoundMessage } from './podMessage.js'
 
 describe('buildPodRoundMessage', () => {
   it('shows the running count and signup buttons while still collecting', () => {
@@ -204,5 +204,39 @@ describe('buildExpiredPodMessage', () => {
     const body = buildExpiredPodMessage('JTL', 'Sister Community')
 
     expect(body.embeds[0].footer?.text).toContain('Sister Community')
+  })
+})
+
+describe('buildConcludedPodMessage', () => {
+  it('shows a concluded title, description, and no buttons', () => {
+    const body = buildConcludedPodMessage('JTL')
+
+    expect(body.embeds[0].title).toContain('Concluded')
+    expect(body.embeds[0].title).toContain('JTL')
+    expect(body.embeds[0].description).toMatch(/concluded/i)
+    expect(body.components).toHaveLength(0)
+  })
+
+  it('uses a color distinct from cancelled, expired, and pod-full', () => {
+    const concluded = buildConcludedPodMessage('JTL')
+    const cancelled = buildCancelledPodMessage('JTL')
+    const expired = buildExpiredPodMessage('JTL')
+    const full = buildPodRoundMessage({ podRoundId: 'round-1', setCode: 'JTL', threshold: 8, count: 8, shareUrl: 'https://example.com' })
+
+    expect(concluded.embeds[0].color).not.toBe(cancelled.embeds[0].color)
+    expect(concluded.embeds[0].color).not.toBe(expired.embeds[0].color)
+    expect(concluded.embeds[0].color).not.toBe(full.embeds[0].color)
+  })
+
+  it("shows the origin guild's name in the footer when present", () => {
+    const body = buildConcludedPodMessage('JTL', 'Sister Community')
+
+    expect(body.embeds[0].footer?.text).toContain('Sister Community')
+  })
+
+  it('omits the footer when there is no origin guild name', () => {
+    const body = buildConcludedPodMessage('JTL')
+
+    expect(body.embeds[0].footer).toBeUndefined()
   })
 })

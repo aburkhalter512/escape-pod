@@ -39,6 +39,7 @@ function fakePodRoundRow(overrides: Partial<PodRoundRow> = {}): PodRoundRow {
     ptpPodShareId: null,
     originGuildName: null,
     originGuildId: null,
+    chatChannelId: null,
     createdAt: new Date(),
     ...overrides,
   }

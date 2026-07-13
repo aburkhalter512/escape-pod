@@ -226,7 +226,11 @@ async function fireRound(
     })
     await deps.prisma.podRound.update({
       where: { id: round.id },
-      data: { status: 'POD_CREATED', ptpPodShareId: result.shareId },
+      data: {
+        status: 'POD_CREATED',
+        ptpPodShareId: result.shareId,
+        ...(chatChannelId ? { chatChannelId } : {}),
+      },
     })
     return { claimed: true, podCreated: true, shareUrl: result.shareUrl, chatUrl, chatChannelId, signupDiscordIds }
   } catch (err) {
@@ -418,6 +422,105 @@ export async function cancelActiveRound(
     originGuildName: round.originGuildName,
     targets: targetRows.map((t) => ({ channelId: t.channelId, messageId: t.messageId })),
   }
+}
+
+export interface ConcludePodParams {
+  podRoundId: string
+  requestedBy: string
+}
+
+// New terminal transition (POD_CREATED -> CONCLUDED) for a round the
+// organizer says has actually finished on PTP's side — see tasks/010.
+// Trusts the organizer outright (resolved decision #1): no verification
+// against PTP that the draft really finished, no elapsed-time guard. A
+// plain conditional `update` is enough here, unlike fireRound's
+// updateMany-as-compare-and-swap claim — there's no concurrent writer
+// racing to conclude the same round, so the status checks below (which
+// already read-then-branch) are sufficient guarding on their own.
+export async function concludePod(deps: PodServiceDeps, params: ConcludePodParams): Promise<Result<void>> {
+  const { podRoundId, requestedBy } = params
+
+  const round = await deps.prisma.podRound.findUnique({ where: { id: podRoundId } })
+  if (!round) {
+    return err(notFound('Pod round not found'))
+  }
+  if (round.organizerDiscordId !== requestedBy) {
+    return err(forbidden('Only the organizer who started this round can conclude it'))
+  }
+
+  if (round.status === 'COLLECTING' || round.status === 'THRESHOLD_REACHED') {
+    return err(validationError("This round hasn't fired yet — nothing to conclude. Did you mean `/cancel-pod`?"))
+  }
+  if (round.status === 'CANCELLED') {
+    return err(validationError('This round was already cancelled.'))
+  }
+  if (round.status === 'EXPIRED') {
+    return err(validationError('This round already expired.'))
+  }
+  if (round.status === 'CONCLUDED') {
+    return err(validationError('This round has already been concluded.'))
+  }
+
+  await deps.prisma.podRound.update({
+    where: { id: podRoundId },
+    data: { status: 'CONCLUDED' },
+  })
+  return ok(undefined)
+}
+
+export interface ConcludeActiveRoundResult {
+  podRoundId: string
+  setCode: string
+  originGuildName: string | null
+  chatChannelId: string | null
+  targets: Array<{ channelId: string; messageId: string | null }>
+}
+
+// /conclude-pod takes no arguments, same as /cancel-pod — concludes the
+// calling organizer's single most recently started round, and only if
+// that specific round is in the one concludable state (POD_CREATED).
+//
+// Deliberately queries for the most recent round of ANY status first, then
+// checks its status via concludePod below — not "most recent round that's
+// still concludable" — for the exact same reason documented on
+// cancelActiveRound above: filtering the WHERE clause to concludable
+// statuses would pick the most recent *matching* round, which can
+// silently reach back past the organizer's actual latest round (e.g. one
+// that's already CANCELLED or CONCLUDED) to an older POD_CREATED one
+// instead.
+//
+// Unlike cancelActiveRound, this returns a Result rather than `| null`:
+// conclude has several distinct non-concludable statuses, each with its
+// own message (see concludePod's guards), so the caller needs to surface
+// *why* a round isn't concludable, not just that it isn't. "No round
+// found at all" is reported the same way, as a not_found error, so the
+// command handler has exactly one branch (result.ok === false) to turn
+// into an ephemeral reply instead of two.
+export async function concludeActiveRound(
+  deps: PodServiceDeps,
+  organizerDiscordId: string
+): Promise<Result<ConcludeActiveRoundResult>> {
+  const round = await deps.prisma.podRound.findFirst({
+    where: { organizerDiscordId },
+    orderBy: { createdAt: 'desc' },
+  })
+  if (!round) {
+    return err(notFound("You don't have a pod round to conclude."))
+  }
+
+  const concludeResult = await concludePod(deps, { podRoundId: round.id, requestedBy: organizerDiscordId })
+  if (!concludeResult.ok) {
+    return err(concludeResult.error)
+  }
+
+  const targetRows = await deps.prisma.podRoundTarget.findMany({ where: { podRoundId: round.id } })
+  return ok({
+    podRoundId: round.id,
+    setCode: round.setCode,
+    originGuildName: round.originGuildName,
+    chatChannelId: round.chatChannelId,
+    targets: targetRows.map((t) => ({ channelId: t.channelId, messageId: t.messageId })),
+  })
 }
 
 type ExpiredRoundTarget = { channelId: string; messageId: string | null }

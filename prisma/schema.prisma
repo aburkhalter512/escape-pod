@@ -21,6 +21,7 @@ enum PodRoundStatus {
   POD_CREATED
   CANCELLED
   EXPIRED
+  CONCLUDED
 }
 
 enum ApprovalStatus {
@@ -113,6 +114,15 @@ model PodRound {
   // guild (see discord/podChat.ts). Same nullable/no-block-on-failure
   // semantics as originGuildName.
   originGuildId     String?        @map("origin_guild_id")
+  // Discord channel ID of the temporary per-round chat channel created by
+  // discord/podChat.ts's createPodChatSpace once the round fires. Nullable
+  // for the same two reasons as originGuildName/originGuildId above: rounds
+  // created before this column existed have none, and chat-space creation
+  // is itself best-effort (a failure there shouldn't block the round from
+  // firing) — populated only when a chat channel actually got created.
+  // Read back out by /conclude-pod (services/pods.ts's concludeActiveRound)
+  // to delete the channel once the draft concludes.
+  chatChannelId     String?        @map("chat_channel_id")
 
   organizer Organizer         @relation(fields: [organizerDiscordId], references: [discordId])
   targets   PodRoundTarget[]

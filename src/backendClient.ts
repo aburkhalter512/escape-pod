@@ -10,7 +10,7 @@ import type { PostingPolicy } from '@prisma/client'
 import type { AppPrismaClient } from './prismaClient.js'
 import type { PtpClient } from './ptp/client.js'
 import type { Logger, Result } from './services/errors.js'
-import type { OnFiringHook } from './services/pods.js'
+import type { ConcludeActiveRoundResult, OnFiringHook } from './services/pods.js'
 import * as podsService from './services/pods.js'
 import * as organizersService from './services/organizers.js'
 import * as guildsService from './services/guilds.js'
@@ -74,6 +74,7 @@ export interface BackendClient {
     originGuildName: string | null
     targets: Array<{ channelId: string; messageId: string | null }>
   } | null>
+  concludeActiveRound(organizerDiscordId: string): Promise<Result<ConcludeActiveRoundResult>>
 }
 
 export interface LocalBackendClientDeps {
@@ -186,5 +187,12 @@ export class LocalBackendClient implements BackendClient {
     targets: Array<{ channelId: string; messageId: string | null }>
   } | null> {
     return podsService.cancelActiveRound(this.deps, organizerDiscordId)
+  }
+
+  // tasks/010, /conclude-pod's actual entry point: finds and concludes the
+  // organizer's own most-recent round (POD_CREATED -> CONCLUDED), same
+  // no-argument shape as cancelActiveRound above.
+  concludeActiveRound(organizerDiscordId: string): Promise<Result<ConcludeActiveRoundResult>> {
+    return podsService.concludeActiveRound(this.deps, organizerDiscordId)
   }
 }

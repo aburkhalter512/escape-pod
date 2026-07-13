@@ -91,4 +91,9 @@ export const commandDefinitions: RESTPostAPIChatInputApplicationCommandsJSONBody
     description: 'Cancel your in-progress draft pod round',
     type: ApplicationCommandType.ChatInput,
   },
+  {
+    name: 'conclude-pod',
+    description: 'Conclude your finished draft pod round',
+    type: ApplicationCommandType.ChatInput,
+  },
 ]

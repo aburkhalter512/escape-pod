@@ -1,5 +1,6 @@
 import { allowOrganizer } from './allowOrganizer.js'
 import { cancelPod } from './cancelPod.js'
+import { concludePod } from './concludePod.js'
 import { connectPtp } from './connectPtp.js'
 import { startPod } from './startPod.js'
 import { subscribeGuild } from './subscribeGuild.js'
@@ -13,4 +14,5 @@ export const commandHandlers: Record<string, CommandHandler> = {
   'allow-organizer': allowOrganizer,
   'start-pod': startPod,
   'cancel-pod': cancelPod,
+  'conclude-pod': concludePod,
 }

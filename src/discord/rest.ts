@@ -38,6 +38,11 @@ export interface DiscordRestClient {
   // channel with a given user so postMessage can send into it, same as
   // any other channel ID.
   createDmChannel(userId: string): Promise<RESTPostAPICurrentUserCreateDMChannelResult>
+  // commands/concludePod.ts's only use of this — deletes the temporary
+  // per-round chat channel (discord/podChat.ts's createPodChatSpace) once
+  // the organizer concludes the round. Best-effort at the call site: a 404
+  // from an already-deleted channel is swallowed there, not here.
+  deleteChannel(channelId: string): Promise<void>
 }
 
 // The raw @discordjs/rest surface HttpDiscordRest wraps. A real REST
@@ -47,6 +52,7 @@ interface RawRestClient {
   get(fullRoute: RouteLike, options?: RequestData): Promise<unknown>
   post(fullRoute: RouteLike, options?: RequestData): Promise<unknown>
   patch(fullRoute: RouteLike, options?: RequestData): Promise<unknown>
+  delete(fullRoute: RouteLike, options?: RequestData): Promise<unknown>
 }
 
 // The only place `unknown` gets cast away — every other consumer works
@@ -96,6 +102,10 @@ export class HttpDiscordRest implements DiscordRestClient {
     return this.#raw.post(Routes.userChannels(), {
       body: { recipient_id: userId },
     }) as Promise<RESTPostAPICurrentUserCreateDMChannelResult>
+  }
+
+  async deleteChannel(channelId: string): Promise<void> {
+    await this.#raw.delete(Routes.channel(channelId))
   }
 }
 
