@@ -244,6 +244,17 @@ describe('expireOverduePodRounds', () => {
     expect(editMessage.calls[0][2]).toMatchObject({
       components: [{ components: expect.arrayContaining([expect.objectContaining({ url: 'https://discord.com/invite/abc123' })]) }],
     })
+
+    // The welcome message lands in the newly created chat channel — not a
+    // DM channel — and mentions every signed-up player plus the real PTP
+    // share URL (only known once ptp.createPod ran, after the channel was
+    // created).
+    const welcomeCall = postMessage.calls.find((c) => c[0] === 'chat-channel-1')
+    expect(welcomeCall).toBeDefined()
+    const content = (welcomeCall?.[1] as { content: string }).content
+    expect(content).toContain('<@p1>')
+    expect(content).toContain('<@p2>')
+    expect(content).toContain('https://www.protectthepod.com/draft/share-1')
   })
 
   it('does not attempt a chat space or any DMs for a round with no recorded origin guild', async () => {

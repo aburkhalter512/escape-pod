@@ -123,6 +123,7 @@ export interface RecordSignupResult {
   podCreated: boolean
   shareUrl?: string
   chatUrl?: string
+  chatChannelId?: string
   signupDiscordIds?: string[]
   originGuildName: string | null
   scheduledFor: Date | null
@@ -136,6 +137,7 @@ interface FireRoundResult {
   podCreated: boolean
   shareUrl?: string
   chatUrl?: string
+  chatChannelId?: string
   signupDiscordIds?: string[]
 }
 
@@ -145,15 +147,21 @@ interface FireRoundResult {
 // exactly that point in the sequence without this file importing anything
 // Discord-specific. Keeps the Discord-agnostic-services boundary described
 // on cancelActiveRound above intact: fireRound only ever deals in plain
-// data in and a plain optional URL back out, never discordRest itself.
-// Documented (at the one real implementation, createPodChatSpace) as never
-// throwing/rejecting — fireRound awaits it directly, no extra guarding.
+// data in and a plain optional { channelId, chatUrl } back out, never
+// discordRest itself. Documented (at the one real implementation,
+// createPodChatSpace) as never throwing/rejecting — fireRound awaits it
+// directly, no extra guarding. The channelId has to make the round trip back
+// out through fireRound (and recordSignup/expireOverdueRounds beyond it)
+// because the welcome message naming the real PTP share URL can only be
+// posted once that URL exists — i.e. after ptp.createPod, which runs after
+// this hook — so the caller needs the channel ID later to post into, not
+// just the invite URL.
 export type OnFiringHook = (ctx: {
   setCode: string
   organizerDiscordId: string
   originGuildId: string | null
   signupDiscordIds: string[]
-}) => Promise<string | undefined>
+}) => Promise<{ channelId: string; chatUrl: string } | undefined>
 
 // Atomically claims a COLLECTING round for firing (see tasks/001) and, if
 // this call won the claim, creates the PTP pod. Always sized to
@@ -198,13 +206,16 @@ async function fireRound(
   const signupDiscordIds = signups.map((s) => s.discordId)
 
   let chatUrl: string | undefined
+  let chatChannelId: string | undefined
   if (onFiring) {
-    chatUrl = await onFiring({
+    const chatSpace = await onFiring({
       setCode: round.setCode,
       organizerDiscordId: round.organizerDiscordId,
       originGuildId: round.originGuildId,
       signupDiscordIds,
     })
+    chatUrl = chatSpace?.chatUrl
+    chatChannelId = chatSpace?.channelId
   }
 
   try {
@@ -217,7 +228,7 @@ async function fireRound(
       where: { id: round.id },
       data: { status: 'POD_CREATED', ptpPodShareId: result.shareId },
     })
-    return { claimed: true, podCreated: true, shareUrl: result.shareUrl, chatUrl, signupDiscordIds }
+    return { claimed: true, podCreated: true, shareUrl: result.shareUrl, chatUrl, chatChannelId, signupDiscordIds }
   } catch (err) {
     // Pod creation failed (e.g. expired/revoked token) even though we've
     // hit the fire condition — the claim above already recorded
@@ -225,7 +236,7 @@ async function fireRound(
     // subsequent signup or sweep. Needs an operator-facing alert path, not
     // yet built.
     deps.logger.error({ err, podRoundId: round.id }, 'PTP pod creation failed after threshold reached')
-    return { claimed: true, podCreated: false, chatUrl, signupDiscordIds }
+    return { claimed: true, podCreated: false, chatUrl, chatChannelId, signupDiscordIds }
   }
 }
 
@@ -285,6 +296,7 @@ export async function recordSignup(
   let podCreated = false
   let shareUrl: string | undefined
   let chatUrl: string | undefined
+  let chatChannelId: string | undefined
   let signupDiscordIds: string[] | undefined
 
   if (full && round.status === 'COLLECTING') {
@@ -292,6 +304,7 @@ export async function recordSignup(
     podCreated = fireResult.podCreated
     shareUrl = fireResult.shareUrl
     chatUrl = fireResult.chatUrl
+    chatChannelId = fireResult.chatChannelId
     signupDiscordIds = fireResult.signupDiscordIds
   }
 
@@ -314,6 +327,7 @@ export async function recordSignup(
     podCreated,
     shareUrl,
     chatUrl,
+    chatChannelId,
     signupDiscordIds,
     originGuildName: round.originGuildName,
     scheduledFor: round.scheduledFor,
@@ -418,6 +432,7 @@ export type ExpiredRoundInfo =
       threshold: number
       shareUrl?: string
       chatUrl?: string
+      chatChannelId?: string
       signupDiscordIds?: string[]
       originGuildName: string | null
       targets: ExpiredRoundTarget[]
@@ -459,6 +474,7 @@ export async function expireOverdueRounds(deps: PodServiceDeps, onFiring?: OnFir
         threshold: round.threshold,
         shareUrl: fireResult.shareUrl,
         chatUrl: fireResult.chatUrl,
+        chatChannelId: fireResult.chatChannelId,
         signupDiscordIds: fireResult.signupDiscordIds,
         originGuildName: round.originGuildName,
         targets: targetRows.map((t) => ({ channelId: t.channelId, messageId: t.messageId })),

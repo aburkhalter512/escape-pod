@@ -60,6 +60,7 @@ export interface BackendClient {
       podCreated: boolean
       shareUrl?: string
       chatUrl?: string
+      chatChannelId?: string
       signupDiscordIds?: string[]
       originGuildName: string | null
       scheduledFor: Date | null
@@ -160,6 +161,7 @@ export class LocalBackendClient implements BackendClient {
       podCreated: boolean
       shareUrl?: string
       chatUrl?: string
+      chatChannelId?: string
       signupDiscordIds?: string[]
       originGuildName: string | null
       scheduledFor: Date | null

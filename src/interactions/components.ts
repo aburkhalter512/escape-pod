@@ -14,7 +14,7 @@ import type { BackendClient, SignupAction } from '../backendClient.js'
 import type { PendingStartPodStore } from '../pendingStartPods.js'
 import type { OnFiringHook } from '../services/pods.js'
 import { buildPodRoundMessage } from '../discord/podMessage.js'
-import { createPodChatSpace } from '../discord/podChat.js'
+import { createPodChatSpace, postPodChatWelcomeMessage } from '../discord/podChat.js'
 import { notifyPlayersByDm } from '../discord/dmSignups.js'
 import { decodeJwtPayloadUnverified } from '../util/jwt.js'
 
@@ -238,10 +238,17 @@ export async function handleMessageComponent(
     // invites everyone signed up so far, before the PTP pod itself gets
     // created (see services/pods.ts's fireRound) — best-effort, never
     // throws, so a permissions problem in that guild can't block firing.
-    const onFiring: OnFiringHook = (ctx) =>
-      ctx.originGuildId
-        ? createPodChatSpace(discordRest, { ...ctx, originGuildId: ctx.originGuildId }, (err, msg) => console.error(msg, err))
-        : Promise.resolve(undefined)
+    // Adapts createPodChatSpace's { channelId, inviteUrl } into the hook's
+    // { channelId, chatUrl } shape.
+    const onFiring: OnFiringHook = async (ctx) => {
+      if (!ctx.originGuildId) return undefined
+      const chatSpace = await createPodChatSpace(
+        discordRest,
+        { ...ctx, originGuildId: ctx.originGuildId },
+        (err, msg) => console.error(msg, err)
+      )
+      return chatSpace ? { channelId: chatSpace.channelId, chatUrl: chatSpace.inviteUrl } : undefined
+    }
 
     const signupResult = await backend.recordSignup(
       podRoundId,
@@ -282,7 +289,10 @@ export async function handleMessageComponent(
     // for (a handful of sister communities), worth revisiting if rounds
     // start fanning out to dozens of guilds. Runs alongside a best-effort
     // DM to every signed-up player (a supplement, not a replacement — see
-    // discord/dmSignups.ts), only once the round has actually fired.
+    // discord/dmSignups.ts) and a best-effort welcome message into the chat
+    // channel onFiring created above (now that the real PTP share URL is
+    // known — see services/pods.ts's fireRound for why that message can't
+    // be posted any earlier), both only once the round has actually fired.
     await Promise.all([
       Promise.allSettled(
         result.targets
@@ -296,6 +306,14 @@ export async function handleMessageComponent(
       ),
       result.podCreated
         ? notifyPlayersByDm(discordRest, result.signupDiscordIds ?? [], body, (err, msg) => console.error(msg, err))
+        : Promise.resolve(),
+      result.podCreated && result.chatChannelId && result.shareUrl
+        ? postPodChatWelcomeMessage(
+            discordRest,
+            result.chatChannelId,
+            { shareUrl: result.shareUrl, signupDiscordIds: result.signupDiscordIds ?? [] },
+            (err, msg) => console.error(msg, err)
+          )
         : Promise.resolve(),
     ])
 

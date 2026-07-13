@@ -736,6 +736,39 @@ describe('handleMessageComponent', () => {
       expect(postMessage.calls.map((c) => c[0]).sort()).toEqual(['dm-channel-1', 'dm-channel-2'])
     })
 
+    it('posts a welcome message into the chat channel (mentions + share link) when the backend result carries chatChannelId', async () => {
+      const recordSignupMock = stub(async () =>
+        signupResult({
+          count: 8,
+          full: true,
+          podCreated: true,
+          shareUrl: 'https://www.protectthepod.com/draft/share-1',
+          chatUrl: 'https://discord.com/invite/abc123',
+          chatChannelId: 'chat-channel-1',
+          signupDiscordIds: ['player-1', 'player-2'],
+        })
+      )
+      const postMessage = stub(async (_channelId: string, _body: RESTPostAPIChannelMessageJSONBody) => ({}) as RESTPostAPIChannelMessageResult)
+
+      await handleMessageComponent(
+        interaction(),
+        createFakeBackendClient({ recordSignup: recordSignupMock }),
+        createFakeDiscordRest({
+          editMessage: stub(async () => ({}) as RESTPatchAPIChannelMessageResult),
+          createDmChannel: stub(async (userId: string) => ({ id: `dm-${userId}` }) as never),
+          postMessage,
+        }),
+        createInMemoryPendingStartPodStore()
+      )
+
+      const welcomeCall = postMessage.calls.find((c) => c[0] === 'chat-channel-1')
+      expect(welcomeCall).toBeDefined()
+      const content = (welcomeCall?.[1] as { content: string }).content
+      expect(content).toContain('<@player-1>')
+      expect(content).toContain('<@player-2>')
+      expect(content).toContain('https://www.protectthepod.com/draft/share-1')
+    })
+
     it('does not attempt to DM anyone while the round is still just collecting (podCreated: false)', async () => {
       const recordSignupMock = stub(async () => signupResult({ podCreated: false }))
       const createDmChannel = stub(async () => {

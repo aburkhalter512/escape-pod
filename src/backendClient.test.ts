@@ -215,7 +215,10 @@ describe('LocalBackendClient', () => {
       createdAt: '2026-01-01T00:00:00Z',
     }))
 
-    const onFiring = stub(async (_ctx: Parameters<OnFiringHook>[0]) => 'https://discord.com/invite/abc123')
+    const onFiring = stub(async (_ctx: Parameters<OnFiringHook>[0]) => ({
+      channelId: 'chat-channel-1',
+      chatUrl: 'https://discord.com/invite/abc123',
+    }))
 
     const backendClient = new LocalBackendClient({
       prisma: createFakePrismaClient({
@@ -236,6 +239,7 @@ describe('LocalBackendClient', () => {
       podCreated: true,
       shareUrl: 'https://www.protectthepod.com/draft/share-1',
       chatUrl: 'https://discord.com/invite/abc123',
+      chatChannelId: 'chat-channel-1',
       signupDiscordIds: ['p8'],
       scheduledFor: null,
     })

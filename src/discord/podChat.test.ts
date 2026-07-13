@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import { OverwriteType, PermissionFlagsBits, type RESTPostAPIGuildChannelJSONBody } from 'discord-api-types/v10'
-import { createPodChatSpace } from './podChat.js'
+import { createPodChatSpace, postPodChatWelcomeMessage } from './podChat.js'
 import { createFakeDiscordRest } from '../testUtils/fakeDiscordRest.js'
 import { stub } from '../testUtils/stub.js'
 import type { DiscordRestClient } from './rest.js'
 
 describe('createPodChatSpace', () => {
-  it('creates a private channel with overwrites for @everyone-deny + organizer + every signup, and returns the invite URL', async () => {
+  it('creates a private channel with overwrites for @everyone-deny + organizer + every signup, and returns the channel id + invite URL', async () => {
     const createChannel = stub<Parameters<DiscordRestClient['createChannel']>, ReturnType<DiscordRestClient['createChannel']>>(
       async () => ({ id: 'channel-1' }) as never
     )
@@ -15,7 +15,7 @@ describe('createPodChatSpace', () => {
     )
     const discordRest = createFakeDiscordRest({ createChannel, createInvite })
 
-    const url = await createPodChatSpace(
+    const result = await createPodChatSpace(
       discordRest,
       {
         setCode: 'JTL',
@@ -26,7 +26,7 @@ describe('createPodChatSpace', () => {
       vi.fn()
     )
 
-    expect(url).toBe('https://discord.com/invite/abc123')
+    expect(result).toEqual({ channelId: 'channel-1', inviteUrl: 'https://discord.com/invite/abc123' })
 
     expect(createChannel.calls).toHaveLength(1)
     const [guildId, body] = createChannel.calls[0]
@@ -91,13 +91,13 @@ describe('createPodChatSpace', () => {
     })
     const log = vi.fn()
 
-    const url = await createPodChatSpace(
+    const result = await createPodChatSpace(
       discordRest,
       { setCode: 'JTL', originGuildId: 'guild-1', organizerDiscordId: 'organizer-1', signupDiscordIds: [] },
       log
     )
 
-    expect(url).toBeUndefined()
+    expect(result).toBeUndefined()
     expect(log).toHaveBeenCalledTimes(1)
     expect(log.mock.calls[0][1]).toBe('failed to create pod chat channel')
   })
@@ -111,13 +111,78 @@ describe('createPodChatSpace', () => {
     })
     const log = vi.fn()
 
-    const url = await createPodChatSpace(
+    const result = await createPodChatSpace(
       discordRest,
       { setCode: 'JTL', originGuildId: 'guild-1', organizerDiscordId: 'organizer-1', signupDiscordIds: ['player-1'] },
       log
     )
 
-    expect(url).toBeUndefined()
+    expect(result).toBeUndefined()
     expect(log).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('postPodChatWelcomeMessage', () => {
+  it('posts to the right channel with every mention and the share URL present in the content', async () => {
+    const postMessage = stub<Parameters<DiscordRestClient['postMessage']>, ReturnType<DiscordRestClient['postMessage']>>(
+      async () => ({}) as never
+    )
+    const discordRest = createFakeDiscordRest({ postMessage })
+
+    await postPodChatWelcomeMessage(
+      discordRest,
+      'channel-1',
+      { shareUrl: 'https://www.protectthepod.com/draft/share-1', signupDiscordIds: ['player-1', 'player-2'] },
+      vi.fn()
+    )
+
+    expect(postMessage.calls).toHaveLength(1)
+    const [channelId, body] = postMessage.calls[0]
+    expect(channelId).toBe('channel-1')
+    const content = (body as { content: string }).content
+    expect(content).toContain('<@player-1>')
+    expect(content).toContain('<@player-2>')
+    expect(content).toContain('https://www.protectthepod.com/draft/share-1')
+  })
+
+  it('still posts sensibly (no stray leading whitespace) with an empty signupDiscordIds array', async () => {
+    const postMessage = stub<Parameters<DiscordRestClient['postMessage']>, ReturnType<DiscordRestClient['postMessage']>>(
+      async () => ({}) as never
+    )
+    const discordRest = createFakeDiscordRest({ postMessage })
+
+    await postPodChatWelcomeMessage(
+      discordRest,
+      'channel-1',
+      { shareUrl: 'https://www.protectthepod.com/draft/share-1', signupDiscordIds: [] },
+      vi.fn()
+    )
+
+    expect(postMessage.calls).toHaveLength(1)
+    const content = (postMessage.calls[0][1] as { content: string }).content
+    expect(content).toContain('https://www.protectthepod.com/draft/share-1')
+    expect(content).not.toMatch(/^\s/)
+    expect(content).not.toContain('<@')
+  })
+
+  it('catches and logs (never throws) when postMessage rejects', async () => {
+    const discordRest = createFakeDiscordRest({
+      postMessage: async () => {
+        throw new Error('Missing Access')
+      },
+    })
+    const log = vi.fn()
+
+    await expect(
+      postPodChatWelcomeMessage(
+        discordRest,
+        'channel-1',
+        { shareUrl: 'https://www.protectthepod.com/draft/share-1', signupDiscordIds: ['player-1'] },
+        log
+      )
+    ).resolves.toBeUndefined()
+
+    expect(log).toHaveBeenCalledTimes(1)
+    expect(log.mock.calls[0][1]).toBe('failed to post pod chat welcome message')
   })
 })

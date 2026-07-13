@@ -345,7 +345,7 @@ describe('recordSignup', () => {
         originGuildId: round.originGuildId,
         signupDiscordIds: ['p7', 'p8'],
       })
-      return 'https://discord.com/invite/abc123'
+      return { channelId: 'chat-channel-1', chatUrl: 'https://discord.com/invite/abc123' }
     })
     const createPod = stub(async () => {
       callOrder.push('createPod')
@@ -383,6 +383,7 @@ describe('recordSignup', () => {
       podCreated: true,
       shareUrl: 'https://www.protectthepod.com/draft/share-1',
       chatUrl: 'https://discord.com/invite/abc123',
+      chatChannelId: 'chat-channel-1',
       signupDiscordIds: ['p7', 'p8'],
     })
   })
@@ -398,7 +399,7 @@ describe('recordSignup', () => {
     const callOrder: string[] = []
     const onFiring = stub(async () => {
       callOrder.push('onFiring')
-      return 'https://discord.com/invite/abc123'
+      return { channelId: 'chat-channel-1', chatUrl: 'https://discord.com/invite/abc123' }
     })
     const createPod = stub(async () => {
       callOrder.push('createPod')
@@ -427,13 +428,14 @@ describe('recordSignup', () => {
 
     expect(callOrder).toEqual(['onFiring', 'createPod'])
     expect(result.ok).toBe(true)
-    // The hook already ran and returned a chatUrl by the time createPod
-    // rejected — podCreated correctly reflects only ptp.createPod's
-    // outcome, but chatUrl/signupDiscordIds still come back since onFiring
-    // itself succeeded before the failure.
+    // The hook already ran and returned a chatUrl/chatChannelId by the time
+    // createPod rejected — podCreated correctly reflects only
+    // ptp.createPod's outcome, but chatUrl/chatChannelId/signupDiscordIds
+    // still come back since onFiring itself succeeded before the failure.
     expect(result.ok && result.value).toMatchObject({
       podCreated: false,
       chatUrl: 'https://discord.com/invite/abc123',
+      chatChannelId: 'chat-channel-1',
       signupDiscordIds: ['p8'],
     })
   })
@@ -476,11 +478,12 @@ describe('recordSignup', () => {
       podCreated: true,
       shareUrl: 'https://www.protectthepod.com/draft/share-1',
       chatUrl: undefined,
+      chatChannelId: undefined,
       signupDiscordIds: ['p8'],
     })
   })
 
-  it('onFiring resolving to undefined leaves chatUrl undefined without affecting podCreated/shareUrl', async () => {
+  it('onFiring resolving to undefined leaves chatUrl/chatChannelId undefined without affecting podCreated/shareUrl', async () => {
     const round = fakeRoundWithOrganizer()
     const findUnique = stubPodRoundFindUnique(async () => round)
     const updateMany = stub(async () => ({ count: 1 }))
@@ -520,6 +523,7 @@ describe('recordSignup', () => {
       podCreated: true,
       shareUrl: 'https://www.protectthepod.com/draft/share-1',
       chatUrl: undefined,
+      chatChannelId: undefined,
     })
   })
 })
@@ -803,6 +807,7 @@ describe('expireOverdueRounds', () => {
         threshold: 2,
         shareUrl: 'https://www.protectthepod.com/draft/share-1',
         chatUrl: undefined,
+        chatChannelId: undefined,
         signupDiscordIds: ['p1'],
         originGuildName: null,
         targets: [{ channelId: 'channel-1', messageId: 'msg-1' }],
@@ -853,7 +858,7 @@ describe('expireOverdueRounds', () => {
         originGuildId: round.originGuildId,
         signupDiscordIds: ['p1', 'p2'],
       })
-      return 'https://discord.com/invite/xyz789'
+      return { channelId: 'chat-channel-1', chatUrl: 'https://discord.com/invite/xyz789' }
     })
     const createPod = stub(async () => {
       callOrder.push('createPod')
@@ -891,6 +896,7 @@ describe('expireOverdueRounds', () => {
         threshold: 2,
         shareUrl: 'https://www.protectthepod.com/draft/share-1',
         chatUrl: 'https://discord.com/invite/xyz789',
+        chatChannelId: 'chat-channel-1',
         signupDiscordIds: ['p1', 'p2'],
         originGuildName: null,
         targets: [{ channelId: 'channel-1', messageId: 'msg-1' }],
@@ -936,6 +942,7 @@ describe('expireOverdueRounds', () => {
         threshold: 2,
         shareUrl: 'https://www.protectthepod.com/draft/share-1',
         chatUrl: undefined,
+        chatChannelId: undefined,
         signupDiscordIds: ['p1'],
         originGuildName: null,
         targets: [{ channelId: 'channel-1', messageId: 'msg-1' }],
