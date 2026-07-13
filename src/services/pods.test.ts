@@ -764,7 +764,11 @@ describe('expireOverdueRounds', () => {
       return fakePodRoundRow()
     })
     const createPod = stub(async (token: string, params: CreatePodParams) => {
-      const validArgs = token === 'a-real-token' && deepEqual(params, { setCode: 'JTL', maxPlayers: 5 })
+      // maxPlayers is always POD_CAPACITY (8), never the actual headcount
+      // (5 here) — a round firing short of a full table at its deadline
+      // still gets a full-size pod with open seats, not one capped at
+      // whoever happened to have joined by then.
+      const validArgs = token === 'a-real-token' && deepEqual(params, { setCode: 'JTL', maxPlayers: 8 })
       if (!validArgs) throw new Error(`unexpected createPod args: ${token} ${JSON.stringify(params)}`)
       return {
         id: 'ptp-pod-1',

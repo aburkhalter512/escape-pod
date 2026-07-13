@@ -76,7 +76,10 @@ export class HttpPtpClient implements PtpClient {
       body: JSON.stringify({
         setCode: params.setCode,
         maxPlayers: params.maxPlayers,
-        isPublic: true,
+        // Every pod this bot creates comes from a private Discord RSVP
+        // round — a public PTP listing would expose it to PTP's general
+        // userbase, not just the players who actually signed up here.
+        isPublic: false,
       }),
     })
 

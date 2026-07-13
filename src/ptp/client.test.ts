@@ -64,7 +64,7 @@ describe('HttpPtpClient', () => {
       expect(result).toEqual(data)
     })
 
-    it('sends setCode, maxPlayers, and isPublic:true in the request body', async () => {
+    it('sends setCode, maxPlayers, and isPublic:false in the request body', async () => {
       const data = { id: 'pod-1', shareId: 'abc123', createdAt: '2026-01-01T00:00:00Z' }
       const fetchStub = stubFetchCapturing(new Response(JSON.stringify(envelope(data)), { status: 201 }))
       globalThis.fetch = fetchStub
@@ -72,7 +72,7 @@ describe('HttpPtpClient', () => {
       await client().createPod('a-token', { setCode: 'JTL', maxPlayers: 6 })
 
       const [, init] = fetchStub.calls[0]
-      expect(JSON.parse(init?.body as string)).toEqual({ setCode: 'JTL', maxPlayers: 6, isPublic: true })
+      expect(JSON.parse(init?.body as string)).toEqual({ setCode: 'JTL', maxPlayers: 6, isPublic: false })
     })
 
     it('throws with the status and response body when PTP rejects the request', async () => {

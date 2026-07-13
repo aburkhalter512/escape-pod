@@ -156,16 +156,20 @@ export type OnFiringHook = (ctx: {
 }) => Promise<string | undefined>
 
 // Atomically claims a COLLECTING round for firing (see tasks/001) and, if
-// this call won the claim, creates the PTP pod sized to exactly the
-// players who committed so far (not POD_CAPACITY — a round can fire short
-// of a full table, e.g. expireOverdueRounds firing at the deadline once
-// `threshold` is met). Shared by recordSignup (fires the moment a round
-// hits POD_CAPACITY) and expireOverdueRounds (fires at the deadline if at
-// least `threshold` players joined, even short of capacity).
+// this call won the claim, creates the PTP pod. Always sized to
+// POD_CAPACITY, never to however many players actually committed —
+// `threshold` (consulted only by expireOverdueRounds) is just the
+// minimum needed to bother starting at all, not the pod's real size; a
+// draft pod is a fixed-size event on PTP's side (pack counts etc. assume
+// a full table), so a round that fires short of capacity at its deadline
+// still gets a full-size pod with open seats, not one artificially
+// capped at the headcount it happened to have at that moment. Shared by
+// recordSignup (fires the moment a round hits POD_CAPACITY) and
+// expireOverdueRounds (fires at the deadline if at least `threshold`
+// players joined, even short of capacity).
 async function fireRound(
   deps: PodServiceDeps,
   round: RoundWithOrganizer,
-  playerCount: number,
   onFiring?: OnFiringHook
 ): Promise<FireRoundResult> {
   // A plain read-then-write here is racy — two callers (a signup and a
@@ -207,7 +211,7 @@ async function fireRound(
     const token = decryptToken(round.organizer.encryptedToken, deps.tokenEncryptionKey)
     const result = await deps.ptp.createPod(token, {
       setCode: round.setCode,
-      maxPlayers: playerCount,
+      maxPlayers: POD_CAPACITY,
     })
     await deps.prisma.podRound.update({
       where: { id: round.id },
@@ -284,7 +288,7 @@ export async function recordSignup(
   let signupDiscordIds: string[] | undefined
 
   if (full && round.status === 'COLLECTING') {
-    const fireResult = await fireRound(deps, round, count, onFiring)
+    const fireResult = await fireRound(deps, round, onFiring)
     podCreated = fireResult.podCreated
     shareUrl = fireResult.shareUrl
     chatUrl = fireResult.chatUrl
@@ -443,7 +447,7 @@ export async function expireOverdueRounds(deps: PodServiceDeps, onFiring?: OnFir
     })
 
     if (count >= round.threshold) {
-      const fireResult = await fireRound(deps, round, count, onFiring)
+      const fireResult = await fireRound(deps, round, onFiring)
       if (!fireResult.podCreated) continue
 
       const targetRows = await deps.prisma.podRoundTarget.findMany({ where: { podRoundId: round.id } })
