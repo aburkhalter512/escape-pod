@@ -234,6 +234,53 @@ describe('recordSignup', () => {
     expect(result.ok && result.value).toMatchObject({ count: 3, threshold: 2, full: false, podCreated: false })
   })
 
+  it("carries the round's scheduledFor through to the result (regression guard — this used to be dropped on every signup rebuild)", async () => {
+    const scheduledFor = new Date('2026-01-01T12:00:00Z')
+    const round = fakeRoundWithOrganizer({ scheduledFor })
+    const findUnique = stubPodRoundFindUnique(async () => round)
+    const upsert = stub(async () => fakePodRoundSignupRow())
+    const count = stub(async () => 3)
+    const deps = buildDeps({
+      podRound: { findUnique },
+      podRoundSignup: { upsert, count },
+      podRoundTarget: { findMany: stub(async () => []) },
+    })
+
+    const result = await recordSignup(deps, {
+      podRoundId: 'round-1',
+      discordId: 'p3',
+      username: 'P3',
+      sourceGuildId: 'g1',
+      action: 'in',
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.ok && result.value.scheduledFor).toEqual(scheduledFor)
+  })
+
+  it('returns scheduledFor: null when the round has no deadline set', async () => {
+    const round = fakeRoundWithOrganizer({ scheduledFor: null })
+    const findUnique = stubPodRoundFindUnique(async () => round)
+    const upsert = stub(async () => fakePodRoundSignupRow())
+    const count = stub(async () => 3)
+    const deps = buildDeps({
+      podRound: { findUnique },
+      podRoundSignup: { upsert, count },
+      podRoundTarget: { findMany: stub(async () => []) },
+    })
+
+    const result = await recordSignup(deps, {
+      podRoundId: 'round-1',
+      discordId: 'p3',
+      username: 'P3',
+      sourceGuildId: 'g1',
+      action: 'in',
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.ok && result.value.scheduledFor).toBeNull()
+  })
+
   it('invokes onFiring with the right ctx exactly once, before ptp.createPod, and threads its chatUrl through', async () => {
     const round = fakeRoundWithOrganizer({ id: 'round-1', setCode: 'JTL', organizerDiscordId: 'organizer-1' })
     const findUnique = stubPodRoundFindUnique(async () => round)

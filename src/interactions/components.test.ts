@@ -513,6 +513,7 @@ describe('handleMessageComponent', () => {
           full: false,
           podCreated: false,
           originGuildName: null,
+          scheduledFor: null,
           targets: [
             { guildId: 'guild-1', channelId: 'channel-1', messageId: 'msg-1' },
             { guildId: 'guild-2', channelId: 'channel-2', messageId: 'msg-2' },
@@ -544,6 +545,26 @@ describe('handleMessageComponent', () => {
       expect(response.type).toBe(InteractionResponseType.UpdateMessage)
       expect(responseData(response).content).toBeUndefined() // embeds/components now, not plain content
       expect(responseData(response).components?.[0]).toBeDefined()
+    })
+
+    it('still shows the deadline note after a signup click, not just on the initial post (regression guard)', async () => {
+      const scheduledFor = new Date(Date.now() + 2 * 60 * 60_000)
+      const recordSignupMock = stub(async () => signupResult({ scheduledFor }))
+
+      const response = await handleMessageComponent(
+        interaction(),
+        createFakeBackendClient({ recordSignup: recordSignupMock }),
+        // signupResult()'s default targets include guild-2, which triggers a
+        // cross-guild edit fan-out (§7.5 step 3) irrelevant to this test.
+        createFakeDiscordRest({
+          editMessage: stub(async (_channelId: string, _messageId: string, _body: RESTPatchAPIChannelMessageJSONBody) => ({}) as RESTPatchAPIChannelMessageResult),
+        }),
+        createInMemoryPendingStartPodStore()
+      )
+
+      const embeds = (response as { data?: { embeds?: Array<{ description?: string }> } }).data?.embeds
+      expect(embeds?.[0].description).toContain('Fires automatically')
+      expect(embeds?.[0].description).toContain(`<t:${Math.floor(scheduledFor.getTime() / 1000)}:R>`)
     })
 
     it('passes action: leave through to the backend when the Leave button is clicked (tasks/002)', async () => {

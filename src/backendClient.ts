@@ -62,6 +62,7 @@ export interface BackendClient {
       chatUrl?: string
       signupDiscordIds?: string[]
       originGuildName: string | null
+      scheduledFor: Date | null
       targets: Array<{ guildId: string; channelId: string; messageId: string | null }>
     }>
   >
@@ -161,6 +162,7 @@ export class LocalBackendClient implements BackendClient {
       chatUrl?: string
       signupDiscordIds?: string[]
       originGuildName: string | null
+      scheduledFor: Date | null
       targets: Array<{ guildId: string; channelId: string; messageId: string | null }>
     }>
   > {

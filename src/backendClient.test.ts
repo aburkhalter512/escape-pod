@@ -237,6 +237,7 @@ describe('LocalBackendClient', () => {
       shareUrl: 'https://www.protectthepod.com/draft/share-1',
       chatUrl: 'https://discord.com/invite/abc123',
       signupDiscordIds: ['p8'],
+      scheduledFor: null,
     })
   })
 
@@ -289,7 +290,7 @@ describe('LocalBackendClient', () => {
     const result = await backendClient.recordSignup('round-1', 'p8', 'P8', 'g1', 'in')
 
     expect(result.ok).toBe(true)
-    expect(result.ok && result.value).toMatchObject({ full: false, podCreated: false, chatUrl: undefined })
+    expect(result.ok && result.value).toMatchObject({ full: false, podCreated: false, chatUrl: undefined, scheduledFor: null })
   })
 
   it('delegates cancelPod to podRound.findUnique + update, returning a forbidden error for a non-organizer requester', async () => {

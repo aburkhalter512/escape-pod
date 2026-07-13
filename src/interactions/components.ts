@@ -268,6 +268,7 @@ export async function handleMessageComponent(
       shareUrl: result.shareUrl,
       originGuildName: result.originGuildName,
       chatUrl: result.chatUrl,
+      scheduledFor: result.scheduledFor ?? undefined,
     })
 
     // Fan the same update out to every OTHER target guild's message — the

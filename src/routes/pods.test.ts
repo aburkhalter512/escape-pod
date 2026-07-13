@@ -406,6 +406,7 @@ describe('POST /pods/:id/signup', () => {
       full: false,
       podCreated: false,
       originGuildName: null,
+      scheduledFor: null,
       targets: [],
     })
   })
@@ -503,6 +504,7 @@ describe('POST /pods/:id/signup', () => {
       shareUrl: 'https://www.protectthepod.com/draft/share-1',
       signupDiscordIds: ['player-8'],
       originGuildName: null,
+      scheduledFor: null,
       targets: targetRows.map((t) => ({ guildId: t.guildId, channelId: t.channelId, messageId: t.messageId })),
     })
   })

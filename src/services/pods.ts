@@ -125,6 +125,7 @@ export interface RecordSignupResult {
   chatUrl?: string
   signupDiscordIds?: string[]
   originGuildName: string | null
+  scheduledFor: Date | null
   targets: Array<{ guildId: string; channelId: string; messageId: string | null }>
 }
 
@@ -289,6 +290,7 @@ export async function recordSignup(
     chatUrl,
     signupDiscordIds,
     originGuildName: round.originGuildName,
+    scheduledFor: round.scheduledFor,
     targets,
   })
 }
