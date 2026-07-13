@@ -19,6 +19,19 @@ export interface CreatePodResult {
   createdAt: string
 }
 
+// PTP's actual response envelope for POST /api/draft (confirmed live,
+// 2026-07-13 — a real success response came back as {success: true,
+// data: {id, shareId, shareUrl, createdAt}, message: null}, not a bare
+// CreatePodResult at the top level). INTEGRATIONS.md documents the same
+// {success, data, message} shape for a different endpoint
+// (/api/private/user-data), so this looks like PTP's general API
+// convention rather than a one-off for this route.
+interface PtpApiEnvelope<T> {
+  success: boolean
+  data: T | null
+  message: string | null
+}
+
 // The contract routes/jobs depend on. Real calls happen in HttpPtpClient
 // below; tests get a hand-written stub via testUtils/fakePtpClient.ts that
 // fully satisfies this interface, with no `as unknown as` needed — see the
@@ -72,27 +85,35 @@ export class HttpPtpClient implements PtpClient {
     }
 
     const rawBody = await response.text()
-    const parsed = JSON.parse(rawBody) as Partial<CreatePodResult>
+    const envelope = JSON.parse(rawBody) as Partial<PtpApiEnvelope<Partial<CreatePodResult>>>
 
-    // Trust PTP's own shareId, but never its shareUrl — a prior incident
-    // saw PTP return 200 OK with a falsy/missing shareUrl despite a real
-    // pod (with a real, working share link) existing on their side. The
-    // URL is deterministically derivable from shareId + our known
-    // baseUrl (confirmed against a real PTP dashboard pod), so we build
-    // it ourselves instead of trusting a field prone to silently going
-    // missing. If shareId itself is ever missing/malformed, fail loud
-    // here — with the raw body in the message — rather than let a
-    // broken pod state render silently downstream like it did before.
-    if (typeof parsed.shareId !== 'string' || parsed.shareId.length === 0) {
+    // PTP wraps a successful response as {success: true, data: {...}} —
+    // the actual pod fields live under `data`, not at the top level
+    // (confirmed live; see PtpApiEnvelope's doc comment). A 200 OK with
+    // success: false or a missing data object is still a real failure,
+    // just one PTP chose to report inside a 200 rather than a non-2xx
+    // status — fail loud here rather than let a broken pod state render
+    // silently downstream like a prior incident did.
+    if (envelope.success !== true || !envelope.data) {
+      throw new Error(`PTP pod creation was not successful: ${rawBody}`)
+    }
+    const data = envelope.data
+
+    // Trust PTP's own shareId, but never its shareUrl — a separate prior
+    // incident saw a falsy/missing shareUrl despite a real pod (with a
+    // real, working share link) existing on their side. The URL is
+    // deterministically derivable from shareId + our known baseUrl
+    // (confirmed against a real PTP dashboard pod), so we build it
+    // ourselves instead of trusting a field prone to going missing.
+    if (typeof data.shareId !== 'string' || data.shareId.length === 0) {
       throw new Error(`PTP pod creation response missing a usable shareId: ${rawBody}`)
     }
 
     return {
-      ...parsed,
-      id: parsed.id as string,
-      shareId: parsed.shareId,
-      shareUrl: `${this.config.baseUrl}/draft/${parsed.shareId}`,
-      createdAt: parsed.createdAt as string,
+      id: data.id as string,
+      shareId: data.shareId,
+      shareUrl: `${this.config.baseUrl}/draft/${data.shareId}`,
+      createdAt: data.createdAt as string,
     }
   }
 

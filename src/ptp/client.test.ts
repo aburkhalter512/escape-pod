@@ -49,18 +49,24 @@ describe('HttpPtpClient', () => {
   })
 
   describe('createPod', () => {
+    // PTP's real envelope, confirmed live 2026-07-13: {success, data, message}
+    // — pod fields live under `data`, never at the top level.
+    function envelope(data: Record<string, unknown> | null, overrides: Record<string, unknown> = {}) {
+      return { success: data !== null, data, message: null, ...overrides }
+    }
+
     it('returns the parsed pod details on success', async () => {
-      const body = { id: 'pod-1', shareId: 'abc123', shareUrl: 'https://www.protectthepod.com/draft/abc123', createdAt: '2026-01-01T00:00:00Z' }
-      stubFetchReturning(() => new Response(JSON.stringify(body), { status: 201 }))
+      const data = { id: 'pod-1', shareId: 'abc123', shareUrl: 'https://www.protectthepod.com/draft/abc123', createdAt: '2026-01-01T00:00:00Z' }
+      stubFetchReturning(() => new Response(JSON.stringify(envelope(data)), { status: 201 }))
 
       const result = await client().createPod('a-token', { setCode: 'JTL', maxPlayers: 8 })
 
-      expect(result).toEqual(body)
+      expect(result).toEqual(data)
     })
 
     it('sends setCode, maxPlayers, and isPublic:true in the request body', async () => {
-      const body = { id: 'pod-1', shareId: 'abc123', createdAt: '2026-01-01T00:00:00Z' }
-      const fetchStub = stubFetchCapturing(new Response(JSON.stringify(body), { status: 201 }))
+      const data = { id: 'pod-1', shareId: 'abc123', createdAt: '2026-01-01T00:00:00Z' }
+      const fetchStub = stubFetchCapturing(new Response(JSON.stringify(envelope(data)), { status: 201 }))
       globalThis.fetch = fetchStub
 
       await client().createPod('a-token', { setCode: 'JTL', maxPlayers: 6 })
@@ -81,8 +87,8 @@ describe('HttpPtpClient', () => {
     })
 
     it('always derives shareUrl from baseUrl + shareId, ignoring any shareUrl field PTP sends back', async () => {
-      const body = { id: 'pod-1', shareId: 'abc123', createdAt: '2026-01-01T00:00:00Z' } // no shareUrl at all
-      stubFetchReturning(() => new Response(JSON.stringify(body), { status: 201 }))
+      const data = { id: 'pod-1', shareId: 'abc123', createdAt: '2026-01-01T00:00:00Z' } // no shareUrl at all
+      stubFetchReturning(() => new Response(JSON.stringify(envelope(data)), { status: 201 }))
 
       const result = await client().createPod('a-token', { setCode: 'JTL', maxPlayers: 8 })
 
@@ -90,13 +96,13 @@ describe('HttpPtpClient', () => {
     })
 
     it('ignores a mismatched shareUrl field from the response in favor of the derived one', async () => {
-      const body = {
+      const data = {
         id: 'pod-1',
         shareId: 'abc123',
         shareUrl: 'https://example.com/totally-wrong',
         createdAt: '2026-01-01T00:00:00Z',
       }
-      stubFetchReturning(() => new Response(JSON.stringify(body), { status: 201 }))
+      stubFetchReturning(() => new Response(JSON.stringify(envelope(data)), { status: 201 }))
 
       const result = await client().createPod('a-token', { setCode: 'JTL', maxPlayers: 8 })
 
@@ -104,17 +110,35 @@ describe('HttpPtpClient', () => {
     })
 
     it('throws, with the raw response body in the message, when shareId is missing', async () => {
-      const body = { id: 'pod-1', createdAt: '2026-01-01T00:00:00Z' } // no shareId
-      stubFetchReturning(() => new Response(JSON.stringify(body), { status: 201 }))
+      const data = { id: 'pod-1', createdAt: '2026-01-01T00:00:00Z' } // no shareId
+      stubFetchReturning(() => new Response(JSON.stringify(envelope(data)), { status: 201 }))
 
       await expect(client().createPod('a-token', { setCode: 'JTL', maxPlayers: 8 })).rejects.toThrow(/pod-1/)
     })
 
     it('throws, with the raw response body in the message, when shareId is an empty string', async () => {
-      const body = { id: 'pod-1', shareId: '', createdAt: '2026-01-01T00:00:00Z' }
-      stubFetchReturning(() => new Response(JSON.stringify(body), { status: 201 }))
+      const data = { id: 'pod-1', shareId: '', createdAt: '2026-01-01T00:00:00Z' }
+      stubFetchReturning(() => new Response(JSON.stringify(envelope(data)), { status: 201 }))
 
       await expect(client().createPod('a-token', { setCode: 'JTL', maxPlayers: 8 })).rejects.toThrow(/pod-1/)
+    })
+
+    it('throws when success is false, even on a 2xx status (PTP reports failure inside the body)', async () => {
+      const body = envelope(null, { success: false, message: 'User is already in a lobby' })
+      stubFetchReturning(() => new Response(JSON.stringify(body), { status: 200 }))
+
+      await expect(client().createPod('a-token', { setCode: 'JTL', maxPlayers: 8 })).rejects.toThrow(
+        /already in a lobby/
+      )
+    })
+
+    it('throws when data is missing even though success is true', async () => {
+      const body = { success: true, data: null, message: null }
+      stubFetchReturning(() => new Response(JSON.stringify(body), { status: 200 }))
+
+      await expect(client().createPod('a-token', { setCode: 'JTL', maxPlayers: 8 })).rejects.toThrow(
+        /not successful/
+      )
     })
   })
 
