@@ -14,6 +14,7 @@ import { registerPodRoutes } from './routes/pods.js'
 import { ephemeral } from './commands/helpers.js'
 import { expireOverduePodRounds } from './jobs/expirePodRounds.js'
 import { createInMemoryPendingStartPodStore } from './pendingStartPods.js'
+import { createGracefulShutdown } from './shutdown.js'
 
 // All required config up front, fail-fast at boot — a missing var is a
 // clear crash-loop with a log line, not a silent runtime failure. This
@@ -125,13 +126,20 @@ await app.register(async (instance) => {
 // and reuses the same atomic-claim pattern already proven safe under
 // concurrent execution (tasks/001). A 1-minute interval bounds worst-case
 // lateness without being noisy; errors are caught and logged rather than
-// crashing the sweep loop or the process.
+// crashing the sweep loop or the process. The interval itself, and
+// tracking whether a sweep is currently in flight, live in shutdown.ts —
+// see that module for why: SIGTERM/SIGINT need to stop new ticks and wait
+// out any in-flight one before the process (and its DB connection, and any
+// in-progress fireRound claim) goes away.
 const SWEEP_INTERVAL_MS = 60_000
-setInterval(() => {
-  expireOverduePodRounds(backendDeps, discordRest).catch((err) => {
-    app.log.error({ err }, 'pod-round expiration sweep failed')
-  })
-}, SWEEP_INTERVAL_MS)
+const gracefulShutdown = createGracefulShutdown({
+  app,
+  prisma,
+  logger: app.log,
+  runSweep: () => expireOverduePodRounds(backendDeps, discordRest),
+  sweepIntervalMs: SWEEP_INTERVAL_MS,
+})
+gracefulShutdown.start()
 
 const port = Number(process.env.PORT ?? 3000)
 app
@@ -142,9 +150,13 @@ app
     process.exit(1)
   })
 
-process.on('SIGTERM', async () => {
-  await prisma.$disconnect()
-  process.exit(0)
+// SIGTERM: what ECS sends on every deploy. SIGINT: Ctrl+C during local
+// `npm run dev`. Both get the same graceful drain — see shutdown.ts.
+process.on('SIGTERM', () => {
+  void gracefulShutdown.shutdown('SIGTERM')
+})
+process.on('SIGINT', () => {
+  void gracefulShutdown.shutdown('SIGINT')
 })
 
 function requireEnv(name: string): string {
