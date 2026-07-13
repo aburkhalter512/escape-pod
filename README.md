@@ -133,6 +133,48 @@ GitHub OIDC (no stored AWS credentials — see `infra/github-oidc/`):
   after the first apply (see `infra/ecs.tf`'s `ignore_changes` comments)
   so this and `deploy-app.yml` don't fight over the same resource.
 
+## Troubleshooting
+
+**`/start-pod` fails to post into a subscribed guild, and/or that guild's
+name shows up as a raw ID instead of its display name in the picker.**
+Look for these in the ECS logs (`aws logs tail /ecs/escape-pod`):
+
+```
+start-pod origin guild lookup failed for <guildId>: DiscordAPIError[10004]: Unknown Guild
+start-pod post failed for guild <guildId>: DiscordAPIError[50001]: Missing Access
+```
+
+Root cause: that guild's `GuildSubscription` row is stale — the bot was
+only ever authorized there with the `applications.commands` OAuth scope
+(enough to receive slash-command interactions, which is why
+`/subscribe-guild` and `/unsubscribe-guild` still work fine — neither
+calls `discordRest`, see `src/commands/subscribeGuild.ts` /
+`unsubscribeGuild.ts`), but never with the `bot` scope, so it has no
+actual membership in that server. Anything that needs real presence —
+`getGuild`, `postMessage`, and now creating the round's chat channel
+(`src/discord/podChat.ts`) — fails, while the slash commands themselves
+keep working. This is why running `/unsubscribe-guild` then
+`/subscribe-guild` again does **not** fix it: both are pure DB writes,
+neither touches Discord's REST API.
+
+There's no automatic detection for this — the bot is REST-only with no
+gateway connection (see `src/discord/rest.ts`), so it has no
+`GUILD_DELETE`-style signal when it's removed or was never fully added.
+
+Fix: have an admin of that guild re-invite the bot with an authorize URL
+that includes both scopes and the permissions it actually needs (View
+Channels, Send Messages, Create Instant Invite, Manage Channels — the
+last one for the temporary chat channel):
+
+```
+https://discord.com/oauth2/authorize?client_id=<DISCORD_APPLICATION_ID>&permissions=3089&scope=bot%20applications.commands
+```
+
+Safe to run even if slash commands are already installed there — it
+only adds the missing `bot`-scope membership on top. If one guild hit
+this, it's worth checking whether other subscribed guilds were added the
+same (commands-only) way.
+
 ## Status
 
 Core loop implemented and tested (§7.5): `/start-pod` posts the RSVP embed
