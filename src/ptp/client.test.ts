@@ -59,7 +59,8 @@ describe('HttpPtpClient', () => {
     })
 
     it('sends setCode, maxPlayers, and isPublic:true in the request body', async () => {
-      const fetchStub = stubFetchCapturing(new Response('{}', { status: 201 }))
+      const body = { id: 'pod-1', shareId: 'abc123', createdAt: '2026-01-01T00:00:00Z' }
+      const fetchStub = stubFetchCapturing(new Response(JSON.stringify(body), { status: 201 }))
       globalThis.fetch = fetchStub
 
       await client().createPod('a-token', { setCode: 'JTL', maxPlayers: 6 })
@@ -77,6 +78,43 @@ describe('HttpPtpClient', () => {
       await expect(client().createPod('a-token', { setCode: 'JTL', maxPlayers: 8 })).rejects.toThrow(
         /already in a lobby/
       )
+    })
+
+    it('always derives shareUrl from baseUrl + shareId, ignoring any shareUrl field PTP sends back', async () => {
+      const body = { id: 'pod-1', shareId: 'abc123', createdAt: '2026-01-01T00:00:00Z' } // no shareUrl at all
+      stubFetchReturning(() => new Response(JSON.stringify(body), { status: 201 }))
+
+      const result = await client().createPod('a-token', { setCode: 'JTL', maxPlayers: 8 })
+
+      expect(result.shareUrl).toBe('https://www.protectthepod.com/draft/abc123')
+    })
+
+    it('ignores a mismatched shareUrl field from the response in favor of the derived one', async () => {
+      const body = {
+        id: 'pod-1',
+        shareId: 'abc123',
+        shareUrl: 'https://example.com/totally-wrong',
+        createdAt: '2026-01-01T00:00:00Z',
+      }
+      stubFetchReturning(() => new Response(JSON.stringify(body), { status: 201 }))
+
+      const result = await client().createPod('a-token', { setCode: 'JTL', maxPlayers: 8 })
+
+      expect(result.shareUrl).toBe('https://www.protectthepod.com/draft/abc123')
+    })
+
+    it('throws, with the raw response body in the message, when shareId is missing', async () => {
+      const body = { id: 'pod-1', createdAt: '2026-01-01T00:00:00Z' } // no shareId
+      stubFetchReturning(() => new Response(JSON.stringify(body), { status: 201 }))
+
+      await expect(client().createPod('a-token', { setCode: 'JTL', maxPlayers: 8 })).rejects.toThrow(/pod-1/)
+    })
+
+    it('throws, with the raw response body in the message, when shareId is an empty string', async () => {
+      const body = { id: 'pod-1', shareId: '', createdAt: '2026-01-01T00:00:00Z' }
+      stubFetchReturning(() => new Response(JSON.stringify(body), { status: 201 }))
+
+      await expect(client().createPod('a-token', { setCode: 'JTL', maxPlayers: 8 })).rejects.toThrow(/pod-1/)
     })
   })
 

@@ -71,7 +71,29 @@ export class HttpPtpClient implements PtpClient {
       throw new Error(`PTP pod creation failed: ${response.status} ${await response.text()}`)
     }
 
-    return (await response.json()) as CreatePodResult
+    const rawBody = await response.text()
+    const parsed = JSON.parse(rawBody) as Partial<CreatePodResult>
+
+    // Trust PTP's own shareId, but never its shareUrl — a prior incident
+    // saw PTP return 200 OK with a falsy/missing shareUrl despite a real
+    // pod (with a real, working share link) existing on their side. The
+    // URL is deterministically derivable from shareId + our known
+    // baseUrl (confirmed against a real PTP dashboard pod), so we build
+    // it ourselves instead of trusting a field prone to silently going
+    // missing. If shareId itself is ever missing/malformed, fail loud
+    // here — with the raw body in the message — rather than let a
+    // broken pod state render silently downstream like it did before.
+    if (typeof parsed.shareId !== 'string' || parsed.shareId.length === 0) {
+      throw new Error(`PTP pod creation response missing a usable shareId: ${rawBody}`)
+    }
+
+    return {
+      ...parsed,
+      id: parsed.id as string,
+      shareId: parsed.shareId,
+      shareUrl: `${this.config.baseUrl}/draft/${parsed.shareId}`,
+      createdAt: parsed.createdAt as string,
+    }
   }
 
   // §8.3 — NOT a documented Bearer-token-refresh contract. This route is
