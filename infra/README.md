@@ -2,7 +2,8 @@
 
 OpenTofu (Terraform-compatible) configuration for running escape-pod on
 AWS: a VPC (no NAT gateway — cost-minimization decision, see
-`network.tf`), an ECS Fargate service behind an ALB, RDS Postgres
+`network.tf`), an ECS service on Fargate Spot (see `ecs.tf` for why
+100% Spot is an acceptable tradeoff here) behind an ALB, RDS Postgres
 (single-AZ `db.t4g.micro`), an ECR repo, and SSM Parameter Store for
 secrets. This is the only deployed service and the only OpenTofu stack
 for this product — escape-pod-backend used to be a second, independently
