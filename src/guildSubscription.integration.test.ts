@@ -54,13 +54,13 @@ describe('guild subscription lifecycle, end to end against real Postgres', () =>
     const backend = createIntegrationBackend(prisma)
 
     await backend.subscribeGuild('guild-1', 'admin-1', { channelId: 'channel-1', policy: 'OPEN' })
-    const eligibleBefore = await backend.listEligibleGuilds('any-organizer')
+    const eligibleBefore = await backend.listEligibleGuilds('any-origin-guild')
     expect(eligibleBefore.guilds.map((g) => g.guildId)).toContain('guild-1')
 
     const firstUnsubscribe = await backend.unsubscribeGuild('guild-1')
     expect(firstUnsubscribe).toEqual({ wasSubscribed: true })
 
-    const eligibleAfter = await backend.listEligibleGuilds('any-organizer')
+    const eligibleAfter = await backend.listEligibleGuilds('any-origin-guild')
     expect(eligibleAfter.guilds.map((g) => g.guildId)).not.toContain('guild-1')
 
     const secondUnsubscribe = await backend.unsubscribeGuild('guild-1')
@@ -82,31 +82,36 @@ describe('guild subscription lifecycle, end to end against real Postgres', () =>
     // without writing anything or resurrecting the subscription.
     const bareAttempt = await backend.subscribeGuild('guild-1', 'admin-1', {})
     expect(bareAttempt).toEqual({ ok: true, value: { subscribed: false, broadcastChannelId: 'channel-1', postingPolicy: 'OPEN' } })
-    expect((await backend.listEligibleGuilds('any-organizer')).guilds.map((g) => g.guildId)).not.toContain('guild-1')
+    expect((await backend.listEligibleGuilds('any-origin-guild')).guilds.map((g) => g.guildId)).not.toContain('guild-1')
 
     const reactivated = await backend.subscribeGuild('guild-1', 'admin-1', { channelId: 'channel-3' })
     expect(reactivated).toEqual({ ok: true, value: { subscribed: true, broadcastChannelId: 'channel-3', postingPolicy: 'OPEN' } })
 
-    const eligibleAfter = await backend.listEligibleGuilds('any-organizer')
+    const eligibleAfter = await backend.listEligibleGuilds('any-origin-guild')
     expect(eligibleAfter.guilds.map((g) => g.guildId)).toContain('guild-1')
   })
 
-  it('ALLOWLIST policy only makes the guild eligible to organizers explicitly allow-listed on it', async () => {
+  it('ALLOWLIST policy has no eligible origin guilds by default', async () => {
     const backend = createIntegrationBackend(prisma)
 
     await backend.subscribeGuild('guild-1', 'admin-1', { channelId: 'channel-1', policy: 'ALLOWLIST' })
 
-    const beforeAllowlisting = await backend.listEligibleGuilds('organizer-1')
-    expect(beforeAllowlisting).toEqual({ guilds: [], anySubscribed: true })
+    const eligible = await backend.listEligibleGuilds('origin-guild-1')
+    expect(eligible).toEqual({ guilds: [], anySubscribed: true })
+  })
 
+  // Eligibility is now origin-guild-based (GuildOriginAllowlist, granted
+  // via the /allow-guild command — see a follow-up integration test once
+  // that command exists), not organizer-based — /allow-organizer is
+  // deprecated and its write no longer has any effect on eligibility,
+  // proven directly here rather than just asserted in a comment.
+  it('allowOrganizer (deprecated) no longer has any effect on eligibility', async () => {
+    const backend = createIntegrationBackend(prisma)
+
+    await backend.subscribeGuild('guild-1', 'admin-1', { channelId: 'channel-1', policy: 'ALLOWLIST' })
     await backend.allowOrganizer('guild-1', 'organizer-1', 'admin-1')
 
-    const afterAllowlisting = await backend.listEligibleGuilds('organizer-1')
-    expect(afterAllowlisting.guilds.map((g) => g.guildId)).toContain('guild-1')
-
-    // A different, never-allow-listed organizer still isn't eligible for
-    // this same guild — allow-listing is per-organizer, not per-guild.
-    const otherOrganizer = await backend.listEligibleGuilds('organizer-2')
-    expect(otherOrganizer.guilds.map((g) => g.guildId)).not.toContain('guild-1')
+    const eligible = await backend.listEligibleGuilds('origin-guild-1')
+    expect(eligible.guilds.map((g) => g.guildId)).not.toContain('guild-1')
   })
 })

@@ -33,6 +33,16 @@ export const startPod: CommandHandler = async ({ interaction, backend, discordRe
     return ephemeral('Could not determine your Discord user ID.')
   }
 
+  // Eligibility is now based on where /start-pod is invoked FROM (the
+  // origin guild — see GuildOriginAllowlist, services/organizers.ts's
+  // listEligibleGuilds), not on who's invoking it, so a guild context is
+  // required — DM invocation, previously supported, is no longer
+  // meaningful here.
+  const originGuildId = interaction.guild_id
+  if (!originGuildId) {
+    return ephemeral('Run `/start-pod` from inside a server, not a DM.')
+  }
+
   const setOption = getOption(interaction, 'set')
   if (!setOption || setOption.type !== ApplicationCommandOptionType.String) {
     return ephemeral('A set code is required, e.g. `/start-pod set:JTL`.')
@@ -59,11 +69,11 @@ export const startPod: CommandHandler = async ({ interaction, backend, discordRe
     deadlineEpochSeconds = Math.floor((Date.now() + durationMs) / 1000)
   }
 
-  const { guilds: eligibleGuilds, anySubscribed } = await backend.listEligibleGuilds(organizerId)
+  const { guilds: eligibleGuilds, anySubscribed } = await backend.listEligibleGuilds(originGuildId)
   if (eligibleGuilds.length === 0) {
     return ephemeral(
       anySubscribed
-        ? "You're not approved to post into any subscribed servers yet. Ask a server admin to run `/allow-organizer` for you, or find one with an open posting policy."
+        ? "No subscribed server trusts this server yet. Ask a server admin there to run `/allow-guild` for this server, or find one with an open posting policy."
         : 'No servers are currently subscribed to receive draft pod broadcasts yet. Ask a server admin to run `/subscribe-guild` there first.'
     )
   }

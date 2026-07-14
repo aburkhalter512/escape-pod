@@ -63,26 +63,30 @@ export interface EligibleGuild {
 export interface ListEligibleGuildsResult {
   guilds: EligibleGuild[]
   // False only distinguishes "no guild anywhere is subscribed" from "guilds
-  // are subscribed but this organizer isn't eligible for any of them" —
-  // the caller (commands/startPod.ts) uses it to show which actually
-  // happened instead of one message covering both.
+  // are subscribed but none of them trust this origin guild" — the caller
+  // (commands/startPod.ts) uses it to show which actually happened instead
+  // of one message covering both.
   anySubscribed: boolean
 }
 
-// INTEGRATIONS.md §7.4/§7.5 step 1 — guilds this organizer may fan a round
-// out to: OPEN-policy guilds, plus guilds where they're allow-listed. No
-// display name here — this service never talks to Discord's API (only the
-// interaction handlers hold the bot token), and a name stored here would
-// go stale the moment a guild renamed itself. The caller (startPod.ts)
-// resolves real, current names live via discordRest.getGuild() instead.
+// INTEGRATIONS.md §7.4/§7.5 step 1 — guilds a round starting from
+// originGuildId may fan out to: OPEN-policy guilds, plus guilds that
+// trust this specific origin guild (see GuildOriginAllowlist,
+// schema.prisma — replaces the old per-organizer allowlist; the caller
+// no longer has any bearing on eligibility, only *where* /start-pod was
+// run does). No display name here — this service never talks to
+// Discord's API (only the interaction handlers hold the bot token), and
+// a name stored here would go stale the moment a guild renamed itself.
+// The caller (startPod.ts) resolves real, current names live via
+// discordRest.getGuild() instead.
 export async function listEligibleGuilds(
   deps: OrganizerServiceDeps,
-  organizerDiscordId: string
+  originGuildId: string
 ): Promise<ListEligibleGuildsResult> {
   const eligible = await deps.prisma.guildSubscription.findMany({
     where: {
       unsubscribedAt: null,
-      OR: [{ postingPolicy: 'OPEN' }, { allowlist: { some: { organizerDiscordId } } }],
+      OR: [{ postingPolicy: 'OPEN' }, { originAllowlist: { some: { allowedOriginGuildId: originGuildId } } }],
     },
   })
   const guilds = eligible.map((guild) => ({ guildId: guild.guildId }))

@@ -33,7 +33,9 @@ export interface BackendClient {
   ): Promise<Result<{ subscribed: boolean; broadcastChannelId: string; postingPolicy: PostingPolicy }>>
   unsubscribeGuild(guildId: string): Promise<{ wasSubscribed: boolean }>
   allowOrganizer(guildId: string, organizerDiscordId: string, approvedBy: string): Promise<void>
-  listEligibleGuilds(organizerDiscordId: string): Promise<{ guilds: Array<{ guildId: string }>; anySubscribed: boolean }>
+  // Eligibility is origin-guild-scoped, not organizer-scoped — see
+  // services/organizers.ts's listEligibleGuilds.
+  listEligibleGuilds(originGuildId: string): Promise<{ guilds: Array<{ guildId: string }>; anySubscribed: boolean }>
   startPod(params: {
     organizerDiscordId: string
     setCode: string
@@ -121,13 +123,14 @@ export class LocalBackendClient implements BackendClient {
     return guildsService.allowOrganizer(this.deps, { guildId, organizerDiscordId, approvedBy })
   }
 
-  // §7.5: start a round; returns eligible target guild IDs (no name —
-  // the caller resolves those live via discordRest.getGuild, see
-  // services/organizers.ts) plus whether ANY guild is subscribed at all,
-  // so the caller can distinguish "no guild anywhere is subscribed" from
-  // "guilds are subscribed but this organizer isn't eligible for any."
-  listEligibleGuilds(organizerDiscordId: string): Promise<{ guilds: Array<{ guildId: string }>; anySubscribed: boolean }> {
-    return organizersService.listEligibleGuilds(this.deps, organizerDiscordId)
+  // §7.5: guilds a round starting from originGuildId may target; returns
+  // eligible target guild IDs (no name — the caller resolves those live
+  // via discordRest.getGuild, see services/organizers.ts) plus whether
+  // ANY guild is subscribed at all, so the caller can distinguish "no
+  // guild anywhere is subscribed" from "guilds are subscribed but none
+  // trust this origin guild."
+  listEligibleGuilds(originGuildId: string): Promise<{ guilds: Array<{ guildId: string }>; anySubscribed: boolean }> {
+    return organizersService.listEligibleGuilds(this.deps, originGuildId)
   }
 
   // §7.5 steps 1-2: creates the round + PodRoundTarget rows. Returns each

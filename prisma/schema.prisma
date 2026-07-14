@@ -73,13 +73,25 @@ model GuildSubscription {
   // then. /subscribe-guild clears this back to null on reactivation.
   unsubscribedAt     DateTime?     @map("unsubscribed_at")
 
+  // Deprecated — /allow-organizer no longer writes to this, and
+  // listEligibleGuilds no longer reads it (see GuildOriginAllowlist
+  // below). Left in place, untouched, purely for historical data; no
+  // code references this relation anymore.
   allowlist GuildOrganizerAllowlist[]
-  targets   PodRoundTarget[]
+  // Which origin guilds this guild trusts — /allow-guild's data,
+  // consulted by listEligibleGuilds when this guild's postingPolicy is
+  // ALLOWLIST. Replaces the per-organizer allowlist above.
+  originAllowlist GuildOriginAllowlist[]
+  targets         PodRoundTarget[]
 
   @@map("guild_subscriptions")
 }
 
-// §7.2: only consulted when the guild's policy is ALLOWLIST.
+// Deprecated — /allow-organizer (commands/allowOrganizer.ts) no longer
+// writes here, and listEligibleGuilds no longer reads this. Kept
+// in-schema and in the database untouched (no migration drops it) so
+// historical approval data isn't lost; see GuildOriginAllowlist below
+// for the replacement, guild-scoped trust model.
 model GuildOrganizerAllowlist {
   guildId            String   @map("guild_id")
   organizerDiscordId String   @map("organizer_discord_id")
@@ -90,6 +102,24 @@ model GuildOrganizerAllowlist {
 
   @@id([guildId, organizerDiscordId])
   @@map("guild_organizer_allowlist")
+}
+
+// §7.2, replacing GuildOrganizerAllowlist above — only consulted when
+// the guild's policy is ALLOWLIST. Trusts an entire *origin* guild
+// (wherever an organizer runs /start-pod from — see
+// PodRound.originGuildId) rather than approving individual organizers
+// one at a time, so a guild doesn't need to be re-approved every time a
+// new person starts organizing from an already-trusted community.
+model GuildOriginAllowlist {
+  guildId              String   @map("guild_id")
+  allowedOriginGuildId String   @map("allowed_origin_guild_id")
+  approvedBy           String   @map("approved_by")
+  approvedAt           DateTime @default(now()) @map("approved_at")
+
+  guild GuildSubscription @relation(fields: [guildId], references: [guildId], onDelete: Cascade)
+
+  @@id([guildId, allowedOriginGuildId])
+  @@map("guild_origin_allowlist")
 }
 
 // §3.3/§7.3: one RSVP round. Lives entirely outside PTP until threshold is

@@ -158,12 +158,16 @@ describe('POST /organizers/link', () => {
   })
 })
 
-describe('GET /organizers/:discordId/eligible-guilds', () => {
-  it('queries for OPEN-policy guilds plus guilds where the organizer is allow-listed', async () => {
+describe('GET /organizers/:originGuildId/eligible-guilds', () => {
+  // Renamed from :discordId — see services/organizers.ts's
+  // listEligibleGuilds, now origin-guild-scoped, not organizer-scoped.
+  // Still under /organizers for now; a full move to routes/guilds.ts,
+  // where it semantically belongs, is a follow-up.
+  it('queries for OPEN-policy guilds plus guilds that trust this origin guild', async () => {
     const expectedArgs: GuildSubscriptionFindManyArgs = {
       where: {
         unsubscribedAt: null,
-        OR: [{ postingPolicy: 'OPEN' }, { allowlist: { some: { organizerDiscordId: 'user-1' } } }],
+        OR: [{ postingPolicy: 'OPEN' }, { originAllowlist: { some: { allowedOriginGuildId: 'user-1' } } }],
       },
     }
     const findMany = stub(async (args: GuildSubscriptionFindManyArgs) => {

@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { createFakePrismaClient } from '../testUtils/fakePrismaClient.js'
 import { createFakePtpClient } from '../testUtils/fakePtpClient.js'
 import { stub } from '../testUtils/stub.js'
+import { deepEqual } from '../testUtils/deepEqual.js'
 import { linkOrganizer, listEligibleGuilds, type OrganizerServiceDeps } from './organizers.js'
+import type { AppPrismaClient } from '../prismaClient.js'
+
+type GuildSubscriptionFindManyArgs = Parameters<AppPrismaClient['guildSubscription']['findMany']>[0]
 
 const TOKEN_KEY = '00'.repeat(32)
 
@@ -60,7 +64,7 @@ describe('listEligibleGuilds', () => {
       tokenEncryptionKey: TOKEN_KEY,
     }
 
-    const result = await listEligibleGuilds(deps, 'organizer-1')
+    const result = await listEligibleGuilds(deps, 'origin-guild-1')
 
     expect(result).toEqual({ guilds: [{ guildId: 'g1' }], anySubscribed: true })
   })
@@ -74,7 +78,7 @@ describe('listEligibleGuilds', () => {
       tokenEncryptionKey: TOKEN_KEY,
     }
 
-    const result = await listEligibleGuilds(deps, 'organizer-1')
+    const result = await listEligibleGuilds(deps, 'origin-guild-1')
 
     expect(result).toEqual({ guilds: [], anySubscribed: false })
   })
@@ -88,8 +92,34 @@ describe('listEligibleGuilds', () => {
       tokenEncryptionKey: TOKEN_KEY,
     }
 
-    const result = await listEligibleGuilds(deps, 'organizer-1')
+    const result = await listEligibleGuilds(deps, 'origin-guild-1')
 
     expect(result).toEqual({ guilds: [], anySubscribed: true })
+  })
+
+  // None of the tests above actually verify the query filters on the
+  // right field; this proves eligibility is checked against
+  // GuildOriginAllowlist.allowedOriginGuildId (the guild /start-pod was
+  // invoked FROM), not any organizer identity.
+  it('queries for OPEN-policy guilds plus guilds that trust this origin guild specifically', async () => {
+    const expectedArgs: GuildSubscriptionFindManyArgs = {
+      where: {
+        unsubscribedAt: null,
+        OR: [{ postingPolicy: 'OPEN' }, { originAllowlist: { some: { allowedOriginGuildId: 'origin-guild-1' } } }],
+      },
+    }
+    const findMany = stub(async (args: GuildSubscriptionFindManyArgs) => {
+      if (!deepEqual(args, expectedArgs)) throw new Error(`unexpected findMany args: ${JSON.stringify(args)}`)
+      return []
+    })
+    const deps: OrganizerServiceDeps = {
+      prisma: createFakePrismaClient({ guildSubscription: { findMany, count: stub(async () => 0) } }),
+      ptp: createFakePtpClient(),
+      tokenEncryptionKey: TOKEN_KEY,
+    }
+
+    await listEligibleGuilds(deps, 'origin-guild-1')
+
+    expect(findMany.calls).toHaveLength(1)
   })
 })
