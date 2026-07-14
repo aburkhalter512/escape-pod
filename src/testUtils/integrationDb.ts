@@ -19,6 +19,14 @@ export function createIntegrationPrisma(): PrismaClient {
 // behavior under test. CASCADE handles the FK dependency order
 // automatically; RESTART IDENTITY is mostly hygiene here since this
 // schema keys everything off cuid/text ids, not serials.
+//
+// This is the one deliberate exception to "integration tests never touch
+// the database directly" (see testUtils/integrationBackend.ts's doc
+// comment): resetting between tests is pure infrastructure/hygiene, not
+// a test standing in for a real user action or reading state a real API
+// call could have told it. No test file should call `prisma.<model>.*`
+// itself beyond this function and $disconnect — everything else goes
+// through BackendClient or a job-wrapper function instead.
 export async function resetDb(prisma: PrismaClient): Promise<void> {
   await prisma.$executeRawUnsafe(`
     TRUNCATE TABLE
