@@ -1,22 +1,6 @@
 # escape-pod
 
-Escape Pod, a Star Wars: Unlimited draft pod notifier. A single service:
-verifies and routes Discord interactions (slash commands, buttons, modals)
-over a stateless HTTP endpoint, and owns all durable state (organizers,
-guild subscriptions, pod rounds/targets/signups) and the Protect the Pod
-(PTP) integration.
-
-Design rationale lives in [`INTEGRATIONS.md`](https://github.com/aburkhalter512/escape-pod/blob/main/INTEGRATIONS.md) —
-start with the "Summary" section at the top, then §7 (bot install & RSVP
-flow), §7.3 (data model), §4.1/§4.1.1 (PTP's own API surface and its auth
-boundaries), and §8 (the account-linking flow).
-
-This used to be two separately-deployed services (a thin Discord-facing
-edge plus a separate backend), merged into one to eliminate a redundant
-ALB. `src/backendClient.ts`'s `BackendClient` interface is what's left of
-that boundary — Discord command/component handlers call it, and
-`LocalBackendClient` satisfies it by calling `src/services/*` directly,
-in-process (no HTTP, no separate deploy).
+Escape Pod, a Star Wars: Unlimited draft pod notifier.
 
 ## Invite the bot
 
@@ -226,6 +210,25 @@ scopes and the right permissions. Safe to run even if slash commands are
 already installed there — it only adds the missing `bot`-scope membership
 on top. If one guild hit this, it's worth checking whether other
 subscribed guilds were added the same (commands-only) way.
+
+## Architecture
+
+A single service: verifies and routes Discord interactions (slash
+commands, buttons, modals) over a stateless HTTP endpoint, and owns all
+durable state (organizers, guild subscriptions, pod rounds/targets/
+signups) and the Protect the Pod (PTP) integration.
+
+Design rationale lives in [`INTEGRATIONS.md`](https://github.com/aburkhalter512/escape-pod/blob/main/INTEGRATIONS.md) —
+start with the "Summary" section at the top, then §7 (bot install & RSVP
+flow), §7.3 (data model), §4.1/§4.1.1 (PTP's own API surface and its auth
+boundaries), and §8 (the account-linking flow).
+
+This used to be two separately-deployed services (a thin Discord-facing
+edge plus a separate backend), merged into one to eliminate a redundant
+ALB. `src/backendClient.ts`'s `BackendClient` interface is what's left of
+that boundary — Discord command/component handlers call it, and
+`LocalBackendClient` satisfies it by calling `src/services/*` directly,
+in-process (no HTTP, no separate deploy).
 
 ## Status
 
