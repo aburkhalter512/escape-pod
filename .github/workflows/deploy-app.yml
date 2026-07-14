@@ -19,19 +19,72 @@ jobs:
       contents: read
 
     steps:
+      # Full history, not the default shallow depth-1 checkout — the
+      # skip-check step below needs to `git diff` against whatever commit
+      # is *currently* live, which could be arbitrarily far back (any
+      # number of intermediate commits, not just the immediate parent).
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::228870477931:role/escape-pod-gha-deploy
           aws-region: us-west-2
 
+      # deploy-infra.yml's `tofu apply` on an infra/**-only push still
+      # triggers this workflow too (ci.yml runs on every push regardless
+      # of path, and this workflow triggers off ci.yml succeeding) — which
+      # then races the Terraform apply for the same aws_ecs_service
+      # resource (tasks/008 — this happened live once already). Compares
+      # against whichever git SHA the *currently deployed* image is
+      # tagged with (not just the immediate parent commit, since a push
+      # can carry several commits at once) and skips the rest of this job
+      # if every changed file is under infra/. Deliberately fails open —
+      # any unexpected error here (AWS query failure, SHA not found in
+      # history, `:latest`-tagged service with no SHA to compare against,
+      # etc.) falls through to a normal deploy rather than risking a
+      # silently-skipped real one.
+      - name: Skip if this push only touched infra/
+        id: check
+        run: |
+          set +e
+          skip=false
+
+          current_td=$(aws ecs describe-services --cluster escape-pod --services escape-pod \
+            --query "services[0].taskDefinition" --output text 2>/dev/null)
+          if [ -z "$current_td" ] || [ "$current_td" = "None" ]; then
+            echo "Could not determine the currently-deployed task definition — deploying to be safe."
+          else
+            current_image=$(aws ecs describe-task-definition --task-definition "$current_td" \
+              --query "taskDefinition.containerDefinitions[0].image" --output text 2>/dev/null)
+            current_sha="${current_image##*:}"
+            if [ -z "$current_sha" ] || [ "$current_sha" = "latest" ]; then
+              echo "Currently-deployed image has no usable commit SHA tag (got '$current_sha') — deploying to be safe."
+            elif ! git cat-file -e "$current_sha" 2>/dev/null; then
+              echo "Currently-deployed SHA $current_sha not found in this checkout's history — deploying to be safe."
+            else
+              changed=$(git diff --name-only "$current_sha" "${{ github.event.workflow_run.head_sha }}")
+              if [ -z "$changed" ]; then
+                echo "No file diff since the currently-deployed commit — deploying to be safe."
+              elif echo "$changed" | grep -qvE '^infra/'; then
+                echo "Changes outside infra/ detected — deploying."
+              else
+                echo "Every changed file is under infra/ — skipping this redundant app deploy."
+                skip=true
+              fi
+            fi
+          fi
+
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
+
       - uses: aws-actions/amazon-ecr-login@v2
         id: ecr
+        if: steps.check.outputs.skip != 'true'
 
       - name: Build and push image
+        if: steps.check.outputs.skip != 'true'
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
           REPOSITORY: escape-pod-discord-bot
@@ -46,6 +99,7 @@ jobs:
 
       - name: Register new task definition revision
         id: register
+        if: steps.check.outputs.skip != 'true'
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
           REPOSITORY: escape-pod-discord-bot
@@ -54,7 +108,9 @@ jobs:
           echo "arn=$(./scripts/register-task-definition.sh "$REGISTRY/$REPOSITORY:$SHA")" >> "$GITHUB_OUTPUT"
 
       - name: Run database migrations
+        if: steps.check.outputs.skip != 'true'
         run: ./scripts/deploy-migration-task.sh "${{ steps.register.outputs.arn }}"
 
       - name: Deploy new image
+        if: steps.check.outputs.skip != 'true'
         run: ./scripts/deploy-app-image.sh "${{ steps.register.outputs.arn }}"

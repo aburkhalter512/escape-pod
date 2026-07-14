@@ -169,9 +169,16 @@ configured here, nothing pushed).
 Two more workflows handle actually shipping to AWS, authenticated via
 GitHub OIDC (no stored AWS credentials — see `infra/github-oidc/`):
 
-- `deploy-app.yml` — triggered by `ci.yml` succeeding on `main`. Builds
-  and pushes the image (tagged by commit SHA, plus `latest`), registers
-  a new task definition revision pointing at it
+- `deploy-app.yml` — triggered by `ci.yml` succeeding on `main` (which
+  runs on *every* push, regardless of what changed). First checks
+  whether every file changed since whatever's currently deployed (diffed
+  against the git SHA tag on the live task's image, not just the
+  immediate parent commit — a push can carry several commits) falls under
+  `infra/**`; if so, skips the rest of the job rather than racing a
+  concurrent `deploy-infra.yml` apply for no reason (see that skip-check
+  step's own comments, and tasks/008 — a real production incident this
+  avoids). Otherwise: builds and pushes the image (tagged by commit SHA,
+  plus `latest`), registers a new task definition revision pointing at it
   (`scripts/register-task-definition.sh`), runs `prisma migrate deploy`
   against the real database as a one-off Fargate task using *that exact
   revision* (`scripts/deploy-migration-task.sh` — not the family's
