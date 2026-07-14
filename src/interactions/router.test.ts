@@ -12,6 +12,7 @@ import {
   fakePingInteraction,
 } from '../testUtils/fakeInteraction.js'
 import { responseData } from '../testUtils/responseData.js'
+import { stub } from '../testUtils/stub.js'
 
 function deps(): RouterDeps {
   return {
@@ -52,9 +53,24 @@ describe('routeInteraction', () => {
     expect(responseData(response).content).toMatch(/no token was submitted/i)
   })
 
-  it('falls back gracefully for interaction types we do not implement (e.g. autocomplete)', async () => {
-    const response = await routeInteraction(fakeAutocompleteInteraction(), deps())
-    expect(responseData(response).content).toMatch(/unsupported interaction type/i)
+  // GitHub issue #6 — the round option's live suggestions on /cancel-pod
+  // and /conclude-pod. This only proves dispatch reaches the handler with
+  // the right deps; handleAutocomplete's own behavior (kind selection,
+  // organizer scoping, empty-candidates) is covered in
+  // interactions/autocomplete.test.ts.
+  it('dispatches autocomplete interactions to the round-choice handler', async () => {
+    const listActiveRounds = stub(async (_organizerDiscordId: string, _kind: 'cancellable' | 'concludable') => [
+      { podRoundId: 'round-1', setCode: 'JTL', organizerRoundNumber: 1 },
+    ])
+    const response = await routeInteraction(fakeAutocompleteInteraction({ name: 'cancel-pod' }), {
+      ...deps(),
+      backend: createFakeBackendClient({ listActiveRounds }),
+    })
+
+    expect(response).toEqual({
+      type: InteractionResponseType.ApplicationCommandAutocompleteResult,
+      data: { choices: [{ name: 'JTL #1', value: 1 }] },
+    })
   })
 
   it('does not let one command handler throwing crash the router for unrelated calls', async () => {

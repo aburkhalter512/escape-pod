@@ -98,10 +98,13 @@ export const commandDefinitions: RESTPostAPIChatInputApplicationCommandsJSONBody
         name: 'round',
         // GitHub issue #6 — only needed when the organizer has more than
         // one active round at once; omitting it still works exactly as
-        // before when there's just one. Autocomplete not enabled yet.
+        // before when there's just one. autocomplete: true is backed by
+        // interactions/autocomplete.ts, which lists this organizer's own
+        // currently-cancellable rounds live.
         description: 'Which round number (see the "#N" in its broadcast message) — omit if you only have one active',
         type: ApplicationCommandOptionType.Integer,
         required: false,
+        autocomplete: true,
       },
     ],
   },
@@ -116,6 +119,7 @@ export const commandDefinitions: RESTPostAPIChatInputApplicationCommandsJSONBody
         description: 'Which round number (see the "#N" in its broadcast message) — omit if you only have one active',
         type: ApplicationCommandOptionType.Integer,
         required: false,
+        autocomplete: true,
       },
     ],
   },

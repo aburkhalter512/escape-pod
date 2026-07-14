@@ -9,6 +9,7 @@ import type { BackendClient } from '../backendClient.js'
 import type { PendingStartPodStore } from '../pendingStartPods.js'
 import { commandHandlers } from '../commands/index.js'
 import { handleMessageComponent, handleModalSubmit } from './components.js'
+import { handleAutocomplete } from './autocomplete.js'
 
 export interface RouterDeps {
   backend: BackendClient
@@ -50,6 +51,9 @@ export async function routeInteraction(
 
     case InteractionType.ModalSubmit:
       return handleModalSubmit(interaction, deps.backend)
+
+    case InteractionType.ApplicationCommandAutocomplete:
+      return handleAutocomplete(interaction, deps.backend)
 
     default:
       return {
