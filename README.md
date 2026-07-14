@@ -129,6 +129,30 @@ different situations:
   generates new migrations or touches existing data beyond what the SQL
   says.
 
+## Testing
+
+`npm test` runs the regular unit suite — hand-rolled fakes/stubs only
+(`src/testUtils/`), no real Postgres or network I/O, safe to run anywhere
+including CI.
+
+`npm run test:integration` runs a separate suite (`*.integration.test.ts`)
+against a real local Postgres and a real Fastify app (via `buildApp` in
+`src/app.ts`, driven through Fastify's own `.inject()` — no listening
+socket needed), with Discord/PTP still faked. This exists to catch bugs
+fakes structurally can't — real transactional/concurrency behavior (e.g.
+tasks/001's atomic-claim guarantee under concurrent writers) and real
+HTTP-framework wiring (validators, auth hooks, the error handler), as
+opposed to only the service logic itself. Requires `npm run db:up` first;
+the script creates and migrates a separate `draft_pod_test` database (in
+the same container, alongside the regular dev DB) before running:
+
+```bash
+npm run db:up
+npm run test:integration
+```
+
+Local-only for now — not wired into CI.
+
 ## Container
 
 `Dockerfile` is a two-stage build: the `build` stage installs full deps,
