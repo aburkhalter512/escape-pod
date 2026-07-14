@@ -10,6 +10,7 @@ export function createFakeBackendClient(overrides: Partial<BackendClient> = {}):
     subscribeGuild: unimplemented('subscribeGuild'),
     unsubscribeGuild: unimplemented('unsubscribeGuild'),
     allowOrganizer: unimplemented('allowOrganizer'),
+    allowGuild: unimplemented('allowGuild'),
     listEligibleGuilds: unimplemented('listEligibleGuilds'),
     startPod: unimplemented('startPod'),
     recordMessagePosted: unimplemented('recordMessagePosted'),

@@ -86,6 +86,19 @@ describe('LocalBackendClient', () => {
     expect(upsert.calls).toHaveLength(1)
   })
 
+  it('delegates allowGuild to guildOriginAllowlist.upsert', async () => {
+    const upsert = stub(async (_args: unknown) => ({
+      guildId: 'g1',
+      allowedOriginGuildId: 'origin-g1',
+      approvedBy: 'admin-1',
+      approvedAt: new Date(),
+    }))
+
+    await client({ guildOriginAllowlist: { upsert } }).allowGuild('g1', 'origin-g1', 'admin-1')
+
+    expect(upsert.calls).toHaveLength(1)
+  })
+
   it('delegates listEligibleGuilds to guildSubscription.findMany and maps the result', async () => {
     const findMany = stub(async (_args: unknown) => [
       {

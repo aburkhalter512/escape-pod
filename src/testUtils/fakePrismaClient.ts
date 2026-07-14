@@ -5,6 +5,7 @@ export interface FakePrismaOverrides {
   organizer?: Partial<AppPrismaClient['organizer']>
   guildSubscription?: Partial<AppPrismaClient['guildSubscription']>
   guildOrganizerAllowlist?: Partial<AppPrismaClient['guildOrganizerAllowlist']>
+  guildOriginAllowlist?: Partial<AppPrismaClient['guildOriginAllowlist']>
   podRound?: Partial<AppPrismaClient['podRound']>
   podRoundTarget?: Partial<AppPrismaClient['podRoundTarget']>
   podRoundSignup?: Partial<AppPrismaClient['podRoundSignup']>
@@ -33,6 +34,10 @@ export function createFakePrismaClient(overrides: FakePrismaOverrides = {}): App
     guildOrganizerAllowlist: {
       upsert: unimplemented('guildOrganizerAllowlist.upsert'),
       ...overrides.guildOrganizerAllowlist,
+    },
+    guildOriginAllowlist: {
+      upsert: unimplemented('guildOriginAllowlist.upsert'),
+      ...overrides.guildOriginAllowlist,
     },
     podRound: {
       create: unimplemented('podRound.create'),

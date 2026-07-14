@@ -101,9 +101,8 @@ describe('guild subscription lifecycle, end to end against real Postgres', () =>
   })
 
   // Eligibility is now origin-guild-based (GuildOriginAllowlist, granted
-  // via the /allow-guild command — see a follow-up integration test once
-  // that command exists), not organizer-based — /allow-organizer is
-  // deprecated and its write no longer has any effect on eligibility,
+  // via the /allow-guild command), not organizer-based — /allow-organizer
+  // is deprecated and its write no longer has any effect on eligibility,
   // proven directly here rather than just asserted in a comment.
   it('allowOrganizer (deprecated) no longer has any effect on eligibility', async () => {
     const backend = createIntegrationBackend(prisma)
@@ -113,5 +112,43 @@ describe('guild subscription lifecycle, end to end against real Postgres', () =>
 
     const eligible = await backend.listEligibleGuilds('origin-guild-1')
     expect(eligible.guilds.map((g) => g.guildId)).not.toContain('guild-1')
+  })
+
+  it('allowGuild grants trust scoped to that origin guild only, unaffected by which organizer invokes from it', async () => {
+    const backend = createIntegrationBackend(prisma)
+
+    await backend.subscribeGuild('guild-1', 'admin-1', { channelId: 'channel-1', policy: 'ALLOWLIST' })
+    await backend.allowGuild('guild-1', 'origin-guild-b', 'admin-1')
+
+    // Trust is per-origin-guild, not per-organizer — any organizer
+    // invoking /start-pod from the trusted origin guild sees guild-1 as
+    // eligible, with no separate per-organizer approval step.
+    const eligibleFromTrustedOrigin = await backend.listEligibleGuilds('origin-guild-b')
+    expect(eligibleFromTrustedOrigin.guilds.map((g) => g.guildId)).toContain('guild-1')
+
+    // A different, untrusted origin guild sees no eligibility, even
+    // though guild-1 is subscribed and has granted trust to someone.
+    const eligibleFromUntrustedOrigin = await backend.listEligibleGuilds('origin-guild-c')
+    expect(eligibleFromUntrustedOrigin.guilds.map((g) => g.guildId)).not.toContain('guild-1')
+  })
+
+  it('re-granting allowGuild for an already-trusted origin guild updates approvedBy without erroring', async () => {
+    const backend = createIntegrationBackend(prisma)
+
+    await backend.subscribeGuild('guild-1', 'admin-1', { channelId: 'channel-1', policy: 'ALLOWLIST' })
+    await backend.allowGuild('guild-1', 'origin-guild-b', 'admin-1')
+    await backend.allowGuild('guild-1', 'origin-guild-b', 'admin-2')
+
+    const eligible = await backend.listEligibleGuilds('origin-guild-b')
+    expect(eligible.guilds.map((g) => g.guildId)).toContain('guild-1')
+  })
+
+  it('OPEN policy ignores origin-guild trust entirely — any origin guild is eligible', async () => {
+    const backend = createIntegrationBackend(prisma)
+
+    await backend.subscribeGuild('guild-1', 'admin-1', { channelId: 'channel-1', policy: 'OPEN' })
+
+    const eligible = await backend.listEligibleGuilds('some-untrusted-origin-guild')
+    expect(eligible.guilds.map((g) => g.guildId)).toContain('guild-1')
   })
 })

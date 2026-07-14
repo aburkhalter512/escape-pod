@@ -12,6 +12,8 @@ type GuildSubscriptionUpdateArgs = Parameters<AppPrismaClient['guildSubscription
 type GuildSubscriptionRow = Awaited<ReturnType<AppPrismaClient['guildSubscription']['create']>>
 type AllowlistUpsertArgs = Parameters<AppPrismaClient['guildOrganizerAllowlist']['upsert']>[0]
 type AllowlistRow = Awaited<ReturnType<AppPrismaClient['guildOrganizerAllowlist']['upsert']>>
+type OriginAllowlistUpsertArgs = Parameters<AppPrismaClient['guildOriginAllowlist']['upsert']>[0]
+type OriginAllowlistRow = Awaited<ReturnType<AppPrismaClient['guildOriginAllowlist']['upsert']>>
 
 function fakeGuildSubscriptionRow(overrides: Partial<GuildSubscriptionRow> = {}): GuildSubscriptionRow {
   return {
@@ -29,6 +31,16 @@ function fakeAllowlistRow(overrides: Partial<AllowlistRow> = {}): AllowlistRow {
   return {
     guildId: 'guild-1',
     organizerDiscordId: 'organizer-1',
+    approvedBy: 'admin-1',
+    approvedAt: new Date(),
+    ...overrides,
+  }
+}
+
+function fakeOriginAllowlistRow(overrides: Partial<OriginAllowlistRow> = {}): OriginAllowlistRow {
+  return {
+    guildId: 'guild-1',
+    allowedOriginGuildId: 'origin-guild-1',
     approvedBy: 'admin-1',
     approvedAt: new Date(),
     ...overrides,
@@ -266,6 +278,56 @@ describe('POST /guilds/allow-organizer', () => {
       method: 'POST',
       url: '/guilds/allow-organizer',
       payload: { guildId: 'guild-1', organizerDiscordId: 12345, approvedBy: 'admin-1' },
+    })
+
+    expect(response.statusCode).toBe(400)
+    expect(upsert.calls).toHaveLength(0)
+  })
+})
+
+describe('POST /guilds/allow-guild', () => {
+  it('upserts the origin allowlist entry keyed by guildId+allowedOriginGuildId', async () => {
+    const expectedArgs: OriginAllowlistUpsertArgs = {
+      where: { guildId_allowedOriginGuildId: { guildId: 'guild-1', allowedOriginGuildId: 'origin-guild-1' } },
+      create: { guildId: 'guild-1', allowedOriginGuildId: 'origin-guild-1', approvedBy: 'admin-1' },
+      update: { approvedBy: 'admin-1' },
+    }
+    const upsert = stub(async (args: OriginAllowlistUpsertArgs) => {
+      if (!deepEqual(args, expectedArgs)) throw new Error(`unexpected upsert args: ${JSON.stringify(args)}`)
+      return fakeOriginAllowlistRow()
+    })
+    const { app } = buildApp({ prisma: { guildOriginAllowlist: { upsert } } })
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/guilds/allow-guild',
+      payload: { guildId: 'guild-1', allowedOriginGuildId: 'origin-guild-1', approvedBy: 'admin-1' },
+    })
+
+    expect(response.statusCode).toBe(200)
+  })
+
+  it('re-granting trust updates who approved it most recently', async () => {
+    const upsert = stub(async (_args: OriginAllowlistUpsertArgs) => fakeOriginAllowlistRow())
+    const { app } = buildApp({ prisma: { guildOriginAllowlist: { upsert } } })
+
+    await app.inject({
+      method: 'POST',
+      url: '/guilds/allow-guild',
+      payload: { guildId: 'guild-1', allowedOriginGuildId: 'origin-guild-1', approvedBy: 'admin-2' },
+    })
+
+    expect(upsert.calls[0][0].update).toEqual({ approvedBy: 'admin-2' })
+  })
+
+  it('rejects a non-string allowedOriginGuildId with 400', async () => {
+    const upsert = stub(async (_args: OriginAllowlistUpsertArgs) => fakeOriginAllowlistRow())
+    const { app } = buildApp({ prisma: { guildOriginAllowlist: { upsert } } })
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/guilds/allow-guild',
+      payload: { guildId: 'guild-1', allowedOriginGuildId: 12345, approvedBy: 'admin-1' },
     })
 
     expect(response.statusCode).toBe(400)

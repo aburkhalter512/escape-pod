@@ -120,14 +120,41 @@ export interface AllowOrganizerParams {
   approvedBy: string
 }
 
-// INTEGRATIONS.md §7.2/§7.4 — guild admin approves a specific organizer.
-// Only consulted when the guild's policy is ALLOWLIST.
+// Deprecated (see allowGuild below, which replaces this) — no longer
+// consulted by listEligibleGuilds, so calling this has no effect on
+// eligibility anymore. Still writes to GuildOrganizerAllowlist (harmless,
+// just inert) rather than becoming a no-op function outright, since the
+// command layer (commands/allowOrganizer.ts) still owns deciding what
+// deprecated-command UX to show — this function's job is only ever "do
+// the write," not "decide whether to."
 export async function allowOrganizer(deps: GuildServiceDeps, params: AllowOrganizerParams): Promise<void> {
   const { guildId, organizerDiscordId, approvedBy } = params
 
   await deps.prisma.guildOrganizerAllowlist.upsert({
     where: { guildId_organizerDiscordId: { guildId, organizerDiscordId } },
     create: { guildId, organizerDiscordId, approvedBy },
+    update: { approvedBy },
+  })
+}
+
+export interface AllowGuildParams {
+  guildId: string
+  allowedOriginGuildId: string
+  approvedBy: string
+}
+
+// Replaces allowOrganizer above — trusts an entire origin guild (see
+// GuildOriginAllowlist, schema.prisma; services/organizers.ts's
+// listEligibleGuilds is what actually consults this) rather than
+// approving individual organizers one at a time. Same upsert shape as
+// allowOrganizer: re-running for an already-trusted origin guild just
+// refreshes who approved it, not an error.
+export async function allowGuild(deps: GuildServiceDeps, params: AllowGuildParams): Promise<void> {
+  const { guildId, allowedOriginGuildId, approvedBy } = params
+
+  await deps.prisma.guildOriginAllowlist.upsert({
+    where: { guildId_allowedOriginGuildId: { guildId, allowedOriginGuildId } },
+    create: { guildId, allowedOriginGuildId, approvedBy },
     update: { approvedBy },
   })
 }

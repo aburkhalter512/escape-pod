@@ -29,8 +29,15 @@ export interface AppPrismaClient {
     // comes back empty.
     count: Method<PrismaClient['guildSubscription']['count']>
   }
+  // Deprecated — see services/guilds.ts's allowOrganizer doc comment.
+  // Kept here only because that function still writes to it (soft
+  // deprecation — the write itself is harmless, just no longer
+  // consulted by anything).
   guildOrganizerAllowlist: {
     upsert: Method<PrismaClient['guildOrganizerAllowlist']['upsert']>
+  }
+  guildOriginAllowlist: {
+    upsert: Method<PrismaClient['guildOriginAllowlist']['upsert']>
   }
   podRound: {
     create: Method<PrismaClient['podRound']['create']>

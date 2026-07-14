@@ -32,7 +32,15 @@ export interface BackendClient {
     params: { channelId?: string; policy?: PostingPolicy }
   ): Promise<Result<{ subscribed: boolean; broadcastChannelId: string; postingPolicy: PostingPolicy }>>
   unsubscribeGuild(guildId: string): Promise<{ wasSubscribed: boolean }>
+  // Deprecated — no longer has any effect on eligibility, see
+  // services/guilds.ts's allowOrganizer. Kept only so the deprecated
+  // /allow-organizer command still resolves to a real (inert) call
+  // instead of needing special-casing.
   allowOrganizer(guildId: string, organizerDiscordId: string, approvedBy: string): Promise<void>
+  // Replaces allowOrganizer above — trusts an entire origin guild
+  // instead of one organizer at a time. See services/guilds.ts's
+  // allowGuild.
+  allowGuild(guildId: string, allowedOriginGuildId: string, approvedBy: string): Promise<void>
   // Eligibility is origin-guild-scoped, not organizer-scoped — see
   // services/organizers.ts's listEligibleGuilds.
   listEligibleGuilds(originGuildId: string): Promise<{ guilds: Array<{ guildId: string }>; anySubscribed: boolean }>
@@ -118,9 +126,15 @@ export class LocalBackendClient implements BackendClient {
     return guildsService.unsubscribeGuild(this.deps, guildId)
   }
 
-  // §7.2: allow-list an organizer for a guild with `allowlist` policy.
+  // Deprecated — see services/guilds.ts's allowOrganizer.
   allowOrganizer(guildId: string, organizerDiscordId: string, approvedBy: string): Promise<void> {
     return guildsService.allowOrganizer(this.deps, { guildId, organizerDiscordId, approvedBy })
+  }
+
+  // §7.2: trust an entire origin guild for a guild with `allowlist`
+  // policy — replaces allowOrganizer above.
+  allowGuild(guildId: string, allowedOriginGuildId: string, approvedBy: string): Promise<void> {
+    return guildsService.allowGuild(this.deps, { guildId, allowedOriginGuildId, approvedBy })
   }
 
   // §7.5: guilds a round starting from originGuildId may target; returns

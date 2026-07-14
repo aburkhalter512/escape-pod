@@ -1,3 +1,4 @@
+import { allowGuild } from './allowGuild.js'
 import { allowOrganizer } from './allowOrganizer.js'
 import { cancelPod } from './cancelPod.js'
 import { concludePod } from './concludePod.js'
@@ -12,6 +13,7 @@ export const commandHandlers: Record<string, CommandHandler> = {
   'subscribe-guild': subscribeGuild,
   'unsubscribe-guild': unsubscribeGuild,
   'allow-organizer': allowOrganizer,
+  'allow-guild': allowGuild,
   'start-pod': startPod,
   'cancel-pod': cancelPod,
   'conclude-pod': concludePod,

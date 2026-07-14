@@ -29,6 +29,13 @@ const allowOrganizerBodySchema = z.object({
 })
 type AllowOrganizerBody = z.infer<typeof allowOrganizerBodySchema>
 
+const allowGuildBodySchema = z.object({
+  guildId: z.string().min(1),
+  allowedOriginGuildId: z.string().min(1),
+  approvedBy: z.string().min(1),
+})
+type AllowGuildBody = z.infer<typeof allowGuildBodySchema>
+
 export function registerGuildRoutes(app: FastifyInstance, deps: GuildRouteDeps): void {
   app.post<{ Body: SubscribeGuildBody }>(
     '/guilds/subscribe',
@@ -56,6 +63,15 @@ export function registerGuildRoutes(app: FastifyInstance, deps: GuildRouteDeps):
     { schema: { body: allowOrganizerBodySchema } },
     async (request, reply) => {
       await guildsService.allowOrganizer(deps, request.body)
+      return reply.send({ ok: true })
+    }
+  )
+
+  app.post<{ Body: AllowGuildBody }>(
+    '/guilds/allow-guild',
+    { schema: { body: allowGuildBodySchema } },
+    async (request, reply) => {
+      await guildsService.allowGuild(deps, request.body)
       return reply.send({ ok: true })
     }
   )

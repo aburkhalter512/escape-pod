@@ -60,6 +60,23 @@ export const commandDefinitions: RESTPostAPIChatInputApplicationCommandsJSONBody
     ],
   },
   {
+    name: 'allow-guild',
+    description: 'Trust an entire server\'s organizers to post draft pod rounds into this server',
+    type: ApplicationCommandType.ChatInput,
+    default_member_permissions: PermissionFlagsBits.ManageGuild.toString(),
+    options: [
+      {
+        name: 'origin-server-id',
+        // No native cross-guild picker exists for slash commands — the
+        // admin supplies the raw ID (Developer Mode -> right-click the
+        // other server's icon -> Copy Server ID).
+        description: 'The other server\'s ID (enable Developer Mode, right-click its icon, Copy Server ID)',
+        type: ApplicationCommandOptionType.String,
+        required: true,
+      },
+    ],
+  },
+  {
     name: 'start-pod',
     description: 'Start a new draft pod RSVP round across your eligible servers',
     type: ApplicationCommandType.ChatInput,

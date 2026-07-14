@@ -3,11 +3,23 @@ import type { AppPrismaClient } from '../prismaClient.js'
 import { createFakePrismaClient } from '../testUtils/fakePrismaClient.js'
 import { stub } from '../testUtils/stub.js'
 import { deepEqual } from '../testUtils/deepEqual.js'
-import { subscribeGuild, unsubscribeGuild, type GuildServiceDeps } from './guilds.js'
+import { allowGuild, subscribeGuild, unsubscribeGuild, type GuildServiceDeps } from './guilds.js'
 
 type GuildSubscriptionRow = Awaited<ReturnType<AppPrismaClient['guildSubscription']['create']>>
 type GuildSubscriptionCreateArgs = Parameters<AppPrismaClient['guildSubscription']['create']>[0]
 type GuildSubscriptionUpdateArgs = Parameters<AppPrismaClient['guildSubscription']['update']>[0]
+type OriginAllowlistUpsertArgs = Parameters<AppPrismaClient['guildOriginAllowlist']['upsert']>[0]
+type OriginAllowlistRow = Awaited<ReturnType<AppPrismaClient['guildOriginAllowlist']['upsert']>>
+
+function fakeOriginAllowlistRow(overrides: Partial<OriginAllowlistRow> = {}): OriginAllowlistRow {
+  return {
+    guildId: 'guild-1',
+    allowedOriginGuildId: 'origin-guild-1',
+    approvedBy: 'admin-1',
+    approvedAt: new Date(),
+    ...overrides,
+  }
+}
 
 function fakeGuildSubscriptionRow(overrides: Partial<GuildSubscriptionRow> = {}): GuildSubscriptionRow {
   return {
@@ -222,5 +234,33 @@ describe('unsubscribeGuild', () => {
 
     expect(result).toEqual({ wasSubscribed: false })
     expect(update.calls).toHaveLength(0)
+  })
+})
+
+describe('allowGuild', () => {
+  it('upserts the origin allowlist entry keyed by guildId+allowedOriginGuildId', async () => {
+    const expected: OriginAllowlistUpsertArgs = {
+      where: { guildId_allowedOriginGuildId: { guildId: 'guild-1', allowedOriginGuildId: 'origin-guild-1' } },
+      create: { guildId: 'guild-1', allowedOriginGuildId: 'origin-guild-1', approvedBy: 'admin-1' },
+      update: { approvedBy: 'admin-1' },
+    }
+    const upsert = stub(async (args: OriginAllowlistUpsertArgs) => {
+      if (!deepEqual(args, expected)) throw new Error(`unexpected upsert args: ${JSON.stringify(args)}`)
+      return fakeOriginAllowlistRow()
+    })
+    const deps = buildDeps({ guildOriginAllowlist: { upsert } })
+
+    await allowGuild(deps, { guildId: 'guild-1', allowedOriginGuildId: 'origin-guild-1', approvedBy: 'admin-1' })
+
+    expect(upsert.calls).toHaveLength(1)
+  })
+
+  it('re-granting trust updates who approved it most recently, without changing the create shape', async () => {
+    const upsert = stub(async (_args: OriginAllowlistUpsertArgs) => fakeOriginAllowlistRow())
+    const deps = buildDeps({ guildOriginAllowlist: { upsert } })
+
+    await allowGuild(deps, { guildId: 'guild-1', allowedOriginGuildId: 'origin-guild-1', approvedBy: 'admin-2' })
+
+    expect(upsert.calls[0][0].update).toEqual({ approvedBy: 'admin-2' })
   })
 })
