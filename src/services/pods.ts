@@ -324,6 +324,9 @@ export async function recordSignup(
   if (round.status === 'EXPIRED') {
     return err(validationError('This round expired before enough players joined.'))
   }
+  if (round.status === 'CONCLUDED') {
+    return err(validationError('This round has already concluded.'))
+  }
 
   await deps.prisma.podRoundSignup.upsert({
     where: { podRoundId_discordId: { podRoundId, discordId } },
