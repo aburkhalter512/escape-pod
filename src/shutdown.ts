@@ -8,12 +8,21 @@ import type { Logger } from './services/errors.js'
 // SIGKILL with nothing in CloudWatch to explain it.
 export const SHUTDOWN_TIMEOUT_MS = 20_000
 
+// One periodic job — the pod-round expiry sweep and the PTP token-refresh
+// job (see server.ts) are both registered this way, each with its own
+// interval and its own in-flight tracking, but sharing one shutdown
+// lifecycle (one SIGTERM drains all of them, not one per job).
+export interface ScheduledSweep {
+  name: string
+  run: () => Promise<unknown>
+  intervalMs: number
+}
+
 export interface ShutdownDeps {
   app: { close(): Promise<void> }
   prisma: { $disconnect(): Promise<void> }
   logger: Logger
-  runSweep: () => Promise<unknown>
-  sweepIntervalMs: number
+  sweeps: ScheduledSweep[]
   // Overridable only for tests — production always gets the real ceiling.
   timeoutMs?: number
 }
@@ -27,38 +36,49 @@ export interface GracefulShutdown {
   shutdown(signal: string): Promise<void>
 }
 
-// Owns the sweep's setInterval directly (rather than server.ts owning the
-// interval and this module only being told "a sweep is running") so that
-// "stop scheduling new ticks" and "know whether one is in flight" live in
-// one place with no risk of the two getting out of sync. server.ts's own
-// behavior is unchanged: same interval, same sweep function, same
-// catch-and-log-don't-crash — this just wraps that in a lifecycle that
-// SIGTERM/SIGINT can hook into.
+// Owns every sweep's setInterval directly (rather than server.ts owning
+// the intervals and this module only being told "a sweep is running") so
+// that "stop scheduling new ticks" and "know whether one is in flight"
+// live in one place per job, with no risk of the two getting out of sync.
+// Each registered sweep keeps its own interval and its own in-flight
+// tracking — a slow token-refresh run in progress doesn't block the
+// pod-round sweep's own ticks, or vice versa — but shutdown() waits for
+// all of them together before closing the server. server.ts's own
+// per-job behavior is unchanged: same intervals, same sweep functions,
+// same catch-and-log-don't-crash — this just wraps that in a lifecycle
+// that SIGTERM/SIGINT can hook into.
 export function createGracefulShutdown(deps: ShutdownDeps): GracefulShutdown {
-  const { app, prisma, logger, runSweep, sweepIntervalMs, timeoutMs = SHUTDOWN_TIMEOUT_MS } = deps
+  const { app, prisma, logger, sweeps, timeoutMs = SHUTDOWN_TIMEOUT_MS } = deps
 
-  let timer: ReturnType<typeof setInterval> | undefined
-  let sweepInFlight: Promise<unknown> | undefined
+  interface SweepState {
+    sweep: ScheduledSweep
+    timer: ReturnType<typeof setInterval> | undefined
+    inFlight: Promise<unknown> | undefined
+  }
+  const state: SweepState[] = sweeps.map((sweep) => ({ sweep, timer: undefined, inFlight: undefined }))
   let shutdownPromise: Promise<void> | undefined
 
-  function tick(): void {
-    // Overlapping ticks shouldn't happen at a 60s interval against a sweep
-    // that's expected to be fast, but guarding here costs nothing and keeps
-    // "is a sweep running" unambiguous for shutdown() below.
-    if (sweepInFlight) return
+  function tick(entry: SweepState): void {
+    // Overlapping ticks for the same sweep shouldn't happen against a job
+    // that's expected to be fast relative to its own interval, but
+    // guarding here costs nothing and keeps "is this sweep running"
+    // unambiguous for shutdown() below.
+    if (entry.inFlight) return
 
-    const run = runSweep().catch((err) => {
-      logger.error({ err }, 'pod-round expiration sweep failed')
+    const run = entry.sweep.run().catch((err) => {
+      logger.error({ err, sweep: entry.sweep.name }, `${entry.sweep.name} sweep failed`)
     })
-    sweepInFlight = run
+    entry.inFlight = run
     void run.finally(() => {
-      if (sweepInFlight === run) sweepInFlight = undefined
+      if (entry.inFlight === run) entry.inFlight = undefined
     })
   }
 
   return {
     start() {
-      timer = setInterval(tick, sweepIntervalMs)
+      for (const entry of state) {
+        entry.timer = setInterval(() => tick(entry), entry.sweep.intervalMs)
+      }
     },
 
     shutdown(signal: string) {
@@ -67,10 +87,14 @@ export function createGracefulShutdown(deps: ShutdownDeps): GracefulShutdown {
       shutdownPromise = (async () => {
         logger.error({ signal }, 'shutdown signal received, draining before exit')
 
-        // Stop scheduling new ticks immediately — a tick due right after the
-        // signal must never start a fresh fireRound claim (see fireRound's
-        // one-way-door comment in services/pods.ts) once we're on our way out.
-        if (timer) clearInterval(timer)
+        // Stop scheduling new ticks immediately, for every sweep — a tick
+        // due right after the signal must never start a fresh fireRound
+        // claim (see fireRound's one-way-door comment in services/pods.ts)
+        // once we're on our way out, and the same caution applies to
+        // starting a fresh token-refresh batch mid-shutdown.
+        for (const entry of state) {
+          if (entry.timer) clearInterval(entry.timer)
+        }
 
         let timedOut = false
         const timeout = new Promise<void>((resolve) => {
@@ -81,10 +105,11 @@ export function createGracefulShutdown(deps: ShutdownDeps): GracefulShutdown {
         })
 
         const work = (async () => {
-          // Let any sweep iteration already in flight finish — it may be
-          // mid-way through claiming/firing a round, and killing it there is
-          // exactly the stuck-round failure mode this module exists to avoid.
-          if (sweepInFlight) await sweepInFlight
+          // Let any sweep iteration already in flight finish, across every
+          // registered job — one may be mid-way through claiming/firing a
+          // round, and killing it there is exactly the stuck-round failure
+          // mode this module exists to avoid.
+          await Promise.all(state.map((entry) => entry.inFlight))
 
           // Fastify's close() already waits for in-flight HTTP requests
           // (e.g. an in-flight /interactions call) before resolving.

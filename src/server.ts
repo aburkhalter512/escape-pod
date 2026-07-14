@@ -13,6 +13,7 @@ import { registerGuildRoutes } from './routes/guilds.js'
 import { registerPodRoutes } from './routes/pods.js'
 import { ephemeral } from './commands/helpers.js'
 import { expireOverduePodRounds } from './jobs/expirePodRounds.js'
+import { refreshExpiringTokens } from './jobs/refreshTokens.js'
 import { createInMemoryPendingStartPodStore } from './pendingStartPods.js'
 import { createGracefulShutdown } from './shutdown.js'
 
@@ -124,24 +125,39 @@ await app.register(async (instance) => {
   registerPodRoutes(instance, backendDeps)
 })
 
-// Periodic sweep for /start-pod deadlines (see util/duration.ts,
-// jobs/expirePodRounds.ts) — in-process rather than a separate scheduled
-// AWS resource, since it needs no state beyond what's already in Postgres
-// and reuses the same atomic-claim pattern already proven safe under
-// concurrent execution (tasks/001). A 1-minute interval bounds worst-case
-// lateness without being noisy; errors are caught and logged rather than
-// crashing the sweep loop or the process. The interval itself, and
-// tracking whether a sweep is currently in flight, live in shutdown.ts —
-// see that module for why: SIGTERM/SIGINT need to stop new ticks and wait
-// out any in-flight one before the process (and its DB connection, and any
-// in-progress fireRound claim) goes away.
+// Two periodic jobs, both in-process rather than separate scheduled AWS
+// resources since neither needs state beyond what's already in Postgres.
+// Both are registered as sweeps on the one shutdown lifecycle (see
+// shutdown.ts) — SIGTERM/SIGINT stop new ticks for both and wait out
+// whichever is in flight before the process (and its DB connection) goes
+// away.
+//
+// Pod-round deadlines (see util/duration.ts, jobs/expirePodRounds.ts): a
+// 1-minute interval bounds worst-case lateness without being noisy, and
+// reuses the same atomic-claim pattern already proven safe under
+// concurrent execution (tasks/001).
 const SWEEP_INTERVAL_MS = 60_000
+// PTP token refresh (jobs/refreshTokens.ts, INTEGRATIONS.md §8.3):
+// proactively rotates tokens expiring within the job's own 5-day window,
+// so a daily cadence comfortably keeps every organizer inside that
+// window well before their token actually expires.
+const TOKEN_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000
 const gracefulShutdown = createGracefulShutdown({
   app,
   prisma,
   logger: app.log,
-  runSweep: () => expireOverduePodRounds(backendDeps, discordRest),
-  sweepIntervalMs: SWEEP_INTERVAL_MS,
+  sweeps: [
+    {
+      name: 'pod-round-expiration',
+      run: () => expireOverduePodRounds(backendDeps, discordRest),
+      intervalMs: SWEEP_INTERVAL_MS,
+    },
+    {
+      name: 'token-refresh',
+      run: () => refreshExpiringTokens(prisma, ptp, tokenEncryptionKey),
+      intervalMs: TOKEN_REFRESH_INTERVAL_MS,
+    },
+  ],
 })
 gracefulShutdown.start()
 

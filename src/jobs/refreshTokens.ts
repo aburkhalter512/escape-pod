@@ -7,8 +7,10 @@ const REFRESH_WINDOW_DAYS = 5
 
 // INTEGRATIONS.md §8.3 — proactively rotate tokens before their 30-day
 // expiry using /api/auth/refresh's Set-Cookie response, so organizers don't
-// have to manually re-run /connect-ptp every month. Intended to run on a
-// daily schedule (not wired to a scheduler yet — this is the job body only).
+// have to manually re-run /connect-ptp every month. Runs on a daily
+// schedule — see server.ts's `sweeps` registration on createGracefulShutdown
+// (shutdown.ts) for how this and the pod-round sweep both get scheduled and
+// drained on shutdown.
 export async function refreshExpiringTokens(prisma: AppPrismaClient, ptp: PtpClient, tokenEncryptionKey: string) {
   const cutoff = new Date(Date.now() + REFRESH_WINDOW_DAYS * 24 * 60 * 60 * 1000)
 

@@ -255,8 +255,8 @@ here:
 - `/organizers/:discordId/eligible-guilds` returns `guildId` as a
   placeholder `name` — guild display names aren't threaded through from
   Discord yet (`src/services/organizers.ts`).
-- `src/jobs/refreshTokens.ts` is a job body only — not yet attached to a
-  scheduler, and has no way to notify an organizer when refresh fails
-  (§8.3's DM fallback).
+- `src/jobs/refreshTokens.ts` runs on a daily schedule (see `server.ts`)
+  but still has no way to notify an organizer when a refresh attempt
+  fails (§8.3's DM fallback) — it just leaves that token to expire.
 - `src/commands/cancelPod.ts` is stubbed — doesn't yet call
   `backend.cancelPod`.

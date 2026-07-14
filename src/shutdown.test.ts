@@ -14,12 +14,15 @@ function deferred<T = void>() {
 
 // Stub-backed shape (rather than ShutdownDeps directly) so every test can
 // read `.calls` off any dependency without re-widening back to the plain
-// function types ShutdownDeps declares.
+// function types ShutdownDeps declares. Defaults to a single sweep named
+// 'test-sweep' — tests that care about multiple sweeps pass their own
+// `sweeps` array instead.
 interface FakeDepsOverrides {
   app?: { close: Stub<[], Promise<void>> }
   prisma?: { $disconnect: Stub<[], Promise<void>> }
   logger?: { error: Stub<[unknown, string], void> }
   runSweep?: Stub<[], Promise<unknown>>
+  sweeps?: Array<{ name: string; run: () => Promise<unknown>; intervalMs: number }>
   timeoutMs?: number
 }
 
@@ -28,8 +31,9 @@ function fakeDeps(overrides: FakeDepsOverrides = {}) {
     app: overrides.app ?? { close: stub(async () => {}) },
     prisma: overrides.prisma ?? { $disconnect: stub(async () => {}) },
     logger: overrides.logger ?? { error: stub((_obj: unknown, _msg: string) => {}) },
-    runSweep: overrides.runSweep ?? stub(async () => {}),
-    sweepIntervalMs: SWEEP_INTERVAL_MS,
+    sweeps: overrides.sweeps ?? [
+      { name: 'test-sweep', run: overrides.runSweep ?? stub(async () => {}), intervalMs: SWEEP_INTERVAL_MS },
+    ],
     ...(overrides.timeoutMs !== undefined ? { timeoutMs: overrides.timeoutMs } : {}),
   }
 }
@@ -121,6 +125,53 @@ describe('createGracefulShutdown', () => {
     expect(deps.app.close.calls.length).toBe(1)
     expect(deps.prisma.$disconnect.calls.length).toBe(1)
     expect(exitSpy).toHaveBeenCalledTimes(1)
+    expect(exitSpy).toHaveBeenCalledWith(0)
+  })
+
+  it('runs multiple registered sweeps independently and waits for all of them on shutdown', async () => {
+    const fastGate = deferred<void>()
+    const slowGate = deferred<void>()
+    const fastRun = stub(() => fastGate.promise)
+    const slowRun = stub(() => slowGate.promise)
+    const closeOrder: string[] = []
+    const deps = fakeDeps({
+      sweeps: [
+        { name: 'fast-sweep', run: fastRun, intervalMs: 1_000 },
+        { name: 'slow-sweep', run: slowRun, intervalMs: 5_000 },
+      ],
+      app: {
+        close: stub(async () => {
+          closeOrder.push('close')
+        }),
+      },
+    })
+    const shutdown = createGracefulShutdown(deps)
+    shutdown.start()
+
+    // Only the fast sweep's interval has elapsed — the slow one shouldn't
+    // have ticked yet, confirming each sweep really does run on its own
+    // schedule rather than sharing one interval.
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(fastRun.calls.length).toBe(1)
+    expect(slowRun.calls.length).toBe(0)
+
+    // Now get the slow sweep in flight too, so shutdown() has both to wait on.
+    await vi.advanceTimersByTimeAsync(4_000)
+    expect(slowRun.calls.length).toBe(1)
+
+    const shutdownPromise = shutdown.shutdown('SIGTERM')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(closeOrder).toEqual([])
+
+    fastGate.resolve()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(closeOrder).toEqual([]) // slow sweep still in flight
+
+    slowGate.resolve()
+    await shutdownPromise
+
+    expect(closeOrder).toEqual(['close'])
+    expect(deps.prisma.$disconnect.calls.length).toBe(1)
     expect(exitSpy).toHaveBeenCalledWith(0)
   })
 
