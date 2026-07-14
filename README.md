@@ -18,6 +18,20 @@ that boundary — Discord command/component handlers call it, and
 `LocalBackendClient` satisfies it by calling `src/services/*` directly,
 in-process (no HTTP, no separate deploy).
 
+## Invite the bot
+
+[Add escape-pod to your server](https://discord.com/oauth2/authorize?client_id=1524918902373744650&permissions=3089&scope=bot%20applications.commands)
+
+Requests both the `bot` and `applications.commands` scopes (see
+Troubleshooting below for why a guild missing either one silently breaks)
+and the minimum permissions it actually uses: View Channels, Send
+Messages, Create Instant Invite, and Manage Channels (the last one for
+the temporary per-round chat channel, `src/discord/podChat.ts`) —
+`permissions=3089` in the link above. After inviting, a server admin
+still needs to run `/subscribe-guild` there (§7.2 in `INTEGRATIONS.md`
+covers open-posting vs. allowlist policy) before organizers can actually
+post draft rounds into it.
+
 ## Setup
 
 ```bash
@@ -161,19 +175,12 @@ There's no automatic detection for this — the bot is REST-only with no
 gateway connection (see `src/discord/rest.ts`), so it has no
 `GUILD_DELETE`-style signal when it's removed or was never fully added.
 
-Fix: have an admin of that guild re-invite the bot with an authorize URL
-that includes both scopes and the permissions it actually needs (View
-Channels, Send Messages, Create Instant Invite, Manage Channels — the
-last one for the temporary chat channel):
-
-```
-https://discord.com/oauth2/authorize?client_id=<DISCORD_APPLICATION_ID>&permissions=3089&scope=bot%20applications.commands
-```
-
-Safe to run even if slash commands are already installed there — it
-only adds the missing `bot`-scope membership on top. If one guild hit
-this, it's worth checking whether other subscribed guilds were added the
-same (commands-only) way.
+Fix: have an admin of that guild re-invite the bot using the same link at
+the top of this README ("Invite the bot") — it already requests both
+scopes and the right permissions. Safe to run even if slash commands are
+already installed there — it only adds the missing `bot`-scope membership
+on top. If one guild hit this, it's worth checking whether other
+subscribed guilds were added the same (commands-only) way.
 
 ## Status
 
