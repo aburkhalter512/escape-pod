@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ApplicationCommandOptionType } from 'discord-api-types/v10'
+import { ApplicationCommandOptionType, PermissionFlagsBits } from 'discord-api-types/v10'
 import { commandDefinitions } from './definitions.js'
 import { commandHandlers } from './index.js'
 import { SWU_SETS } from '../swuSets.js'
@@ -29,11 +29,19 @@ describe('commandDefinitions / commandHandlers alignment', () => {
     }
   })
 
-  it('restricts guild-management commands to Manage Guild holders by default', () => {
-    const guildAdminCommands = ['subscribe-guild', 'allow-organizer']
-    for (const name of guildAdminCommands) {
-      const definition = commandDefinitions.find((d) => d.name === name)
-      expect(definition?.default_member_permissions, `${name} should restrict by default`).toBeDefined()
+  // Every command defaults to Manage Guild holders only -- a deliberate
+  // choice (2026-07-14) even though organizer-facing commands
+  // (connect-ptp/start-pod/cancel-pod/conclude-pod) aren't guild-admin
+  // actions: default_member_permissions is only a *default*, individual
+  // servers can still open specific commands back up to other roles/users
+  // via Discord's own Integrations UI (Server Settings > Integrations >
+  // this bot > command permissions) without any code change here.
+  it('restricts every command to Manage Guild holders by default', () => {
+    for (const definition of commandDefinitions) {
+      expect(
+        definition.default_member_permissions,
+        `${definition.name} should restrict to Manage Guild by default`
+      ).toBe(PermissionFlagsBits.ManageGuild.toString())
     }
   })
 

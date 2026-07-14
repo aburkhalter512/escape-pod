@@ -13,6 +13,7 @@ export const commandDefinitions: RESTPostAPIChatInputApplicationCommandsJSONBody
     name: 'connect-ptp',
     description: 'Link your Protect the Pod account so you can organize draft pods',
     type: ApplicationCommandType.ChatInput,
+    default_member_permissions: PermissionFlagsBits.ManageGuild.toString(),
   },
   {
     name: 'subscribe-guild',
@@ -62,6 +63,7 @@ export const commandDefinitions: RESTPostAPIChatInputApplicationCommandsJSONBody
     name: 'start-pod',
     description: 'Start a new draft pod RSVP round across your eligible servers',
     type: ApplicationCommandType.ChatInput,
+    default_member_permissions: PermissionFlagsBits.ManageGuild.toString(),
     options: [
       {
         name: 'set',
@@ -90,10 +92,12 @@ export const commandDefinitions: RESTPostAPIChatInputApplicationCommandsJSONBody
     name: 'cancel-pod',
     description: 'Cancel your in-progress draft pod round',
     type: ApplicationCommandType.ChatInput,
+    default_member_permissions: PermissionFlagsBits.ManageGuild.toString(),
   },
   {
     name: 'conclude-pod',
     description: 'Conclude your finished draft pod round',
     type: ApplicationCommandType.ChatInput,
+    default_member_permissions: PermissionFlagsBits.ManageGuild.toString(),
   },
 ]

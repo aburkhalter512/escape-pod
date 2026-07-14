@@ -18,7 +18,15 @@ post draft rounds into it.
 
 ## Commands
 
-### Server setup (requires "Manage Guild")
+All 7 commands default to **"Manage Guild"** holders only, even the
+organizer-facing ones below that aren't inherently admin actions — a
+deliberate, restrictive-by-default choice so a fresh install starts
+locked down rather than open. A server admin can open any individual
+command back up to other roles/users via Discord's own Server Settings →
+Integrations → this bot → command permissions; no code change or redeploy
+needed, and it's scoped per-server.
+
+### Server setup
 
 - **`/subscribe-guild [channel] [policy]`** — opts this server in to
   receive draft-pod broadcasts. `channel` (where rounds get posted) is
