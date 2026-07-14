@@ -15,6 +15,7 @@ function okResult(overrides: Partial<ConcludeActiveRoundResult> = {}): Result<Co
     value: {
       podRoundId: 'round-1',
       setCode: 'JTL',
+      organizerRoundNumber: 1,
       originGuildName: null,
       chatChannelId: null,
       targets: [{ channelId: 'channel-1', messageId: 'msg-1' }],

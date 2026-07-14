@@ -766,6 +766,7 @@ describe('cancelActiveRound', () => {
     expect(result).toEqual({
       podRoundId: 'round-1',
       setCode: 'JTL',
+      organizerRoundNumber: 1,
       originGuildName: null,
       targets: [
         { channelId: 'channel-1', messageId: 'msg-1' },
@@ -930,6 +931,7 @@ describe('concludeActiveRound', () => {
       value: {
         podRoundId: 'round-1',
         setCode: 'JTL',
+        organizerRoundNumber: 1,
         originGuildName: null,
         chatChannelId: 'chat-1',
         targets: [
@@ -1070,6 +1072,7 @@ describe('expireOverdueRounds', () => {
       {
         podRoundId: 'round-1',
         setCode: 'JTL',
+        organizerRoundNumber: 1,
         outcome: 'expired',
         signupDiscordIds: ['p1', 'p2', 'p3'],
         originGuildName: null,
@@ -1140,6 +1143,7 @@ describe('expireOverdueRounds', () => {
       {
         podRoundId: 'round-1',
         setCode: 'JTL',
+        organizerRoundNumber: 1,
         outcome: 'fired',
         count: 5,
         threshold: 2,
@@ -1241,6 +1245,7 @@ describe('expireOverdueRounds', () => {
       {
         podRoundId: 'round-1',
         setCode: 'JTL',
+        organizerRoundNumber: 1,
         outcome: 'fired',
         count: 5,
         threshold: 2,
@@ -1294,6 +1299,7 @@ describe('expireOverdueRounds', () => {
       {
         podRoundId: 'round-1',
         setCode: 'JTL',
+        organizerRoundNumber: 1,
         outcome: 'fired',
         count: 5,
         threshold: 2,
@@ -1430,6 +1436,7 @@ describe('retryFailedFires', () => {
         {
           podRoundId: 'round-1',
           setCode: 'JTL',
+          organizerRoundNumber: 1,
           outcome: 'succeeded',
           count: 2,
           shareUrl: 'https://www.protectthepod.com/draft/share-1',
@@ -1567,6 +1574,7 @@ describe('retryFailedFires', () => {
         {
           podRoundId: 'round-1',
           setCode: 'JTL',
+          organizerRoundNumber: 1,
           outcome: 'gave-up',
           originGuildName: null,
           targets: [{ channelId: 'channel-1', messageId: 'msg-1' }],
@@ -1612,6 +1620,7 @@ describe('retryFailedFires', () => {
       {
         podRoundId: 'round-1',
         setCode: 'JTL',
+        organizerRoundNumber: 1,
         outcome: 'gave-up',
         originGuildName: null,
         targets: [],

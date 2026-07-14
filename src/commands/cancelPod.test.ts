@@ -38,6 +38,7 @@ describe('cancelPod', () => {
     const cancelActiveRound = stub(async (_organizerDiscordId: string) => ({
       podRoundId: 'round-1',
       setCode: 'JTL',
+      organizerRoundNumber: 1,
       originGuildName: null,
       targets: [
         { channelId: 'channel-1', messageId: 'msg-1' },
@@ -63,6 +64,7 @@ describe('cancelPod', () => {
     const cancelActiveRound = stub(async (_organizerDiscordId: string) => ({
       podRoundId: 'round-1',
       setCode: 'JTL',
+      organizerRoundNumber: 1,
       originGuildName: 'Sister Community',
       targets: [{ channelId: 'channel-1', messageId: 'msg-1' }],
     }))

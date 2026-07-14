@@ -34,6 +34,7 @@ export async function retryOverdueFailedFires(
       body = buildPodRoundMessage({
         podRoundId: round.podRoundId,
         setCode: round.setCode,
+        organizerRoundNumber: round.organizerRoundNumber,
         // A retry-succeeded round has already fired — threshold no longer
         // matters once shareUrl is set (see buildPodRoundMessage), but the
         // type still requires a value.
@@ -46,7 +47,7 @@ export async function retryOverdueFailedFires(
       })
     } else {
       gaveUp++
-      body = buildFireFailedPodMessage(round.setCode, round.originGuildName)
+      body = buildFireFailedPodMessage(round.setCode, round.organizerRoundNumber, round.originGuildName)
     }
 
     const outcomes = await Promise.allSettled(

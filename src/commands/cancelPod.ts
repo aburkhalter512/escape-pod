@@ -17,7 +17,7 @@ export const cancelPod: CommandHandler = async ({ interaction, backend, discordR
     return ephemeral("You don't have an active pod round to cancel.")
   }
 
-  const body = buildCancelledPodMessage(result.setCode, result.originGuildName)
+  const body = buildCancelledPodMessage(result.setCode, result.organizerRoundNumber, result.originGuildName)
   await Promise.allSettled(
     result.targets
       .filter((target) => target.messageId)

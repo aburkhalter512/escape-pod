@@ -632,6 +632,7 @@ describe('handleMessageComponent', () => {
           count: 5,
           threshold: 8,
           setCode: 'JTL',
+          organizerRoundNumber: 1,
           full: false,
           podCreated: false,
           signupDiscordIds: [],

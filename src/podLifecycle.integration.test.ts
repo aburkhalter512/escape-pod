@@ -219,6 +219,7 @@ describe('pod round lifecycle, end to end against real Postgres', () => {
     expect(channelId).toBe('channel-1')
     expect(messageId).toBe('message-1')
     expect(body.embeds![0].title).toMatch(/Expired/)
+    expect(body.embeds![0].title).toContain('#1')
 
     const rejected = await backend.recordSignup(podRoundId, 'player-2', 'Player2', 'guild-1', 'in')
     expect(rejected.ok).toBe(false)
@@ -250,6 +251,7 @@ describe('pod round lifecycle, end to end against real Postgres', () => {
     expect(editMessage.calls).toHaveLength(1)
     const [, , body] = editMessage.calls[0]
     expect(body.embeds![0].title).toMatch(/Starting!/)
+    expect(body.embeds![0].title).toContain('#1')
 
     const rejected = await backend.recordSignup(podRoundId, 'player-late', 'PlayerLate', 'guild-1', 'in')
     expect(rejected.ok).toBe(false)
@@ -293,6 +295,7 @@ describe('pod round lifecycle, end to end against real Postgres', () => {
     expect(editMessage.calls).toHaveLength(1)
     const [, , body] = editMessage.calls[0]
     expect(body.embeds![0].title).toMatch(/Starting!/)
+    expect(body.embeds![0].title).toContain('#1')
 
     // Now really POD_CREATED, not just THRESHOLD_REACHED — conclude
     // succeeds, which is only possible from POD_CREATED.
@@ -337,6 +340,7 @@ describe('pod round lifecycle, end to end against real Postgres', () => {
     expect(editMessage.calls).toHaveLength(1)
     const [, , body] = editMessage.calls[0]
     expect(body.embeds![0].title).toMatch(/Failed/)
+    expect(body.embeds![0].title).toContain('#1')
 
     // A later sweep tick must not re-notify for the same round.
     const secondSweep = await retryOverdueFailedFires(createIntegrationPodServiceDeps(prisma, ptp), discordRest)

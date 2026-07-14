@@ -56,6 +56,7 @@ export interface BackendClient {
       count: number
       threshold: number
       setCode: string
+      organizerRoundNumber: number
       full: boolean
       podCreated: boolean
       shareUrl?: string
@@ -71,6 +72,7 @@ export interface BackendClient {
   cancelActiveRound(organizerDiscordId: string): Promise<{
     podRoundId: string
     setCode: string
+    organizerRoundNumber: number
     originGuildName: string | null
     targets: Array<{ channelId: string; messageId: string | null }>
   } | null>
@@ -158,6 +160,7 @@ export class LocalBackendClient implements BackendClient {
       count: number
       threshold: number
       setCode: string
+      organizerRoundNumber: number
       full: boolean
       podCreated: boolean
       shareUrl?: string
@@ -183,6 +186,7 @@ export class LocalBackendClient implements BackendClient {
   cancelActiveRound(organizerDiscordId: string): Promise<{
     podRoundId: string
     setCode: string
+    organizerRoundNumber: number
     originGuildName: string | null
     targets: Array<{ channelId: string; messageId: string | null }>
   } | null> {

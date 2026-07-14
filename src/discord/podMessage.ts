@@ -17,6 +17,11 @@ const FIRE_FAILED_COLOR = 0x992d22 // Discord dark red — distinct from CANCELL
 export interface PodRoundMessageState {
   podRoundId: string
   setCode: string
+  /** This organizer's Nth round ever started (see
+   * PodRound.organizerRoundNumber) — shown in the title so a human can
+   * refer to a specific round unambiguously, e.g. when an organizer has
+   * more than one active round at once (GitHub issue #6). */
+  organizerRoundNumber: number
   /** The organizer's configured minimum — only relevant while still
    * COLLECTING (shown alongside the deadline, if any). Once shareUrl is
    * set the round has already fired, against POD_CAPACITY or `threshold`
@@ -100,7 +105,7 @@ export function buildPodRoundMessage(state: PodRoundMessageState): PodRoundMessa
     return {
       embeds: [
         {
-          title: `${state.setCode} Draft Pod — Starting!`,
+          title: `${state.setCode} Draft Pod #${state.organizerRoundNumber} — Starting!`,
           description: firedDescription,
           color: POD_FULL_COLOR,
         },
@@ -154,7 +159,7 @@ export function buildPodRoundMessage(state: PodRoundMessageState): PodRoundMessa
   return {
     embeds: [
       {
-        title: `${state.setCode} Draft Pod`,
+        title: `${state.setCode} Draft Pod #${state.organizerRoundNumber}`,
         description: collectingDescription,
         color: COLLECTING_COLOR,
       },
@@ -186,7 +191,11 @@ export function buildPodRoundMessage(state: PodRoundMessageState): PodRoundMessa
 // nothing left to click — an explicit empty components array, not an
 // omitted field, since Discord treats a missing components field on an
 // edit as "leave the existing components alone," not "remove them."
-export function buildCancelledPodMessage(setCode: string, originGuildName?: string | null): PodRoundMessageBody {
+export function buildCancelledPodMessage(
+  setCode: string,
+  organizerRoundNumber: number,
+  originGuildName?: string | null
+): PodRoundMessageBody {
   const description = ['The organizer cancelled this round.', organizerLine(originGuildName)]
     .filter((line): line is string => Boolean(line))
     .join('\n')
@@ -194,7 +203,7 @@ export function buildCancelledPodMessage(setCode: string, originGuildName?: stri
   return {
     embeds: [
       {
-        title: `${setCode} Draft Pod — Cancelled`,
+        title: `${setCode} Draft Pod #${organizerRoundNumber} — Cancelled`,
         description,
         color: CANCELLED_COLOR,
       },
@@ -208,7 +217,11 @@ export function buildCancelledPodMessage(setCode: string, originGuildName?: stri
 // deadline passed without reaching threshold. Same no-buttons shape as
 // buildCancelledPodMessage, but visually and textually distinct — this
 // wasn't the organizer giving up, it's just running out the clock.
-export function buildExpiredPodMessage(setCode: string, originGuildName?: string | null): PodRoundMessageBody {
+export function buildExpiredPodMessage(
+  setCode: string,
+  organizerRoundNumber: number,
+  originGuildName?: string | null
+): PodRoundMessageBody {
   const description = ['Not enough players joined before the deadline.', organizerLine(originGuildName)]
     .filter((line): line is string => Boolean(line))
     .join('\n')
@@ -216,7 +229,7 @@ export function buildExpiredPodMessage(setCode: string, originGuildName?: string
   return {
     embeds: [
       {
-        title: `${setCode} Draft Pod — Expired`,
+        title: `${setCode} Draft Pod #${organizerRoundNumber} — Expired`,
         description,
         color: EXPIRED_COLOR,
       },
@@ -231,7 +244,11 @@ export function buildExpiredPodMessage(setCode: string, originGuildName?: string
 // as buildCancelledPodMessage/buildExpiredPodMessage, but its own title,
 // copy, and color: this is the "the draft actually finished" terminal
 // state, distinct from a round that never got off the ground.
-export function buildConcludedPodMessage(setCode: string, originGuildName?: string | null): PodRoundMessageBody {
+export function buildConcludedPodMessage(
+  setCode: string,
+  organizerRoundNumber: number,
+  originGuildName?: string | null
+): PodRoundMessageBody {
   const description = ['This draft has concluded.', organizerLine(originGuildName)]
     .filter((line): line is string => Boolean(line))
     .join('\n')
@@ -239,7 +256,7 @@ export function buildConcludedPodMessage(setCode: string, originGuildName?: stri
   return {
     embeds: [
       {
-        title: `${setCode} Draft Pod — Concluded`,
+        title: `${setCode} Draft Pod #${organizerRoundNumber} — Concluded`,
         description,
         color: CONCLUDED_COLOR,
       },
@@ -258,7 +275,11 @@ export function buildConcludedPodMessage(setCode: string, originGuildName?: stri
 // auto-cancelled here (still THRESHOLD_REACHED under the hood, still
 // cancellable via /cancel-pod) — the copy says so explicitly since there
 // are no buttons left on this message to do it from.
-export function buildFireFailedPodMessage(setCode: string, originGuildName?: string | null): PodRoundMessageBody {
+export function buildFireFailedPodMessage(
+  setCode: string,
+  organizerRoundNumber: number,
+  originGuildName?: string | null
+): PodRoundMessageBody {
   const description = [
     'Something went wrong creating this draft pod after several attempts. Run `/cancel-pod` and try again.',
     organizerLine(originGuildName),
@@ -269,7 +290,7 @@ export function buildFireFailedPodMessage(setCode: string, originGuildName?: str
   return {
     embeds: [
       {
-        title: `${setCode} Draft Pod — Failed`,
+        title: `${setCode} Draft Pod #${organizerRoundNumber} — Failed`,
         description,
         color: FIRE_FAILED_COLOR,
       },

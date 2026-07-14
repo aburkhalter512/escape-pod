@@ -144,6 +144,7 @@ export interface RecordSignupResult {
   count: number
   threshold: number
   setCode: string
+  organizerRoundNumber: number
   full: boolean
   podCreated: boolean
   shareUrl?: string
@@ -413,6 +414,7 @@ export async function recordSignup(
     count,
     threshold: round.threshold,
     setCode: round.setCode,
+    organizerRoundNumber: round.organizerRoundNumber,
     full,
     podCreated,
     shareUrl,
@@ -452,6 +454,7 @@ export async function cancelPod(deps: PodServiceDeps, params: CancelPodParams): 
 export interface CancelActiveRoundResult {
   podRoundId: string
   setCode: string
+  organizerRoundNumber: number
   originGuildName: string | null
   targets: Array<{ channelId: string; messageId: string | null }>
 }
@@ -505,6 +508,7 @@ export async function cancelActiveRound(
   return {
     podRoundId: round.id,
     setCode: round.setCode,
+    organizerRoundNumber: round.organizerRoundNumber,
     originGuildName: round.originGuildName,
     targets: targetRows.map((t) => ({ channelId: t.channelId, messageId: t.messageId })),
   }
@@ -557,6 +561,7 @@ export async function concludePod(deps: PodServiceDeps, params: ConcludePodParam
 export interface ConcludeActiveRoundResult {
   podRoundId: string
   setCode: string
+  organizerRoundNumber: number
   originGuildName: string | null
   chatChannelId: string | null
   targets: Array<{ channelId: string; messageId: string | null }>
@@ -603,6 +608,7 @@ export async function concludeActiveRound(
   return ok({
     podRoundId: round.id,
     setCode: round.setCode,
+    organizerRoundNumber: round.organizerRoundNumber,
     originGuildName: round.originGuildName,
     chatChannelId: round.chatChannelId,
     targets: targetRows.map((t) => ({ channelId: t.channelId, messageId: t.messageId })),
@@ -615,6 +621,7 @@ export type ExpiredRoundInfo =
   | {
       podRoundId: string
       setCode: string
+      organizerRoundNumber: number
       outcome: 'expired'
       signupDiscordIds: string[]
       originGuildName: string | null
@@ -623,6 +630,7 @@ export type ExpiredRoundInfo =
   | {
       podRoundId: string
       setCode: string
+      organizerRoundNumber: number
       outcome: 'fired'
       count: number
       threshold: number
@@ -680,6 +688,7 @@ export async function expireOverdueRounds(deps: PodServiceDeps, onFiring?: OnFir
       results.push({
         podRoundId: round.id,
         setCode: round.setCode,
+        organizerRoundNumber: round.organizerRoundNumber,
         outcome: 'fired',
         count,
         threshold: round.threshold,
@@ -704,6 +713,7 @@ export async function expireOverdueRounds(deps: PodServiceDeps, onFiring?: OnFir
       podRoundId: round.id,
       signupDiscordIds,
       setCode: round.setCode,
+      organizerRoundNumber: round.organizerRoundNumber,
       outcome: 'expired',
       originGuildName: round.originGuildName,
       targets: targetRows.map((t) => ({ channelId: t.channelId, messageId: t.messageId })),
@@ -727,6 +737,7 @@ export type RetryFireResult =
   | {
       podRoundId: string
       setCode: string
+      organizerRoundNumber: number
       outcome: 'succeeded'
       count: number
       shareUrl: string
@@ -739,6 +750,7 @@ export type RetryFireResult =
   | {
       podRoundId: string
       setCode: string
+      organizerRoundNumber: number
       outcome: 'gave-up'
       originGuildName: string | null
       targets: RetryRoundTarget[]
@@ -815,6 +827,7 @@ export async function retryFailedFires(
       results.push({
         podRoundId: round.id,
         setCode: round.setCode,
+        organizerRoundNumber: round.organizerRoundNumber,
         outcome: 'succeeded',
         count,
         shareUrl: attempt.shareUrl,
@@ -841,6 +854,7 @@ export async function retryFailedFires(
     results.push({
       podRoundId: round.id,
       setCode: round.setCode,
+      organizerRoundNumber: round.organizerRoundNumber,
       outcome: 'gave-up',
       originGuildName: round.originGuildName,
       targets: targetRows.map((t) => ({ channelId: t.channelId, messageId: t.messageId })),

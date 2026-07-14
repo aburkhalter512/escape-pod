@@ -124,6 +124,7 @@ describe('pod-signup: component handler, end to end against real Postgres', () =
     expect(editOriginalInteractionResponse.calls).toHaveLength(1)
     const [, , followupBody] = editOriginalInteractionResponse.calls[0]
     expect(followupBody.embeds?.[0]?.description).toContain('1/8 confirmed')
+    expect(followupBody.embeds?.[0]?.title).toContain('#1')
 
     // ...and every *other* target guild's message is synced via a direct
     // edit — this cross-guild fan-out, previously awaited inline before

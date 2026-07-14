@@ -178,7 +178,7 @@ export async function handleMessageComponent(
     // returned below to buy the full 15-minute interaction-token window.
     const backgroundWork = (async () => {
       try {
-        const { podRoundId, targets } = await backend.startPod({
+        const { podRoundId, organizerRoundNumber, targets } = await backend.startPod({
           organizerDiscordId,
           setCode,
           threshold,
@@ -193,6 +193,7 @@ export async function handleMessageComponent(
             const body = buildPodRoundMessage({
               podRoundId,
               setCode,
+              organizerRoundNumber,
               threshold,
               count: 0,
               scheduledFor,
@@ -337,6 +338,7 @@ export async function handleMessageComponent(
         const body = buildPodRoundMessage({
           podRoundId,
           setCode: result.setCode,
+          organizerRoundNumber: result.organizerRoundNumber,
           threshold: result.threshold,
           count: result.count,
           shareUrl: result.shareUrl,

@@ -38,6 +38,7 @@ export async function expireOverduePodRounds(
       body = buildPodRoundMessage({
         podRoundId: round.podRoundId,
         setCode: round.setCode,
+        organizerRoundNumber: round.organizerRoundNumber,
         threshold: round.threshold,
         count: round.count,
         shareUrl: round.shareUrl,
@@ -47,7 +48,7 @@ export async function expireOverduePodRounds(
       })
     } else {
       expired++
-      body = buildExpiredPodMessage(round.setCode, round.originGuildName)
+      body = buildExpiredPodMessage(round.setCode, round.organizerRoundNumber, round.originGuildName)
     }
 
     const outcomes = await Promise.allSettled(

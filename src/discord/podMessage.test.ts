@@ -10,7 +10,8 @@ import {
 
 describe('buildPodRoundMessage', () => {
   it('shows the running count and signup buttons while still collecting', () => {
-    const body = buildPodRoundMessage({ podRoundId: 'round-1', setCode: 'JTL', threshold: 8, count: 5 })
+    const body = buildPodRoundMessage({ podRoundId: 'round-1', setCode: 'JTL',
+      organizerRoundNumber: 1, threshold: 8, count: 5 })
 
     expect(body.embeds[0].description).toContain('5/8 confirmed')
     expect(body.embeds[0].title).not.toContain('Full')
@@ -32,7 +33,8 @@ describe('buildPodRoundMessage', () => {
   })
 
   it('embeds the podRoundId into both button custom_ids so the click handler can recover it', () => {
-    const body = buildPodRoundMessage({ podRoundId: 'a-different-round', setCode: 'JTL', threshold: 8, count: 0 })
+    const body = buildPodRoundMessage({ podRoundId: 'a-different-round', setCode: 'JTL',
+      organizerRoundNumber: 1, threshold: 8, count: 0 })
     for (const button of body.components[0].components) {
       expect((button as { custom_id: string }).custom_id).toContain('a-different-round')
     }
@@ -42,6 +44,7 @@ describe('buildPodRoundMessage', () => {
     const body = buildPodRoundMessage({
       podRoundId: 'round-1',
       setCode: 'JTL',
+      organizerRoundNumber: 1,
       threshold: 8,
       count: 8,
       shareUrl: 'https://www.protectthepod.com/draft/share-1',
@@ -63,6 +66,7 @@ describe('buildPodRoundMessage', () => {
     const body = buildPodRoundMessage({
       podRoundId: 'round-1',
       setCode: 'JTL',
+      organizerRoundNumber: 1,
       threshold: 8,
       count: 8,
       shareUrl: 'https://www.protectthepod.com/draft/share-1',
@@ -77,7 +81,8 @@ describe('buildPodRoundMessage', () => {
   // Issue #2 (tasks/006): before this, a round with no deadline showed
   // *nothing* about when it would actually start — just the bare count.
   it('shows a "starts once full" baseline (not a bare count) when scheduledFor is absent', () => {
-    const body = buildPodRoundMessage({ podRoundId: 'round-1', setCode: 'JTL', threshold: 8, count: 5 })
+    const body = buildPodRoundMessage({ podRoundId: 'round-1', setCode: 'JTL',
+      organizerRoundNumber: 1, threshold: 8, count: 5 })
 
     expect(body.embeds[0].description).not.toContain('Fires automatically')
     expect(body.embeds[0].description).toContain('5/8 confirmed. Starts once the table is full.')
@@ -85,7 +90,8 @@ describe('buildPodRoundMessage', () => {
 
   it('appends a Discord timestamp countdown when scheduledFor is present', () => {
     const scheduledFor = new Date('2026-01-01T12:00:00Z')
-    const body = buildPodRoundMessage({ podRoundId: 'round-1', setCode: 'JTL', threshold: 8, count: 5, scheduledFor })
+    const body = buildPodRoundMessage({ podRoundId: 'round-1', setCode: 'JTL',
+      organizerRoundNumber: 1, threshold: 8, count: 5, scheduledFor })
 
     expect(body.embeds[0].description).toContain('Fires automatically')
     expect(body.embeds[0].description).toContain(`<t:${Math.floor(scheduledFor.getTime() / 1000)}:R>`)
@@ -95,6 +101,7 @@ describe('buildPodRoundMessage', () => {
     const body = buildPodRoundMessage({
       podRoundId: 'round-1',
       setCode: 'JTL',
+      organizerRoundNumber: 1,
       threshold: 8,
       count: 8,
       shareUrl: 'https://www.protectthepod.com/draft/share-1',
@@ -105,19 +112,22 @@ describe('buildPodRoundMessage', () => {
   })
 
   it("shows the origin guild's name as an Organizer line in the description when present", () => {
-    const body = buildPodRoundMessage({ podRoundId: 'round-1', setCode: 'JTL', threshold: 8, count: 5, originGuildName: 'Sister Community' })
+    const body = buildPodRoundMessage({ podRoundId: 'round-1', setCode: 'JTL',
+      organizerRoundNumber: 1, threshold: 8, count: 5, originGuildName: 'Sister Community' })
 
     expect(body.embeds[0].description).toContain('Organizer: Sister Community')
   })
 
   it('omits the Organizer line entirely when there is no origin guild name', () => {
-    const body = buildPodRoundMessage({ podRoundId: 'round-1', setCode: 'JTL', threshold: 8, count: 5 })
+    const body = buildPodRoundMessage({ podRoundId: 'round-1', setCode: 'JTL',
+      organizerRoundNumber: 1, threshold: 8, count: 5 })
 
     expect(body.embeds[0].description).not.toContain('Organizer:')
   })
 
   it('no longer sets a footer at all (moved into the description body)', () => {
-    const body = buildPodRoundMessage({ podRoundId: 'round-1', setCode: 'JTL', threshold: 8, count: 5, originGuildName: 'Sister Community' })
+    const body = buildPodRoundMessage({ podRoundId: 'round-1', setCode: 'JTL',
+      organizerRoundNumber: 1, threshold: 8, count: 5, originGuildName: 'Sister Community' })
 
     expect(body.embeds[0].footer).toBeUndefined()
   })
@@ -126,6 +136,7 @@ describe('buildPodRoundMessage', () => {
     const body = buildPodRoundMessage({
       podRoundId: 'round-1',
       setCode: 'JTL',
+      organizerRoundNumber: 1,
       threshold: 8,
       count: 8,
       shareUrl: 'https://www.protectthepod.com/draft/share-1',
@@ -139,6 +150,7 @@ describe('buildPodRoundMessage', () => {
     const body = buildPodRoundMessage({
       podRoundId: 'round-1',
       setCode: 'JTL',
+      organizerRoundNumber: 1,
       threshold: 8,
       count: 8,
       shareUrl: 'https://www.protectthepod.com/draft/share-1',
@@ -165,6 +177,7 @@ describe('buildPodRoundMessage', () => {
     const body = buildPodRoundMessage({
       podRoundId: 'round-1',
       setCode: 'JTL',
+      organizerRoundNumber: 1,
       threshold: 8,
       count: 8,
       shareUrl: 'https://www.protectthepod.com/draft/share-1',
@@ -179,6 +192,7 @@ describe('buildPodRoundMessage', () => {
     const body = buildPodRoundMessage({
       podRoundId: 'round-1',
       setCode: 'JTL',
+      organizerRoundNumber: 1,
       threshold: 8,
       count: 2,
       signupDiscordIds: ['p1', 'p2'],
@@ -191,6 +205,7 @@ describe('buildPodRoundMessage', () => {
     const body = buildPodRoundMessage({
       podRoundId: 'round-1',
       setCode: 'JTL',
+      organizerRoundNumber: 1,
       threshold: 8,
       count: 0,
       signupDiscordIds: [],
@@ -200,7 +215,8 @@ describe('buildPodRoundMessage', () => {
   })
 
   it('omits the Players line entirely when signupDiscordIds is undefined', () => {
-    const body = buildPodRoundMessage({ podRoundId: 'round-1', setCode: 'JTL', threshold: 8, count: 5 })
+    const body = buildPodRoundMessage({ podRoundId: 'round-1', setCode: 'JTL',
+      organizerRoundNumber: 1, threshold: 8, count: 5 })
 
     expect(body.embeds[0].description).not.toContain('Players:')
   })
@@ -209,6 +225,7 @@ describe('buildPodRoundMessage', () => {
     const body = buildPodRoundMessage({
       podRoundId: 'round-1',
       setCode: 'JTL',
+      organizerRoundNumber: 1,
       threshold: 8,
       count: 8,
       shareUrl: 'https://www.protectthepod.com/draft/share-1',
@@ -222,6 +239,7 @@ describe('buildPodRoundMessage', () => {
     const body = buildPodRoundMessage({
       podRoundId: 'round-1',
       setCode: 'JTL',
+      organizerRoundNumber: 1,
       threshold: 8,
       count: 8,
       shareUrl: 'https://www.protectthepod.com/draft/share-1',
@@ -234,6 +252,7 @@ describe('buildPodRoundMessage', () => {
     const body = buildPodRoundMessage({
       podRoundId: 'round-1',
       setCode: 'JTL',
+      organizerRoundNumber: 1,
       threshold: 8,
       count: 2,
       originGuildName: 'Sister Community',
@@ -254,7 +273,7 @@ describe('buildPodRoundMessage', () => {
 
 describe('buildCancelledPodMessage', () => {
   it('shows a cancelled title and no buttons', () => {
-    const body = buildCancelledPodMessage('JTL')
+    const body = buildCancelledPodMessage('JTL', 1)
 
     expect(body.embeds[0].title).toContain('Cancelled')
     expect(body.embeds[0].title).toContain('JTL')
@@ -262,25 +281,25 @@ describe('buildCancelledPodMessage', () => {
   })
 
   it("shows the origin guild's name as an Organizer line in the description when present", () => {
-    const body = buildCancelledPodMessage('JTL', 'Sister Community')
+    const body = buildCancelledPodMessage('JTL', 1, 'Sister Community')
 
     expect(body.embeds[0].description).toContain('Organizer: Sister Community')
   })
 
   it('omits the Organizer line when there is no origin guild name', () => {
-    const body = buildCancelledPodMessage('JTL')
+    const body = buildCancelledPodMessage('JTL', 1)
 
     expect(body.embeds[0].description).not.toContain('Organizer:')
   })
 
   it('no longer sets a footer at all (moved into the description body)', () => {
-    const body = buildCancelledPodMessage('JTL', 'Sister Community')
+    const body = buildCancelledPodMessage('JTL', 1, 'Sister Community')
 
     expect(body.embeds[0].footer).toBeUndefined()
   })
 
   it('never shows a Players line (cancelled messages do not take signupDiscordIds)', () => {
-    const body = buildCancelledPodMessage('JTL', 'Sister Community')
+    const body = buildCancelledPodMessage('JTL', 1, 'Sister Community')
 
     expect(body.embeds[0].description).not.toContain('Players:')
   })
@@ -288,7 +307,7 @@ describe('buildCancelledPodMessage', () => {
 
 describe('buildExpiredPodMessage', () => {
   it('shows an expired title, distinct copy from cancelled, and no buttons', () => {
-    const body = buildExpiredPodMessage('JTL')
+    const body = buildExpiredPodMessage('JTL', 1)
 
     expect(body.embeds[0].title).toContain('Expired')
     expect(body.embeds[0].title).toContain('JTL')
@@ -297,32 +316,32 @@ describe('buildExpiredPodMessage', () => {
   })
 
   it('uses a different color than the cancelled message', () => {
-    const expired = buildExpiredPodMessage('JTL')
-    const cancelled = buildCancelledPodMessage('JTL')
+    const expired = buildExpiredPodMessage('JTL', 1)
+    const cancelled = buildCancelledPodMessage('JTL', 1)
 
     expect(expired.embeds[0].color).not.toBe(cancelled.embeds[0].color)
   })
 
   it("shows the origin guild's name as an Organizer line in the description when present", () => {
-    const body = buildExpiredPodMessage('JTL', 'Sister Community')
+    const body = buildExpiredPodMessage('JTL', 1, 'Sister Community')
 
     expect(body.embeds[0].description).toContain('Organizer: Sister Community')
   })
 
   it('omits the Organizer line when there is no origin guild name', () => {
-    const body = buildExpiredPodMessage('JTL')
+    const body = buildExpiredPodMessage('JTL', 1)
 
     expect(body.embeds[0].description).not.toContain('Organizer:')
   })
 
   it('no longer sets a footer at all (moved into the description body)', () => {
-    const body = buildExpiredPodMessage('JTL', 'Sister Community')
+    const body = buildExpiredPodMessage('JTL', 1, 'Sister Community')
 
     expect(body.embeds[0].footer).toBeUndefined()
   })
 
   it('never shows a Players line (expired messages do not take signupDiscordIds)', () => {
-    const body = buildExpiredPodMessage('JTL', 'Sister Community')
+    const body = buildExpiredPodMessage('JTL', 1, 'Sister Community')
 
     expect(body.embeds[0].description).not.toContain('Players:')
   })
@@ -330,7 +349,7 @@ describe('buildExpiredPodMessage', () => {
 
 describe('buildConcludedPodMessage', () => {
   it('shows a concluded title, description, and no buttons', () => {
-    const body = buildConcludedPodMessage('JTL')
+    const body = buildConcludedPodMessage('JTL', 1)
 
     expect(body.embeds[0].title).toContain('Concluded')
     expect(body.embeds[0].title).toContain('JTL')
@@ -339,10 +358,11 @@ describe('buildConcludedPodMessage', () => {
   })
 
   it('uses a color distinct from cancelled, expired, and pod-full', () => {
-    const concluded = buildConcludedPodMessage('JTL')
-    const cancelled = buildCancelledPodMessage('JTL')
-    const expired = buildExpiredPodMessage('JTL')
-    const full = buildPodRoundMessage({ podRoundId: 'round-1', setCode: 'JTL', threshold: 8, count: 8, shareUrl: 'https://example.com' })
+    const concluded = buildConcludedPodMessage('JTL', 1)
+    const cancelled = buildCancelledPodMessage('JTL', 1)
+    const expired = buildExpiredPodMessage('JTL', 1)
+    const full = buildPodRoundMessage({ podRoundId: 'round-1', setCode: 'JTL',
+      organizerRoundNumber: 1, threshold: 8, count: 8, shareUrl: 'https://example.com' })
 
     expect(concluded.embeds[0].color).not.toBe(cancelled.embeds[0].color)
     expect(concluded.embeds[0].color).not.toBe(expired.embeds[0].color)
@@ -350,19 +370,19 @@ describe('buildConcludedPodMessage', () => {
   })
 
   it("shows the origin guild's name as an Organizer line in the description when present", () => {
-    const body = buildConcludedPodMessage('JTL', 'Sister Community')
+    const body = buildConcludedPodMessage('JTL', 1, 'Sister Community')
 
     expect(body.embeds[0].description).toContain('Organizer: Sister Community')
   })
 
   it('omits the Organizer line when there is no origin guild name', () => {
-    const body = buildConcludedPodMessage('JTL')
+    const body = buildConcludedPodMessage('JTL', 1)
 
     expect(body.embeds[0].description).not.toContain('Organizer:')
   })
 
   it('no longer sets a footer at all (moved into the description body)', () => {
-    const body = buildConcludedPodMessage('JTL', 'Sister Community')
+    const body = buildConcludedPodMessage('JTL', 1, 'Sister Community')
 
     expect(body.embeds[0].footer).toBeUndefined()
   })
@@ -370,7 +390,7 @@ describe('buildConcludedPodMessage', () => {
 
 describe('buildFireFailedPodMessage', () => {
   it('shows a failed title, actionable copy pointing at /cancel-pod, and no buttons', () => {
-    const body = buildFireFailedPodMessage('JTL')
+    const body = buildFireFailedPodMessage('JTL', 1)
 
     expect(body.embeds[0].title).toContain('Failed')
     expect(body.embeds[0].title).toContain('JTL')
@@ -379,11 +399,12 @@ describe('buildFireFailedPodMessage', () => {
   })
 
   it('uses a color distinct from cancelled, expired, concluded, and pod-full', () => {
-    const fireFailed = buildFireFailedPodMessage('JTL')
-    const cancelled = buildCancelledPodMessage('JTL')
-    const expired = buildExpiredPodMessage('JTL')
-    const concluded = buildConcludedPodMessage('JTL')
-    const full = buildPodRoundMessage({ podRoundId: 'round-1', setCode: 'JTL', threshold: 8, count: 8, shareUrl: 'https://example.com' })
+    const fireFailed = buildFireFailedPodMessage('JTL', 1)
+    const cancelled = buildCancelledPodMessage('JTL', 1)
+    const expired = buildExpiredPodMessage('JTL', 1)
+    const concluded = buildConcludedPodMessage('JTL', 1)
+    const full = buildPodRoundMessage({ podRoundId: 'round-1', setCode: 'JTL',
+      organizerRoundNumber: 1, threshold: 8, count: 8, shareUrl: 'https://example.com' })
 
     expect(fireFailed.embeds[0].color).not.toBe(cancelled.embeds[0].color)
     expect(fireFailed.embeds[0].color).not.toBe(expired.embeds[0].color)
@@ -392,25 +413,25 @@ describe('buildFireFailedPodMessage', () => {
   })
 
   it("shows the origin guild's name as an Organizer line in the description when present", () => {
-    const body = buildFireFailedPodMessage('JTL', 'Sister Community')
+    const body = buildFireFailedPodMessage('JTL', 1, 'Sister Community')
 
     expect(body.embeds[0].description).toContain('Organizer: Sister Community')
   })
 
   it('omits the Organizer line when there is no origin guild name', () => {
-    const body = buildFireFailedPodMessage('JTL')
+    const body = buildFireFailedPodMessage('JTL', 1)
 
     expect(body.embeds[0].description).not.toContain('Organizer:')
   })
 
   it('no longer sets a footer at all (moved into the description body)', () => {
-    const body = buildFireFailedPodMessage('JTL', 'Sister Community')
+    const body = buildFireFailedPodMessage('JTL', 1, 'Sister Community')
 
     expect(body.embeds[0].footer).toBeUndefined()
   })
 
   it('never shows a Players line (fire-failed messages do not take signupDiscordIds)', () => {
-    const body = buildFireFailedPodMessage('JTL', 'Sister Community')
+    const body = buildFireFailedPodMessage('JTL', 1, 'Sister Community')
 
     expect(body.embeds[0].description).not.toContain('Players:')
   })

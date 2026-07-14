@@ -23,7 +23,7 @@ export const concludePod: CommandHandler = async ({ interaction, backend, discor
     return ephemeral(result.error.message)
   }
 
-  const body = buildConcludedPodMessage(result.value.setCode, result.value.originGuildName)
+  const body = buildConcludedPodMessage(result.value.setCode, result.value.organizerRoundNumber, result.value.originGuildName)
   await Promise.allSettled(
     result.value.targets
       .filter((target) => target.messageId)
