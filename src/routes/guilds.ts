@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import * as guildsService from '../services/guilds.js'
 import type { GuildServiceDeps } from '../services/guilds.js'
+import * as organizersService from '../services/organizers.js'
 import { httpStatusForError } from '../services/errors.js'
 
 export type GuildRouteDeps = GuildServiceDeps
@@ -35,6 +36,14 @@ const allowGuildBodySchema = z.object({
   approvedBy: z.string().min(1),
 })
 type AllowGuildBody = z.infer<typeof allowGuildBodySchema>
+
+// Moved from routes/organizers.ts — eligibility is origin-guild-scoped
+// (see services/organizers.ts's listEligibleGuilds), not organizer-scoped,
+// so this belongs alongside the other guild-keyed routes.
+const eligibleGuildsParamsSchema = z.object({
+  originGuildId: z.string().min(1),
+})
+type EligibleGuildsParams = z.infer<typeof eligibleGuildsParamsSchema>
 
 export function registerGuildRoutes(app: FastifyInstance, deps: GuildRouteDeps): void {
   app.post<{ Body: SubscribeGuildBody }>(
@@ -73,6 +82,14 @@ export function registerGuildRoutes(app: FastifyInstance, deps: GuildRouteDeps):
     async (request, reply) => {
       await guildsService.allowGuild(deps, request.body)
       return reply.send({ ok: true })
+    }
+  )
+
+  app.get<{ Params: EligibleGuildsParams }>(
+    '/guilds/:originGuildId/eligible-guilds',
+    { schema: { params: eligibleGuildsParamsSchema } },
+    async (request) => {
+      return organizersService.listEligibleGuilds(deps, request.params.originGuildId)
     }
   )
 }

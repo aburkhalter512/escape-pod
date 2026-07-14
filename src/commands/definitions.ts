@@ -47,13 +47,13 @@ export const commandDefinitions: RESTPostAPIChatInputApplicationCommandsJSONBody
   },
   {
     name: 'allow-organizer',
-    description: 'Approve an organizer to post draft pod rounds into this server',
+    description: 'Deprecated — use /allow-guild instead to trust an entire origin server',
     type: ApplicationCommandType.ChatInput,
     default_member_permissions: PermissionFlagsBits.ManageGuild.toString(),
     options: [
       {
         name: 'organizer',
-        description: 'The organizer to approve',
+        description: 'Ignored — this command no longer grants access, see /allow-guild',
         type: ApplicationCommandOptionType.User,
         required: true,
       },

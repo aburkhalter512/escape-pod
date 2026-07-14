@@ -1,23 +1,19 @@
-import { ApplicationCommandOptionType } from 'discord-api-types/v10'
-import { ephemeral, getOption } from './helpers.js'
+import { ephemeral } from './helpers.js'
 import type { CommandHandler } from './types.js'
 
-// INTEGRATIONS.md §7.2 / §7.4 — guild admin approves a specific organizer
-// to post rounds into this server (only consulted when policy is `allowlist`).
-export const allowOrganizer: CommandHandler = async ({ interaction, backend }) => {
+// Deprecated — replaced by /allow-guild (commands/allowGuild.ts), which
+// trusts an entire origin server instead of approving organizers one at
+// a time. No longer writes anything (services/guilds.ts's allowOrganizer,
+// still reachable via BackendClient for the HTTP route, is left inert
+// rather than called from here) — just redirects.
+export const allowOrganizer: CommandHandler = async ({ interaction }) => {
   const guildId = interaction.guild_id
-  const invokerId = interaction.member?.user?.id
-
-  if (!guildId || !invokerId) {
+  if (!guildId) {
     return ephemeral('This command must be run in a server.')
   }
 
-  const organizerOption = getOption(interaction, 'organizer')
-  if (!organizerOption || organizerOption.type !== ApplicationCommandOptionType.User) {
-    return ephemeral('An organizer to approve is required.')
-  }
-
-  await backend.allowOrganizer(guildId, organizerOption.value, invokerId)
-
-  return ephemeral(`<@${organizerOption.value}> can now post draft pod rounds into this server.`)
+  return ephemeral(
+    '`/allow-organizer` is deprecated and no longer grants access — use `/allow-guild` to trust an ' +
+      'entire origin server instead of approving organizers one at a time.'
+  )
 }

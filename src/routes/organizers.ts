@@ -12,17 +12,6 @@ const linkOrganizerBodySchema = z.object({
 })
 type LinkOrganizerBody = z.infer<typeof linkOrganizerBodySchema>
 
-// Eligibility is origin-guild-scoped, not organizer-scoped — see
-// services/organizers.ts's listEligibleGuilds. The path itself is still
-// under /organizers for now (a full move to routes/guilds.ts, where it
-// semantically belongs, is a follow-up); this rename only fixes the
-// param's misleading name, since it was silently being fed to a
-// function that now treats it as a guild id, not an organizer id.
-const eligibleGuildsParamsSchema = z.object({
-  originGuildId: z.string().min(1),
-})
-type EligibleGuildsParams = z.infer<typeof eligibleGuildsParamsSchema>
-
 export function registerOrganizerRoutes(app: FastifyInstance, deps: OrganizerRouteDeps): void {
   app.post<{ Body: LinkOrganizerBody }>(
     '/organizers/link',
@@ -33,14 +22,6 @@ export function registerOrganizerRoutes(app: FastifyInstance, deps: OrganizerRou
         return reply.code(httpStatusForError(result.error)).send({ error: result.error.message })
       }
       return reply.send(result.value)
-    }
-  )
-
-  app.get<{ Params: EligibleGuildsParams }>(
-    '/organizers/:originGuildId/eligible-guilds',
-    { schema: { params: eligibleGuildsParamsSchema } },
-    async (request) => {
-      return organizersService.listEligibleGuilds(deps, request.params.originGuildId)
     }
   )
 }

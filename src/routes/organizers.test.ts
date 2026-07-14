@@ -14,8 +14,6 @@ const TOKEN_KEY = '00'.repeat(32)
 
 type OrganizerUpsertArgs = Parameters<AppPrismaClient['organizer']['upsert']>[0]
 type OrganizerRow = Awaited<ReturnType<AppPrismaClient['organizer']['upsert']>>
-type GuildSubscriptionFindManyArgs = Parameters<AppPrismaClient['guildSubscription']['findMany']>[0]
-type GuildSubscriptionRow = Awaited<ReturnType<AppPrismaClient['guildSubscription']['findMany']>>[number]
 
 function fakeOrganizerRow(overrides: Partial<OrganizerRow> = {}): OrganizerRow {
   return {
@@ -25,18 +23,6 @@ function fakeOrganizerRow(overrides: Partial<OrganizerRow> = {}): OrganizerRow {
     expiresAt: new Date(),
     linkedAt: new Date(),
     nextRoundNumber: 1,
-    ...overrides,
-  }
-}
-
-function fakeGuildSubscriptionRow(overrides: Partial<GuildSubscriptionRow> = {}): GuildSubscriptionRow {
-  return {
-    guildId: 'g1',
-    installedByDiscordId: 'admin-1',
-    broadcastChannelId: 'channel-1',
-    postingPolicy: 'ALLOWLIST',
-    unsubscribedAt: null,
-    installedAt: new Date(),
     ...overrides,
   }
 }
@@ -155,62 +141,5 @@ describe('POST /organizers/link', () => {
 
     expect(response.statusCode).toBe(400)
     expect(validateToken.calls).toHaveLength(0)
-  })
-})
-
-describe('GET /organizers/:originGuildId/eligible-guilds', () => {
-  // Renamed from :discordId — see services/organizers.ts's
-  // listEligibleGuilds, now origin-guild-scoped, not organizer-scoped.
-  // Still under /organizers for now; a full move to routes/guilds.ts,
-  // where it semantically belongs, is a follow-up.
-  it('queries for OPEN-policy guilds plus guilds that trust this origin guild', async () => {
-    const expectedArgs: GuildSubscriptionFindManyArgs = {
-      where: {
-        unsubscribedAt: null,
-        OR: [{ postingPolicy: 'OPEN' }, { originAllowlist: { some: { allowedOriginGuildId: 'user-1' } } }],
-      },
-    }
-    const findMany = stub(async (args: GuildSubscriptionFindManyArgs) => {
-      if (!deepEqual(args, expectedArgs)) throw new Error(`unexpected findMany args: ${JSON.stringify(args)}`)
-      return []
-    })
-    const count = stub(async () => 0)
-    const { app } = buildApp({ prisma: { guildSubscription: { findMany, count } } })
-
-    const response = await app.inject({ method: 'GET', url: '/organizers/user-1/eligible-guilds' })
-
-    expect(response.statusCode).toBe(200)
-  })
-
-  it('maps results to {guildId} — no name; the caller resolves that live via Discord, see commands/startPod.ts', async () => {
-    const findMany = stub(async (_args: GuildSubscriptionFindManyArgs) => [
-      fakeGuildSubscriptionRow({ guildId: 'g1' }),
-      fakeGuildSubscriptionRow({ guildId: 'g2' }),
-    ])
-    const { app } = buildApp({ prisma: { guildSubscription: { findMany } } })
-
-    const response = await app.inject({ method: 'GET', url: '/organizers/user-1/eligible-guilds' })
-
-    expect(response.json()).toEqual({ guilds: [{ guildId: 'g1' }, { guildId: 'g2' }], anySubscribed: true })
-  })
-
-  it('reports anySubscribed: false when no guild anywhere is subscribed', async () => {
-    const findMany = stub(async (_args: GuildSubscriptionFindManyArgs) => [])
-    const count = stub(async () => 0)
-    const { app } = buildApp({ prisma: { guildSubscription: { findMany, count } } })
-
-    const response = await app.inject({ method: 'GET', url: '/organizers/user-1/eligible-guilds' })
-
-    expect(response.json()).toEqual({ guilds: [], anySubscribed: false })
-  })
-
-  it('reports anySubscribed: true when guilds are subscribed but none are eligible for this organizer', async () => {
-    const findMany = stub(async (_args: GuildSubscriptionFindManyArgs) => [])
-    const count = stub(async () => 2)
-    const { app } = buildApp({ prisma: { guildSubscription: { findMany, count } } })
-
-    const response = await app.inject({ method: 'GET', url: '/organizers/user-1/eligible-guilds' })
-
-    expect(response.json()).toEqual({ guilds: [], anySubscribed: true })
   })
 })

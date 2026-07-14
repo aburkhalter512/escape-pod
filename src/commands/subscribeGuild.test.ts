@@ -65,8 +65,8 @@ describe('subscribeGuild', () => {
 
     expect(subscribeGuildMock.calls).toHaveLength(1)
     expect(responseData(response).content).toMatch(/open/i)
-    // Open policy has no organizer allow-list to manage, unlike ALLOWLIST.
-    expect(responseData(response).content).not.toMatch(/allow-organizer/i)
+    // Open policy has no origin-guild allow-list to manage, unlike ALLOWLIST.
+    expect(responseData(response).content).not.toMatch(/allow-guild/i)
   })
 
   it('shows current settings without claiming anything changed when no options are given', async () => {

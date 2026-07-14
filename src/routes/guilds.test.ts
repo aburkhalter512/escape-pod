@@ -9,6 +9,7 @@ import { registerGuildRoutes } from './guilds.js'
 
 type GuildSubscriptionCreateArgs = Parameters<AppPrismaClient['guildSubscription']['create']>[0]
 type GuildSubscriptionUpdateArgs = Parameters<AppPrismaClient['guildSubscription']['update']>[0]
+type GuildSubscriptionFindManyArgs = Parameters<AppPrismaClient['guildSubscription']['findMany']>[0]
 type GuildSubscriptionRow = Awaited<ReturnType<AppPrismaClient['guildSubscription']['create']>>
 type AllowlistUpsertArgs = Parameters<AppPrismaClient['guildOrganizerAllowlist']['upsert']>[0]
 type AllowlistRow = Awaited<ReturnType<AppPrismaClient['guildOrganizerAllowlist']['upsert']>>
@@ -332,5 +333,62 @@ describe('POST /guilds/allow-guild', () => {
 
     expect(response.statusCode).toBe(400)
     expect(upsert.calls).toHaveLength(0)
+  })
+})
+
+describe('GET /guilds/:originGuildId/eligible-guilds', () => {
+  // Moved from routes/organizers.ts — eligibility is origin-guild-scoped
+  // (see services/organizers.ts's listEligibleGuilds), not
+  // organizer-scoped, so this belongs alongside the other guild-keyed
+  // routes.
+  it('queries for OPEN-policy guilds plus guilds that trust this origin guild', async () => {
+    const expectedArgs: GuildSubscriptionFindManyArgs = {
+      where: {
+        unsubscribedAt: null,
+        OR: [{ postingPolicy: 'OPEN' }, { originAllowlist: { some: { allowedOriginGuildId: 'origin-guild-1' } } }],
+      },
+    }
+    const findMany = stub(async (args: GuildSubscriptionFindManyArgs) => {
+      if (!deepEqual(args, expectedArgs)) throw new Error(`unexpected findMany args: ${JSON.stringify(args)}`)
+      return []
+    })
+    const count = stub(async () => 0)
+    const { app } = buildApp({ prisma: { guildSubscription: { findMany, count } } })
+
+    const response = await app.inject({ method: 'GET', url: '/guilds/origin-guild-1/eligible-guilds' })
+
+    expect(response.statusCode).toBe(200)
+  })
+
+  it('maps results to {guildId} — no name; the caller resolves that live via Discord, see commands/startPod.ts', async () => {
+    const findMany = stub(async (_args: GuildSubscriptionFindManyArgs) => [
+      fakeGuildSubscriptionRow({ guildId: 'g1' }),
+      fakeGuildSubscriptionRow({ guildId: 'g2' }),
+    ])
+    const { app } = buildApp({ prisma: { guildSubscription: { findMany } } })
+
+    const response = await app.inject({ method: 'GET', url: '/guilds/origin-guild-1/eligible-guilds' })
+
+    expect(response.json()).toEqual({ guilds: [{ guildId: 'g1' }, { guildId: 'g2' }], anySubscribed: true })
+  })
+
+  it('reports anySubscribed: false when no guild anywhere is subscribed', async () => {
+    const findMany = stub(async (_args: GuildSubscriptionFindManyArgs) => [])
+    const count = stub(async () => 0)
+    const { app } = buildApp({ prisma: { guildSubscription: { findMany, count } } })
+
+    const response = await app.inject({ method: 'GET', url: '/guilds/origin-guild-1/eligible-guilds' })
+
+    expect(response.json()).toEqual({ guilds: [], anySubscribed: false })
+  })
+
+  it('reports anySubscribed: true when guilds are subscribed but none trust this origin guild', async () => {
+    const findMany = stub(async (_args: GuildSubscriptionFindManyArgs) => [])
+    const count = stub(async () => 2)
+    const { app } = buildApp({ prisma: { guildSubscription: { findMany, count } } })
+
+    const response = await app.inject({ method: 'GET', url: '/guilds/origin-guild-1/eligible-guilds' })
+
+    expect(response.json()).toEqual({ guilds: [], anySubscribed: true })
   })
 })

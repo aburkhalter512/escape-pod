@@ -50,6 +50,6 @@ export const subscribeGuild: CommandHandler = async ({ interaction, backend }) =
   return ephemeral(
     (changedSomething ? 'Updated. ' : 'Current settings — ') +
       summary +
-      (value.postingPolicy === 'ALLOWLIST' ? ' Use `/allow-organizer` to approve organizers.' : '')
+      (value.postingPolicy === 'ALLOWLIST' ? ' Use `/allow-guild` to trust an origin server\'s organizers.' : '')
   )
 }

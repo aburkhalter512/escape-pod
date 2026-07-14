@@ -80,7 +80,7 @@ export interface ListEligibleGuildsResult {
 // The caller (startPod.ts) resolves real, current names live via
 // discordRest.getGuild() instead.
 export async function listEligibleGuilds(
-  deps: OrganizerServiceDeps,
+  deps: Pick<OrganizerServiceDeps, 'prisma'>,
   originGuildId: string
 ): Promise<ListEligibleGuildsResult> {
   const eligible = await deps.prisma.guildSubscription.findMany({
