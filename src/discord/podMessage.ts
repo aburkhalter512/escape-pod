@@ -131,9 +131,17 @@ export function buildPodRoundMessage(state: PodRoundMessageState): PodRoundMessa
     }
   }
 
+  // Issue #2 (tasks/006): previously this was just empty when no deadline
+  // was set, leaving "when does this actually start" unanswered for the
+  // (likely common) no-deadline case. `threshold` is only ever functionally
+  // consulted at the deadline sweep (services/pods.ts's
+  // expireOverdueRounds) — a round with no deadline always fires at a full
+  // table regardless of what threshold was configured to, so showing the
+  // minimum unconditionally here would be misleading; "starts once full" is
+  // the accurate baseline for that case instead.
   const deadlineNote = state.scheduledFor
     ? ` Fires automatically <t:${Math.floor(state.scheduledFor.getTime() / 1000)}:R> if at least ${state.threshold} have joined, otherwise cancels.`
-    : ''
+    : ' Starts once the table is full.'
 
   const collectingDescription = [
     `${state.count}/${POD_CAPACITY} confirmed.${deadlineNote}`,

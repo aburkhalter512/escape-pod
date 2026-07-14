@@ -74,10 +74,13 @@ describe('buildPodRoundMessage', () => {
     expect(customIds).toHaveLength(0)
   })
 
-  it('mentions no deadline when scheduledFor is absent', () => {
+  // Issue #2 (tasks/006): before this, a round with no deadline showed
+  // *nothing* about when it would actually start — just the bare count.
+  it('shows a "starts once full" baseline (not a bare count) when scheduledFor is absent', () => {
     const body = buildPodRoundMessage({ podRoundId: 'round-1', setCode: 'JTL', threshold: 8, count: 5 })
 
     expect(body.embeds[0].description).not.toContain('Fires automatically')
+    expect(body.embeds[0].description).toContain('5/8 confirmed. Starts once the table is full.')
   })
 
   it('appends a Discord timestamp countdown when scheduledFor is present', () => {
@@ -240,7 +243,7 @@ describe('buildPodRoundMessage', () => {
     const description = body.embeds[0].description ?? ''
     const lines = description.split('\n')
     expect(lines).toEqual([
-      '2/8 confirmed.',
+      '2/8 confirmed. Starts once the table is full.',
       'Organizer: Sister Community',
       'Players:',
       '- <@p1>',
