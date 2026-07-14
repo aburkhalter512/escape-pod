@@ -77,6 +77,12 @@ export const commandDefinitions: RESTPostAPIChatInputApplicationCommandsJSONBody
     ],
   },
   {
+    name: 'request-trust',
+    description: 'Get the /allow-guild command to send another server, so they trust organizers from here',
+    type: ApplicationCommandType.ChatInput,
+    default_member_permissions: PermissionFlagsBits.ManageGuild.toString(),
+  },
+  {
     name: 'start-pod',
     description: 'Start a new draft pod RSVP round across your eligible servers',
     type: ApplicationCommandType.ChatInput,
