@@ -17,6 +17,7 @@ export function createFakeBackendClient(overrides: Partial<BackendClient> = {}):
     cancelPod: unimplemented('cancelPod'),
     cancelActiveRound: unimplemented('cancelActiveRound'),
     concludeActiveRound: unimplemented('concludeActiveRound'),
+    listActiveRounds: unimplemented('listActiveRounds'),
     ...overrides,
   }
 }

@@ -10,7 +10,7 @@ import type { PostingPolicy } from '@prisma/client'
 import type { AppPrismaClient } from './prismaClient.js'
 import type { PtpClient } from './ptp/client.js'
 import type { Logger, Result } from './services/errors.js'
-import type { ConcludeActiveRoundResult, OnFiringHook } from './services/pods.js'
+import type { ActiveRoundSummary, ConcludeActiveRoundResult, OnFiringHook } from './services/pods.js'
 import * as podsService from './services/pods.js'
 import * as organizersService from './services/organizers.js'
 import * as guildsService from './services/guilds.js'
@@ -69,14 +69,19 @@ export interface BackendClient {
     }>
   >
   cancelPod(podRoundId: string, requestedBy: string): Promise<Result<void>>
-  cancelActiveRound(organizerDiscordId: string): Promise<{
+  cancelActiveRound(organizerDiscordId: string, organizerRoundNumber?: number): Promise<{
     podRoundId: string
     setCode: string
     organizerRoundNumber: number
     originGuildName: string | null
     targets: Array<{ channelId: string; messageId: string | null }>
   } | null>
-  concludeActiveRound(organizerDiscordId: string): Promise<Result<ConcludeActiveRoundResult>>
+  concludeActiveRound(organizerDiscordId: string, organizerRoundNumber?: number): Promise<Result<ConcludeActiveRoundResult>>
+  // Read-side counterpart to the two methods above — see
+  // services/pods.ts's listActiveRoundsForOrganizer for the full
+  // rationale (autocomplete choices + ambiguity detection when
+  // organizerRoundNumber is omitted from a cancel/conclude call).
+  listActiveRounds(organizerDiscordId: string, kind: 'cancellable' | 'concludable'): Promise<ActiveRoundSummary[]>
 }
 
 export interface LocalBackendClientDeps {
@@ -181,22 +186,31 @@ export class LocalBackendClient implements BackendClient {
   }
 
   // §7.5 step 5, /cancel-pod's actual entry point: finds and cancels the
-  // organizer's own most-recent active round (the command takes no
-  // arguments, so there's no podRoundId to hand cancelPod above directly).
-  cancelActiveRound(organizerDiscordId: string): Promise<{
+  // organizer's active round — a specific one when organizerRoundNumber
+  // is given (GitHub issue #6), otherwise the most-recent-round fallback
+  // (see services/pods.ts's cancelActiveRound for the full rationale).
+  cancelActiveRound(organizerDiscordId: string, organizerRoundNumber?: number): Promise<{
     podRoundId: string
     setCode: string
     organizerRoundNumber: number
     originGuildName: string | null
     targets: Array<{ channelId: string; messageId: string | null }>
   } | null> {
-    return podsService.cancelActiveRound(this.deps, organizerDiscordId)
+    return podsService.cancelActiveRound(this.deps, organizerDiscordId, organizerRoundNumber)
   }
 
-  // tasks/010, /conclude-pod's actual entry point: finds and concludes the
-  // organizer's own most-recent round (POD_CREATED -> CONCLUDED), same
-  // no-argument shape as cancelActiveRound above.
-  concludeActiveRound(organizerDiscordId: string): Promise<Result<ConcludeActiveRoundResult>> {
-    return podsService.concludeActiveRound(this.deps, organizerDiscordId)
+  // tasks/010, /conclude-pod's actual entry point: finds and concludes
+  // the organizer's round (POD_CREATED -> CONCLUDED) — a specific one
+  // when organizerRoundNumber is given, otherwise the same
+  // most-recent-round fallback as cancelActiveRound above.
+  concludeActiveRound(organizerDiscordId: string, organizerRoundNumber?: number): Promise<Result<ConcludeActiveRoundResult>> {
+    return podsService.concludeActiveRound(this.deps, organizerDiscordId, organizerRoundNumber)
+  }
+
+  // Read-side counterpart used by /cancel-pod's and /conclude-pod's
+  // ambiguity handling and by the `round` option's autocomplete handler
+  // — see services/pods.ts's listActiveRoundsForOrganizer.
+  listActiveRounds(organizerDiscordId: string, kind: 'cancellable' | 'concludable'): Promise<ActiveRoundSummary[]> {
+    return podsService.listActiveRoundsForOrganizer(this.deps, organizerDiscordId, kind)
   }
 }

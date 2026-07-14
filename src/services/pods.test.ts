@@ -17,6 +17,7 @@ import {
   expireOverdueRounds,
   retryFailedFires,
   startPod,
+  listActiveRoundsForOrganizer,
   type PodServiceDeps,
   type OnFiringHook,
   type OnRetrySuccessHook,
@@ -94,6 +95,19 @@ function stubPodRoundFindMany<Result>(impl: () => Promise<Result[]>) {
     _args: Prisma.SelectSubset<T, Prisma.PodRoundFindManyArgs>
   ): Promise<Prisma.PodRoundGetPayload<T>[]> {
     return impl() as unknown as Promise<Prisma.PodRoundGetPayload<T>[]>
+  }
+  return findMany
+}
+
+// Same generic-satisfying trick as stubPodRoundFindMany above, but
+// forwards the real args through to impl — needed when a test wants to
+// assert on the exact where/orderBy shape a call site builds (see
+// listActiveRoundsForOrganizer's tests), not just control the return value.
+function stubPodRoundFindManyWithArgs<Result>(impl: (args: PodRoundFindManyArgs) => Promise<Result[]>) {
+  function findMany<T extends Prisma.PodRoundFindManyArgs>(
+    args: Prisma.SelectSubset<T, Prisma.PodRoundFindManyArgs>
+  ): Promise<Prisma.PodRoundGetPayload<T>[]> {
+    return impl(args as PodRoundFindManyArgs) as unknown as Promise<Prisma.PodRoundGetPayload<T>[]>
   }
   return findMany
 }
@@ -719,6 +733,29 @@ describe('cancelActiveRound', () => {
     expect(findFirst.calls).toHaveLength(1)
   })
 
+  // GitHub issue #6 — when organizerRoundNumber is given, resolves that
+  // exact round (via the unique constraint) instead of guessing at "most
+  // recent," so an organizer can cancel an older round even while a
+  // newer one is also active.
+  it('resolves the exact round by organizerRoundNumber when given, instead of most-recent', async () => {
+    const findFirst = stub(async (args: unknown) => {
+      const expected = { where: { organizerDiscordId: 'organizer-1', organizerRoundNumber: 2 } }
+      if (!deepEqual(args, expected)) throw new Error(`unexpected findFirst args: ${JSON.stringify(args)}`)
+      return fakePodRoundRow({ id: 'round-2', organizerDiscordId: 'organizer-1', organizerRoundNumber: 2 })
+    })
+    const findUnique = stubPodRoundFindUnique(async () =>
+      fakePodRoundRow({ id: 'round-2', organizerDiscordId: 'organizer-1', organizerRoundNumber: 2 })
+    )
+    const update = stub(async () => fakePodRoundRow())
+    const findMany = stub(async () => [])
+    const deps = buildDeps({ podRound: { findFirst, findUnique, update }, podRoundTarget: { findMany } })
+
+    const result = await cancelActiveRound(deps, 'organizer-1', 2)
+
+    expect(findFirst.calls).toHaveLength(1)
+    expect(result?.podRoundId).toBe('round-2')
+  })
+
   it('returns null (does not reach back to an older round) when the most recent round already fired', async () => {
     // Regression: the query used to filter to cancellable statuses
     // first, so it would silently skip a more recent already-fired round
@@ -872,6 +909,25 @@ describe('concludeActiveRound', () => {
     expect(findFirst.calls).toHaveLength(1)
   })
 
+  it('resolves the exact round by organizerRoundNumber when given, instead of most-recent', async () => {
+    const findFirst = stub(async (args: unknown) => {
+      const expected = { where: { organizerDiscordId: 'organizer-1', organizerRoundNumber: 2 } }
+      if (!deepEqual(args, expected)) throw new Error(`unexpected findFirst args: ${JSON.stringify(args)}`)
+      return fakePodRoundRow({ id: 'round-2', organizerDiscordId: 'organizer-1', organizerRoundNumber: 2, status: 'POD_CREATED' })
+    })
+    const findUnique = stubPodRoundFindUnique(async () =>
+      fakePodRoundRow({ id: 'round-2', organizerDiscordId: 'organizer-1', organizerRoundNumber: 2, status: 'POD_CREATED' })
+    )
+    const update = stub(async () => fakePodRoundRow({ status: 'CONCLUDED' }))
+    const findMany = stub(async () => [])
+    const deps = buildDeps({ podRound: { findFirst, findUnique, update }, podRoundTarget: { findMany } })
+
+    const result = await concludeActiveRound(deps, 'organizer-1', 2)
+
+    expect(findFirst.calls).toHaveLength(1)
+    expect(result.ok && result.value.podRoundId).toBe('round-2')
+  })
+
   it('does not reach back to an older round when the most recent round is already CANCELLED', async () => {
     // Regression guard mirroring cancelActiveRound's own: filtering the
     // WHERE clause to concludable statuses would silently skip a more
@@ -953,6 +1009,56 @@ describe('concludeActiveRound', () => {
 
     expect(result.ok).toBe(true)
     expect(result.ok && result.value.chatChannelId).toBeNull()
+  })
+})
+
+describe('listActiveRoundsForOrganizer', () => {
+  it("queries for COLLECTING/THRESHOLD_REACHED rounds, scoped to this organizer, when kind is 'cancellable'", async () => {
+    const findMany = stub(async (args: PodRoundFindManyArgs) => {
+      const expected: PodRoundFindManyArgs = {
+        where: { organizerDiscordId: 'organizer-1', status: { in: ['COLLECTING', 'THRESHOLD_REACHED'] } },
+        orderBy: { organizerRoundNumber: 'asc' },
+      }
+      if (!deepEqual(args, expected)) throw new Error(`unexpected findMany args: ${JSON.stringify(args)}`)
+      return [
+        fakePodRoundRow({ id: 'round-1', organizerRoundNumber: 1, setCode: 'JTL' }),
+        fakePodRoundRow({ id: 'round-3', organizerRoundNumber: 3, setCode: 'SOR' }),
+      ]
+    })
+    const deps = buildDeps({ podRound: { findMany: stubPodRoundFindManyWithArgs(findMany) } })
+
+    const result = await listActiveRoundsForOrganizer(deps, 'organizer-1', 'cancellable')
+
+    expect(findMany.calls).toHaveLength(1)
+    expect(result).toEqual([
+      { podRoundId: 'round-1', setCode: 'JTL', organizerRoundNumber: 1 },
+      { podRoundId: 'round-3', setCode: 'SOR', organizerRoundNumber: 3 },
+    ])
+  })
+
+  it("queries for only POD_CREATED rounds when kind is 'concludable'", async () => {
+    const findMany = stub(async (args: PodRoundFindManyArgs) => {
+      const expected: PodRoundFindManyArgs = {
+        where: { organizerDiscordId: 'organizer-1', status: { in: ['POD_CREATED'] } },
+        orderBy: { organizerRoundNumber: 'asc' },
+      }
+      if (!deepEqual(args, expected)) throw new Error(`unexpected findMany args: ${JSON.stringify(args)}`)
+      return [fakePodRoundRow({ id: 'round-2', organizerRoundNumber: 2, setCode: 'TWI', status: 'POD_CREATED' })]
+    })
+    const deps = buildDeps({ podRound: { findMany: stubPodRoundFindManyWithArgs(findMany) } })
+
+    const result = await listActiveRoundsForOrganizer(deps, 'organizer-1', 'concludable')
+
+    expect(result).toEqual([{ podRoundId: 'round-2', setCode: 'TWI', organizerRoundNumber: 2 }])
+  })
+
+  it('returns an empty array when the organizer has no matching rounds', async () => {
+    const findMany = stub(async (_args: unknown) => [])
+    const deps = buildDeps({ podRound: { findMany } })
+
+    const result = await listActiveRoundsForOrganizer(deps, 'organizer-1', 'cancellable')
+
+    expect(result).toEqual([])
   })
 })
 

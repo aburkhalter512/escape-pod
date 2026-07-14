@@ -354,4 +354,73 @@ describe('pod round lifecycle, end to end against real Postgres', () => {
     const cancelResult = await backend.cancelActiveRound('organizer-1')
     expect(cancelResult?.podRoundId).toBe(podRoundId)
   })
+
+  // GitHub issue #6 (Phase 3): proves cancelActiveRound's/concludeActiveRound's
+  // organizerRoundNumber parameter really does an exact lookup, not a
+  // "most recent" fallback in disguise — targets the *older* of two
+  // simultaneous rounds while the newer one is untouched.
+  it('cancels an exact round by organizerRoundNumber even when a newer round exists and is more recent', async () => {
+    const backend = createIntegrationBackend(prisma, succeedingPtp())
+    await linkFakeOrganizer(backend, 'organizer-1', 'OrganizerOne')
+    await backend.subscribeGuild('guild-1', 'organizer-1', { channelId: 'channel-1' })
+
+    const round1 = await backend.startPod({
+      organizerDiscordId: 'organizer-1',
+      setCode: 'JTL',
+      threshold: POD_CAPACITY,
+      guildIds: ['guild-1'],
+    })
+    const round2 = await backend.startPod({
+      organizerDiscordId: 'organizer-1',
+      setCode: 'SOR',
+      threshold: POD_CAPACITY,
+      guildIds: ['guild-1'],
+    })
+    expect(round1.organizerRoundNumber).toBe(1)
+    expect(round2.organizerRoundNumber).toBe(2)
+
+    const cancelResult = await backend.cancelActiveRound('organizer-1', 1)
+    expect(cancelResult?.podRoundId).toBe(round1.podRoundId)
+
+    // Round #1 is now gone — a second attempt finds nothing.
+    expect(await backend.cancelActiveRound('organizer-1', 1)).toBeNull()
+
+    // Round #2 was untouched by cancelling #1 — still cancellable.
+    const cancelRound2 = await backend.cancelActiveRound('organizer-1', 2)
+    expect(cancelRound2?.podRoundId).toBe(round2.podRoundId)
+  })
+
+  it('concludes an exact round by organizerRoundNumber even when a newer round exists and is more recent', async () => {
+    const backend = createIntegrationBackend(prisma, succeedingPtp())
+    await linkFakeOrganizer(backend, 'organizer-1', 'OrganizerOne')
+    await backend.subscribeGuild('guild-1', 'organizer-1', { channelId: 'channel-1' })
+
+    const round1 = await backend.startPod({
+      organizerDiscordId: 'organizer-1',
+      setCode: 'JTL',
+      threshold: POD_CAPACITY,
+      guildIds: ['guild-1'],
+    })
+    for (let i = 0; i < POD_CAPACITY; i++) {
+      await backend.recordSignup(round1.podRoundId, `p1-${i}`, `P1-${i}`, 'guild-1', 'in')
+    }
+    const round2 = await backend.startPod({
+      organizerDiscordId: 'organizer-1',
+      setCode: 'SOR',
+      threshold: POD_CAPACITY,
+      guildIds: ['guild-1'],
+    })
+    for (let i = 0; i < POD_CAPACITY; i++) {
+      await backend.recordSignup(round2.podRoundId, `p2-${i}`, `P2-${i}`, 'guild-1', 'in')
+    }
+
+    const concludeResult = await backend.concludeActiveRound('organizer-1', 1)
+    expect(concludeResult.ok).toBe(true)
+    if (concludeResult.ok) expect(concludeResult.value.podRoundId).toBe(round1.podRoundId)
+
+    // Round #2 was untouched by concluding #1 — still concludable.
+    const concludeRound2 = await backend.concludeActiveRound('organizer-1', 2)
+    expect(concludeRound2.ok).toBe(true)
+    if (concludeRound2.ok) expect(concludeRound2.value.podRoundId).toBe(round2.podRoundId)
+  })
 })

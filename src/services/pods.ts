@@ -1,5 +1,5 @@
 import type { AppPrismaClient } from '../prismaClient.js'
-import type { Prisma } from '@prisma/client'
+import type { Prisma, PodRoundStatus } from '@prisma/client'
 import type { PtpClient } from '../ptp/client.js'
 import { decryptToken } from '../crypto/tokenCrypto.js'
 import { POD_CAPACITY } from '../podConfig.js'
@@ -459,22 +459,27 @@ export interface CancelActiveRoundResult {
   targets: Array<{ channelId: string; messageId: string | null }>
 }
 
-// /cancel-pod takes no arguments (INTEGRATIONS.md's cancel-pod command
-// definition has none) — it cancels the calling organizer's single most
-// recently started round, and only if that specific round is still
-// cancellable (COLLECTING/THRESHOLD_REACHED). Nothing today prevents an
-// organizer from starting more than one round concurrently (no unique
-// constraint on organizerDiscordId + active status), so "most recent" is
-// a deliberate, documented choice for that edge case, not an oversight.
+// /cancel-pod's actual entry point (GitHub issue #6) — cancels a
+// cancellable (COLLECTING/THRESHOLD_REACHED) round for this organizer.
+// When organizerRoundNumber is given, resolves that exact round (via the
+// PodRound.organizerRoundNumber unique constraint) rather than guessing;
+// the command layer decides when to supply it (e.g. an organizer typed
+// `round:3`, or there's genuinely only one candidate to fall back to —
+// see listActiveRoundsForOrganizer below). This function itself has no
+// concept of "ambiguous" — it only ever resolves at most one round, by
+// either an exact number or "most recent," and leaves the 0/1/many
+// candidate-count judgment call to the Discord-facing caller.
 //
-// Deliberately queries for the most recent round of ANY status first,
-// then checks its status — not "most recent round that's still
-// cancellable" (a bug this used to have): filtering the WHERE clause to
-// cancellable statuses picks the most recent *matching* round, which can
-// silently skip past an organizer's actual latest round (already fired,
-// expired, or cancelled) and reach back to an older still-COLLECTING one
-// instead. That reached back past what the organizer meant by "my
-// current round" and cancelled a stale one they'd already moved on from.
+// Without organizerRoundNumber, falls back to the original behavior:
+// most recently started round of ANY status, then checks its status —
+// not "most recent round that's still cancellable" (a bug this used to
+// have): filtering the WHERE clause to cancellable statuses picks the
+// most recent *matching* round, which can silently skip past an
+// organizer's actual latest round (already fired, expired, or
+// cancelled) and reach back to an older still-COLLECTING one instead.
+// That reached back past what the organizer meant by "my current round"
+// and cancelled a stale one they'd already moved on from.
+//
 // Reuses cancelPod above for the actual status update (and its ownership
 // check, redundant here since the query below already scopes by
 // organizerDiscordId, but cheap and keeps this from silently diverging if
@@ -484,12 +489,14 @@ export interface CancelActiveRoundResult {
 // Discord-agnostic-services boundary as the rest of this file.
 export async function cancelActiveRound(
   deps: PodServiceDeps,
-  organizerDiscordId: string
+  organizerDiscordId: string,
+  organizerRoundNumber?: number
 ): Promise<CancelActiveRoundResult | null> {
-  const round = await deps.prisma.podRound.findFirst({
-    where: { organizerDiscordId },
-    orderBy: { createdAt: 'desc' },
-  })
+  const round = await deps.prisma.podRound.findFirst(
+    organizerRoundNumber !== undefined
+      ? { where: { organizerDiscordId, organizerRoundNumber } }
+      : { where: { organizerDiscordId }, orderBy: { createdAt: 'desc' } }
+  )
   if (!round || (round.status !== 'COLLECTING' && round.status !== 'THRESHOLD_REACHED')) {
     return null
   }
@@ -567,13 +574,18 @@ export interface ConcludeActiveRoundResult {
   targets: Array<{ channelId: string; messageId: string | null }>
 }
 
-// /conclude-pod takes no arguments, same as /cancel-pod — concludes the
-// calling organizer's single most recently started round, and only if
-// that specific round is in the one concludable state (POD_CREATED).
+// /conclude-pod's actual entry point (GitHub issue #6), same no-argument
+// shape as cancelActiveRound above by default — concludes a concludable
+// (POD_CREATED) round for this organizer. When organizerRoundNumber is
+// given, resolves that exact round instead of guessing; same
+// division-of-responsibility rationale as cancelActiveRound (this
+// function has no concept of "ambiguous," that judgment call belongs to
+// the command layer).
 //
-// Deliberately queries for the most recent round of ANY status first, then
-// checks its status via concludePod below — not "most recent round that's
-// still concludable" — for the exact same reason documented on
+// Without organizerRoundNumber, falls back to the original behavior:
+// queries for the most recent round of ANY status first, then checks its
+// status via concludePod below — not "most recent round that's still
+// concludable" — for the exact same reason documented on
 // cancelActiveRound above: filtering the WHERE clause to concludable
 // statuses would pick the most recent *matching* round, which can
 // silently reach back past the organizer's actual latest round (e.g. one
@@ -589,12 +601,14 @@ export interface ConcludeActiveRoundResult {
 // into an ephemeral reply instead of two.
 export async function concludeActiveRound(
   deps: PodServiceDeps,
-  organizerDiscordId: string
+  organizerDiscordId: string,
+  organizerRoundNumber?: number
 ): Promise<Result<ConcludeActiveRoundResult>> {
-  const round = await deps.prisma.podRound.findFirst({
-    where: { organizerDiscordId },
-    orderBy: { createdAt: 'desc' },
-  })
+  const round = await deps.prisma.podRound.findFirst(
+    organizerRoundNumber !== undefined
+      ? { where: { organizerDiscordId, organizerRoundNumber } }
+      : { where: { organizerDiscordId }, orderBy: { createdAt: 'desc' } }
+  )
   if (!round) {
     return err(notFound("You don't have a pod round to conclude."))
   }
@@ -613,6 +627,43 @@ export async function concludeActiveRound(
     chatChannelId: round.chatChannelId,
     targets: targetRows.map((t) => ({ channelId: t.channelId, messageId: t.messageId })),
   })
+}
+
+export interface ActiveRoundSummary {
+  podRoundId: string
+  setCode: string
+  organizerRoundNumber: number
+}
+
+// Every one of this organizer's rounds currently in a status that counts
+// as "cancellable" (COLLECTING/THRESHOLD_REACHED) or "concludable"
+// (POD_CREATED) — the read-side counterpart to cancelActiveRound/
+// concludeActiveRound's organizerRoundNumber parameter above. Two
+// callers: /cancel-pod's and /conclude-pod's command handlers use this
+// to detect ambiguity when the organizer didn't specify a round number
+// (0 candidates -> today's not-found copy, exactly 1 -> proceed exactly
+// as before this feature existed, 2+ -> ask which one), and the
+// autocomplete handler for the `round` option uses it to build live
+// choices. One parameterized function rather than two near-identical
+// ones, so "what counts as a candidate" for each command lives in
+// exactly one place (same reasoning as attemptPodCreation being shared
+// by fireRound and retryFailedFires). Ordered by organizerRoundNumber
+// ascending so both surfaces present candidates in the same stable order.
+export async function listActiveRoundsForOrganizer(
+  deps: PodServiceDeps,
+  organizerDiscordId: string,
+  kind: 'cancellable' | 'concludable'
+): Promise<ActiveRoundSummary[]> {
+  const statuses: PodRoundStatus[] = kind === 'cancellable' ? ['COLLECTING', 'THRESHOLD_REACHED'] : ['POD_CREATED']
+  const rounds = await deps.prisma.podRound.findMany({
+    where: { organizerDiscordId, status: { in: statuses } },
+    orderBy: { organizerRoundNumber: 'asc' },
+  })
+  return rounds.map((round) => ({
+    podRoundId: round.id,
+    setCode: round.setCode,
+    organizerRoundNumber: round.organizerRoundNumber,
+  }))
 }
 
 type ExpiredRoundTarget = { channelId: string; messageId: string | null }
