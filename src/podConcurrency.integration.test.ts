@@ -84,3 +84,56 @@ describe('signing up under real concurrent writers', () => {
     if (!lateSignup.ok) expect(lateSignup.error.message).toMatch(/already started/i)
   })
 })
+
+describe('per-organizer round numbering under real concurrent writers', () => {
+  // The other guarantee only real Postgres can prove (see startPod's own
+  // doc comment in services/pods.ts): Organizer.nextRoundNumber is
+  // incremented via a plain UPDATE, not a WHERE-guarded compare-and-swap
+  // like fireRound's claim — its safety instead relies entirely on
+  // Postgres serializing concurrent UPDATEs to the same row. A fake
+  // Prisma client can't exercise that at all (see this file's own
+  // top-of-file comment), so this is the one place that actually proves
+  // no two concurrent /start-pod calls from the same organizer ever
+  // receive the same round number, or leave a gap.
+  it('assigns distinct, gap-free sequential numbers even when many /start-pod calls race for the same organizer', async () => {
+    const backend = createIntegrationBackend(prisma)
+    await linkFakeOrganizer(backend, 'organizer-1', 'OrganizerOne')
+    await backend.subscribeGuild('guild-1', 'organizer-1', { channelId: 'channel-1' })
+
+    const startCount = 20
+    const results = await Promise.all(
+      Array.from({ length: startCount }, () =>
+        backend.startPod({ organizerDiscordId: 'organizer-1', setCode: 'JTL', threshold: 8, guildIds: ['guild-1'] })
+      )
+    )
+
+    const numbers = results.map((r) => r.organizerRoundNumber).sort((a, b) => a - b)
+    expect(new Set(numbers).size).toBe(startCount) // no duplicates
+    expect(numbers).toEqual(Array.from({ length: startCount }, (_, i) => i + 1)) // exactly 1..N, no gaps
+  })
+
+  it('scopes numbering per organizer — two organizers racing simultaneously never see each other\'s numbers', async () => {
+    const backend = createIntegrationBackend(prisma)
+    await linkFakeOrganizer(backend, 'organizer-1', 'OrganizerOne')
+    await linkFakeOrganizer(backend, 'organizer-2', 'OrganizerTwo')
+    await backend.subscribeGuild('guild-1', 'organizer-1', { channelId: 'channel-1' })
+
+    const startCount = 10
+    const [resultsOne, resultsTwo] = await Promise.all([
+      Promise.all(
+        Array.from({ length: startCount }, () =>
+          backend.startPod({ organizerDiscordId: 'organizer-1', setCode: 'JTL', threshold: 8, guildIds: ['guild-1'] })
+        )
+      ),
+      Promise.all(
+        Array.from({ length: startCount }, () =>
+          backend.startPod({ organizerDiscordId: 'organizer-2', setCode: 'SOR', threshold: 8, guildIds: ['guild-1'] })
+        )
+      ),
+    ])
+
+    const expected = Array.from({ length: startCount }, (_, i) => i + 1)
+    expect(resultsOne.map((r) => r.organizerRoundNumber).sort((a, b) => a - b)).toEqual(expected)
+    expect(resultsTwo.map((r) => r.organizerRoundNumber).sort((a, b) => a - b)).toEqual(expected)
+  })
+})

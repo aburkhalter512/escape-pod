@@ -302,6 +302,7 @@ describe('handleMessageComponent', () => {
         if (!deepEqual(params, expected)) throw new Error(`unexpected startPod args: ${JSON.stringify(params)}`)
         return {
           podRoundId: 'round-1',
+          organizerRoundNumber: 1,
           targets: [
             { guildId: 'g1', channelId: 'channel-1' },
             { guildId: 'g2', channelId: 'channel-2' },
@@ -352,6 +353,7 @@ describe('handleMessageComponent', () => {
       const token = seedPending(pendingStartPods, { originGuildName: 'Origin Guild', guildIds: ['g1'] })
       const startPodMock = stub(async (_params: unknown) => ({
         podRoundId: 'round-1',
+        organizerRoundNumber: 1,
         targets: [{ guildId: 'g1', channelId: 'channel-1' }],
       }))
       const postMessage = stub(async (_channelId: string, body: RESTPostAPIChannelMessageJSONBody) => {
@@ -380,6 +382,7 @@ describe('handleMessageComponent', () => {
       const token = seedPending(pendingStartPods, { guildIds: ['g1'] })
       const startPodMock = stub(async (_params: unknown) => ({
         podRoundId: 'round-1',
+        organizerRoundNumber: 1,
         targets: [{ guildId: 'g1', channelId: 'channel-1' }],
       }))
       const postMessage = stub(
@@ -413,6 +416,7 @@ describe('handleMessageComponent', () => {
       const token = seedPending(pendingStartPods)
       const startPodMock = stub(async (_params: unknown) => ({
         podRoundId: 'round-1',
+        organizerRoundNumber: 1,
         targets: [
           { guildId: 'g1', channelId: 'channel-1' },
           { guildId: 'g2', channelId: 'channel-2' },
@@ -450,7 +454,7 @@ describe('handleMessageComponent', () => {
       const token = seedPending(pendingStartPods, { guildIds: ['g1'], scheduledFor })
       const startPodMock = stub(async (params: { scheduledFor?: Date }) => {
         expect(params.scheduledFor).toEqual(scheduledFor)
-        return { podRoundId: 'round-1', targets: [{ guildId: 'g1', channelId: 'channel-1' }] }
+        return { podRoundId: 'round-1', organizerRoundNumber: 1, targets: [{ guildId: 'g1', channelId: 'channel-1' }] }
       })
       const postMessage = stub(async (_channelId: string, body: RESTPostAPIChannelMessageJSONBody) => {
         const embeds = body.embeds as Array<{ description: string }>
@@ -493,6 +497,7 @@ describe('handleMessageComponent', () => {
       const token = seedPending(pendingStartPods, { guildIds: ['g1'] })
       const startPodMock = stub(async (_params: unknown) => ({
         podRoundId: 'round-1',
+        organizerRoundNumber: 1,
         targets: [{ guildId: 'g1', channelId: 'channel-1' }],
       }))
       const backend = createFakeBackendClient({
@@ -518,6 +523,7 @@ describe('handleMessageComponent', () => {
       const token = seedPending(pendingStartPods, { guildIds: ['g1'] })
       const startPodMock = stub(async (_params: unknown) => ({
         podRoundId: 'round-1',
+        organizerRoundNumber: 1,
         targets: [{ guildId: 'g1', channelId: 'channel-1' }],
       }))
 

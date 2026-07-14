@@ -37,6 +37,7 @@ function fakePodRoundRow(overrides: Partial<PodRoundRow> = {}): PodRoundRow {
   return {
     id: 'round-1',
     organizerDiscordId: 'organizer-1',
+    organizerRoundNumber: 1,
     setCode: 'JTL',
     threshold: 8,
     status: 'COLLECTING',
@@ -61,6 +62,7 @@ function fakeRoundWithOrganizer(overrides: Partial<PodRoundWithOrganizer> = {}):
       encryptedToken: encryptToken('a-real-token', TOKEN_KEY),
       expiresAt: new Date(),
       linkedAt: new Date(),
+      nextRoundNumber: 2,
     },
     ...overrides,
   }
@@ -103,6 +105,21 @@ function buildDeps(overrides: FakePrismaOverrides = {}): PodServiceDeps {
     tokenEncryptionKey: TOKEN_KEY,
     logger: { error: () => {} },
   }
+}
+
+// startPod's atomic round-numbering claim (see startPod's own doc
+// comment) reads the organizer row back via organizer.update — every
+// startPod test needs this stubbed, since the fake Prisma client's
+// default throws if a method is called without an override.
+function stubOrganizerNextRoundNumber(nextRoundNumber = 2) {
+  return stub(async () => ({
+    discordId: 'organizer-1',
+    username: 'OrganizerOne',
+    encryptedToken: encryptToken('a-real-token', TOKEN_KEY),
+    expiresAt: new Date(),
+    linkedAt: new Date(),
+    nextRoundNumber,
+  }))
 }
 
 describe('recordTargetMessage', () => {
@@ -944,7 +961,11 @@ describe('startPod', () => {
       return fakePodRoundRow()
     })
     const findMany = stub(async (_args: unknown) => [])
-    const deps = buildDeps({ podRound: { create }, guildSubscription: { findMany } })
+    const deps = buildDeps({
+      podRound: { create },
+      guildSubscription: { findMany },
+      organizer: { update: stubOrganizerNextRoundNumber() },
+    })
 
     await startPod(deps, {
       organizerDiscordId: 'organizer-1',
@@ -963,7 +984,11 @@ describe('startPod', () => {
       return fakePodRoundRow()
     })
     const findMany = stub(async (_args: unknown) => [])
-    const deps = buildDeps({ podRound: { create }, guildSubscription: { findMany } })
+    const deps = buildDeps({
+      podRound: { create },
+      guildSubscription: { findMany },
+      organizer: { update: stubOrganizerNextRoundNumber() },
+    })
 
     await startPod(deps, {
       organizerDiscordId: 'organizer-1',
@@ -982,7 +1007,11 @@ describe('startPod', () => {
       return fakePodRoundRow()
     })
     const findMany = stub(async (_args: unknown) => [])
-    const deps = buildDeps({ podRound: { create }, guildSubscription: { findMany } })
+    const deps = buildDeps({
+      podRound: { create },
+      guildSubscription: { findMany },
+      organizer: { update: stubOrganizerNextRoundNumber() },
+    })
 
     await startPod(deps, {
       organizerDiscordId: 'organizer-1',

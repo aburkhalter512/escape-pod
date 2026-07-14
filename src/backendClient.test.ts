@@ -16,6 +16,19 @@ function client(overrides: FakePrismaOverrides = {}) {
   })
 }
 
+// startPod's atomic round-numbering claim reads the organizer row back via
+// organizer.update — every startPod test needs this stubbed.
+function stubOrganizerUpdate() {
+  return stub(async (_args: unknown) => ({
+    discordId: 'org-1',
+    username: 'OrganizerOne',
+    encryptedToken: 'unused-in-these-tests',
+    expiresAt: new Date(),
+    linkedAt: new Date(),
+    nextRoundNumber: 2,
+  }))
+}
+
 describe('LocalBackendClient', () => {
   it('delegates a first-time subscribeGuild to guildSubscription.create with the right args', async () => {
     const findUnique = stub(async (_args: unknown) => null)
@@ -104,6 +117,7 @@ describe('LocalBackendClient', () => {
     const create = stub(async (_args: unknown) => ({
       id: 'round-1',
       organizerDiscordId: 'org-1',
+      organizerRoundNumber: 1,
       setCode: 'JTL',
       threshold: 8,
       status: 'COLLECTING' as const,
@@ -117,14 +131,22 @@ describe('LocalBackendClient', () => {
       createdAt: new Date(),
     }))
 
-    const result = await client({ guildSubscription: { findMany }, podRound: { create } }).startPod({
+    const result = await client({
+      guildSubscription: { findMany },
+      podRound: { create },
+      organizer: { update: stubOrganizerUpdate() },
+    }).startPod({
       organizerDiscordId: 'org-1',
       setCode: 'JTL',
       threshold: 8,
       guildIds: ['g1'],
     })
 
-    expect(result).toEqual({ podRoundId: 'round-1', targets: [{ guildId: 'g1', channelId: 'channel-1' }] })
+    expect(result).toEqual({
+      podRoundId: 'round-1',
+      organizerRoundNumber: 1,
+      targets: [{ guildId: 'g1', channelId: 'channel-1' }],
+    })
   })
 
   it('forwards originGuildId through startPod to podRound.create', async () => {
@@ -134,6 +156,7 @@ describe('LocalBackendClient', () => {
       return {
         id: 'round-1',
         organizerDiscordId: 'org-1',
+        organizerRoundNumber: 1,
         setCode: 'JTL',
         threshold: 8,
         status: 'COLLECTING' as const,
@@ -148,7 +171,11 @@ describe('LocalBackendClient', () => {
       }
     })
 
-    const result = await client({ guildSubscription: { findMany }, podRound: { create } }).startPod({
+    const result = await client({
+      guildSubscription: { findMany },
+      podRound: { create },
+      organizer: { update: stubOrganizerUpdate() },
+    }).startPod({
       organizerDiscordId: 'org-1',
       setCode: 'JTL',
       threshold: 8,
@@ -213,6 +240,7 @@ describe('LocalBackendClient', () => {
     const update = stub(async (_args: unknown) => ({
       id: 'round-1',
       organizerDiscordId: 'organizer-1',
+      organizerRoundNumber: 1,
       setCode: 'JTL',
       threshold: 8,
       status: 'POD_CREATED' as const,
@@ -361,6 +389,7 @@ describe('LocalBackendClient', () => {
     const findFirst = stub(async (_args: unknown) => ({
       id: 'round-1',
       organizerDiscordId: 'org-1',
+      organizerRoundNumber: 1,
       setCode: 'JTL',
       threshold: 8,
       status: 'COLLECTING' as const,

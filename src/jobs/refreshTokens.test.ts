@@ -24,6 +24,7 @@ function fakeOrganizer(discordId: string, token: string): OrganizerRow {
     encryptedToken: encryptToken(token, TOKEN_KEY),
     expiresAt: new Date(),
     linkedAt: new Date(),
+    nextRoundNumber: 1,
   }
 }
 

@@ -24,6 +24,7 @@ function fakeOrganizerRow(overrides: Partial<OrganizerRow> = {}): OrganizerRow {
     encryptedToken: 'unused-in-response',
     expiresAt: new Date(),
     linkedAt: new Date(),
+    nextRoundNumber: 1,
     ...overrides,
   }
 }

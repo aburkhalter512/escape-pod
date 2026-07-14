@@ -37,6 +37,7 @@ function fakePodRoundRow(
   return {
     id: 'round-1',
     organizerDiscordId: 'organizer-1',
+    organizerRoundNumber: 1,
     setCode: 'JTL',
     threshold: overrides.threshold ?? 8,
     status: 'THRESHOLD_REACHED' as const,
@@ -56,6 +57,7 @@ function fakePodRoundRow(
       encryptedToken: encryptToken('a-real-token', TOKEN_KEY),
       expiresAt: new Date(),
       linkedAt: new Date(),
+      nextRoundNumber: 2,
     },
   }
 }

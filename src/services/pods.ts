@@ -37,6 +37,10 @@ export interface StartPodParams {
 
 export interface StartPodResult {
   podRoundId: string
+  // This organizer's Nth round ever started (see Organizer.nextRoundNumber,
+  // PodRound.organizerRoundNumber in schema.prisma) — not yet displayed or
+  // consulted anywhere; that's a later, separate change (GitHub issue #6).
+  organizerRoundNumber: number
   targets: Array<{ guildId: string; channelId: string }>
 }
 
@@ -59,9 +63,30 @@ export async function startPod(deps: PodServiceDeps, params: StartPodParams): Pr
     channelId: sub.broadcastChannelId,
   }))
 
+  // Atomically claims this organizer's next sequential round number (see
+  // GitHub issue #6 — lets /cancel-pod and /conclude-pod later target a
+  // specific round instead of only ever "the most recent one"). Postgres
+  // serializes concurrent UPDATEs to the same row, so two concurrent
+  // /start-pod calls from the same organizer can never receive the same
+  // number — the increment itself is what guarantees uniqueness, the same
+  // trust level already placed in fireRound's updateMany compare-and-swap
+  // claim (tasks/001). Deliberately not wrapped in a transaction with the
+  // podRound.create below: AppPrismaClient's narrow interface
+  // (prismaClient.ts) doesn't expose $transaction, and the only thing a
+  // transaction would additionally buy here is avoiding a *gap* in the
+  // sequence if the process crashes between these two calls — gaps are
+  // harmless (PodRound's unique constraint only requires distinctness, not
+  // contiguity), so that trade-off isn't worth widening this interface.
+  const organizer = await deps.prisma.organizer.update({
+    where: { discordId: organizerDiscordId },
+    data: { nextRoundNumber: { increment: 1 } },
+  })
+  const organizerRoundNumber = organizer.nextRoundNumber - 1
+
   const round = await deps.prisma.podRound.create({
     data: {
       organizerDiscordId,
+      organizerRoundNumber,
       setCode,
       threshold,
       scheduledFor,
@@ -73,7 +98,7 @@ export async function startPod(deps: PodServiceDeps, params: StartPodParams): Pr
     },
   })
 
-  return { podRoundId: round.id, targets: resolvedTargets }
+  return { podRoundId: round.id, organizerRoundNumber, targets: resolvedTargets }
 }
 
 export interface RecordTargetMessageParams {

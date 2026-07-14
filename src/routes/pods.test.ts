@@ -31,6 +31,7 @@ function fakePodRoundRow(overrides: Partial<PodRoundRow> = {}): PodRoundRow {
   return {
     id: 'round-1',
     organizerDiscordId: 'organizer-1',
+    organizerRoundNumber: 1,
     setCode: 'JTL',
     threshold: 8,
     status: 'COLLECTING',
@@ -55,6 +56,7 @@ function fakeRoundWithOrganizer(overrides: Partial<PodRoundWithOrganizer> = {}):
       encryptedToken: encryptToken('a-real-token', TOKEN_KEY),
       expiresAt: new Date(),
       linkedAt: new Date(),
+      nextRoundNumber: 2,
     },
     ...overrides,
   }
@@ -123,6 +125,20 @@ function buildApp(overrides: { prisma?: FakePrismaOverrides; ptp?: Partial<PtpCl
   const prisma = createFakePrismaClient({
     podRoundTarget: { findMany: stub(async (_args: PodRoundTargetFindManyArgs) => []) },
     guildSubscription: { findMany: stub(async (_args: GuildSubscriptionFindManyArgs) => []) },
+    // startPod's atomic round-numbering claim reads the organizer row back
+    // via organizer.update — every /pods/start test below goes through the
+    // real startPod, so this needs a default here rather than repeating it
+    // per test.
+    organizer: {
+      update: stub(async () => ({
+        discordId: 'organizer-1',
+        username: 'OrganizerOne',
+        encryptedToken: 'unused-in-these-tests',
+        expiresAt: new Date(),
+        linkedAt: new Date(),
+        nextRoundNumber: 2,
+      })),
+    },
     ...overrides.prisma,
   })
   const ptp = createFakePtpClient(overrides.ptp)
@@ -138,6 +154,7 @@ describe('POST /pods/start', () => {
       const expected: PodRoundCreateArgs = {
         data: {
           organizerDiscordId: 'organizer-1',
+          organizerRoundNumber: 1,
           setCode: 'JTL',
           threshold: 8,
           scheduledFor: undefined,
@@ -169,6 +186,7 @@ describe('POST /pods/start', () => {
     expect(response.statusCode).toBe(200)
     expect(response.json()).toEqual({
       podRoundId: 'round-1',
+      organizerRoundNumber: 1,
       targets: [{ guildId: 'g1', channelId: 'channel-1' }, { guildId: 'g2', channelId: 'channel-2' }],
     })
   })

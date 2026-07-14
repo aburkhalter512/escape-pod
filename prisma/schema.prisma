@@ -44,6 +44,14 @@ model Organizer {
   encryptedToken String   @map("encrypted_token")
   expiresAt      DateTime @map("expires_at")
   linkedAt       DateTime @default(now()) @map("linked_at")
+  // Atomically incremented each time this organizer starts a round (see
+  // services/pods.ts's startPod) — the value read back *before* the
+  // increment is that round's PodRound.organizerRoundNumber. Postgres
+  // serializes concurrent UPDATEs to the same row, so this is safe under
+  // real concurrent /start-pod calls from the same organizer without any
+  // additional locking (same trust level already placed in fireRound's
+  // updateMany compare-and-swap claim — see tasks/001).
+  nextRoundNumber Int     @default(1) @map("next_round_number")
 
   podRounds PodRound[]
 
@@ -89,6 +97,13 @@ model GuildOrganizerAllowlist {
 model PodRound {
   id                String         @id @default(uuid())
   organizerDiscordId String        @map("organizer_discord_id")
+  // This organizer's Nth round ever started (1-based), not a global
+  // counter — lets a human refer to "round #3" unambiguously even when
+  // they have multiple simultaneous active rounds (GitHub issue #6),
+  // where "most recently created" alone can't tell two rounds apart.
+  // Assigned atomically alongside Organizer.nextRoundNumber in startPod;
+  // immutable afterward.
+  organizerRoundNumber Int         @map("organizer_round_number")
   setCode           String         @map("set_code")
   threshold         Int
   status            PodRoundStatus @default(COLLECTING)
@@ -145,6 +160,13 @@ model PodRound {
   targets   PodRoundTarget[]
   signups   PodRoundSignup[]
 
+  // Schema-level backstop for the atomic-increment invariant above — not
+  // load-bearing for correctness on its own (the transactional increment
+  // already guarantees uniqueness), but turns any future non-transactional
+  // regression into a loud constraint violation instead of a silent
+  // collision. Also what makes an exact "look up round #N for this
+  // organizer" query (services/pods.ts, upcoming) a real findUnique.
+  @@unique([organizerDiscordId, organizerRoundNumber])
   @@map("pod_rounds")
 }
 
