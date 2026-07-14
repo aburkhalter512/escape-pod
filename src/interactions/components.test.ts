@@ -307,7 +307,7 @@ describe('handleMessageComponent', () => {
       expect(responseData(response).content).not.toMatch(/failed to post/i)
     })
 
-    it("includes the origin guild's name in the posted message's footer", async () => {
+    it("includes the origin guild's name as an Organizer line in the posted message's description", async () => {
       const pendingStartPods = createInMemoryPendingStartPodStore()
       const token = seedPending(pendingStartPods, { originGuildName: 'Origin Guild', guildIds: ['g1'] })
       const startPodMock = stub(async (_params: unknown) => ({
@@ -315,8 +315,8 @@ describe('handleMessageComponent', () => {
         targets: [{ guildId: 'g1', channelId: 'channel-1' }],
       }))
       const postMessage = stub(async (_channelId: string, body: RESTPostAPIChannelMessageJSONBody) => {
-        const embeds = body.embeds as Array<{ footer?: { text: string } }>
-        expect(embeds[0].footer?.text).toContain('Origin Guild')
+        const embeds = body.embeds as Array<{ description?: string }>
+        expect(embeds[0].description).toContain('Organizer: Origin Guild')
         return { id: 'msg-1' } as RESTPostAPIChannelMessageResult
       })
 
@@ -351,6 +351,8 @@ describe('handleMessageComponent', () => {
       const [, postBody] = postMessage.calls[0]
       const embeds = postBody.embeds as Array<{ description: string }>
       expect(embeds[0].description).toContain('0/8 confirmed')
+      // No signups yet on a freshly-posted round — no bare "Players:" line.
+      expect(embeds[0].description).not.toContain('Players:')
       const components = postBody.components as Array<{ components: Array<{ custom_id: string }> }>
       const buttonCustomIds = components[0].components.map((c) => c.custom_id)
       expect(buttonCustomIds).toEqual(['pod-signup:round-1:in', 'pod-signup:round-1:leave'])
@@ -512,6 +514,7 @@ describe('handleMessageComponent', () => {
           setCode: 'JTL',
           full: false,
           podCreated: false,
+          signupDiscordIds: [],
           originGuildName: null,
           scheduledFor: null,
           targets: [
@@ -545,6 +548,22 @@ describe('handleMessageComponent', () => {
       expect(response.type).toBe(InteractionResponseType.UpdateMessage)
       expect(responseData(response).content).toBeUndefined() // embeds/components now, not plain content
       expect(responseData(response).components?.[0]).toBeDefined()
+    })
+
+    it("rebuilds the embed's description with a Players line of mentions for everyone recordSignup reports as signed up", async () => {
+      const recordSignupMock = stub(async () => signupResult({ signupDiscordIds: ['player-1', 'player-9'] }))
+
+      const response = await handleMessageComponent(
+        interaction(),
+        createFakeBackendClient({ recordSignup: recordSignupMock }),
+        createFakeDiscordRest({
+          editMessage: stub(async (_channelId: string, _messageId: string, _body: RESTPatchAPIChannelMessageJSONBody) => ({}) as RESTPatchAPIChannelMessageResult),
+        }),
+        createInMemoryPendingStartPodStore()
+      )
+
+      const embeds = (response as { data?: { embeds?: Array<{ description?: string }> } }).data?.embeds
+      expect(embeds?.[0].description).toContain('Players:\n- <@player-1>\n- <@player-9>')
     })
 
     it('still shows the deadline note after a signup click, not just on the initial post (regression guard)', async () => {

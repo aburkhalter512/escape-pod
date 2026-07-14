@@ -168,7 +168,15 @@ export async function handleMessageComponent(
 
     const postOutcomes = await Promise.allSettled(
       targets.map(async (target) => {
-        const body = buildPodRoundMessage({ podRoundId, setCode, threshold, count: 0, scheduledFor, originGuildName })
+        const body = buildPodRoundMessage({
+          podRoundId,
+          setCode,
+          threshold,
+          count: 0,
+          scheduledFor,
+          originGuildName,
+          signupDiscordIds: [],
+        })
         const message = await discordRest.postMessage(target.channelId, {
           embeds: body.embeds,
           components: body.components,
@@ -276,6 +284,7 @@ export async function handleMessageComponent(
       originGuildName: result.originGuildName,
       chatUrl: result.chatUrl,
       scheduledFor: result.scheduledFor ?? undefined,
+      signupDiscordIds: result.signupDiscordIds,
     })
 
     // Fan the same update out to every OTHER target guild's message — the

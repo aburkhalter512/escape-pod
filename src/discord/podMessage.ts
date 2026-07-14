@@ -4,7 +4,6 @@ import {
   type APIActionRowComponent,
   type APIButtonComponent,
   type APIEmbed,
-  type APIEmbedFooter,
 } from 'discord-api-types/v10'
 import { POD_CAPACITY } from '../podConfig.js'
 
@@ -41,16 +40,41 @@ export interface PodRoundMessageState {
    * COLLECTING. Absent when chat-channel creation itself failed (best-
    * effort; see createPodChatSpace) or the round has no origin guild. */
   chatUrl?: string
+  /** Everyone currently signed up (status: 'IN'), as raw Discord IDs — only
+   * ever populated for buildPodRoundMessage's two branches (collecting and
+   * fired); buildCancelledPodMessage/buildExpiredPodMessage don't take this
+   * at all. Rendered as `<@id>` mentions so Discord shows live-updating
+   * usernames rather than a point-in-time snapshot. Omitted (not an empty
+   * array's worth of content) when empty — a freshly-posted round with zero
+   * signups yet shouldn't show a bare "Players:" line. */
+  signupDiscordIds?: string[]
 }
 
 // Shared across every message state below (collecting, fired, cancelled,
 // expired) — the "where did this round come from" context is the same
-// regardless of what else changed, so it lives in the embed footer rather
-// than duplicated into every state's description text. Absent (not just
-// empty) when there's no name to show, since APIEmbed's footer field is
-// itself optional.
-function originFooter(originGuildName: string | null | undefined): APIEmbedFooter | undefined {
-  return originGuildName ? { text: `Started from ${originGuildName}` } : undefined
+// regardless of what else changed, so it's a consistent labeled line in
+// every state's description body (previously the embed footer — moved so
+// this round's message reads the same way across every state it gets
+// edited into, rather than body text in some states and a footer in
+// others). Omitted entirely (not "Organizer: Unknown") when there's no name
+// to show, same convention as the rest of this file.
+function organizerLine(originGuildName: string | null | undefined): string | undefined {
+  return originGuildName ? `Organizer: ${originGuildName}` : undefined
+}
+
+// Only used by buildPodRoundMessage's two branches (see point 2) — everyone
+// currently signed up, rendered as a bulleted list of Discord mentions so
+// the list stays live (renders the viewer's current nickname, not a stale
+// username snapshot) while still reading as a scannable roster rather than
+// a comma-dump. Already sorted by signup-time username (see
+// services/pods.ts's recordSignup/expireOverdueRounds) — this function just
+// renders whatever order it's given, it doesn't sort. Omitted entirely
+// when there's nobody signed up yet, same "just omit if absent" convention
+// as organizerLine above.
+function playersLine(signupDiscordIds: string[] | undefined): string | undefined {
+  return signupDiscordIds && signupDiscordIds.length > 0
+    ? `Players:\n${signupDiscordIds.map((id) => `- <@${id}>`).join('\n')}`
+    : undefined
 }
 
 export interface PodRoundMessageBody {
@@ -64,13 +88,20 @@ export interface PodRoundMessageBody {
 // Discord API call.
 export function buildPodRoundMessage(state: PodRoundMessageState): PodRoundMessageBody {
   if (state.shareUrl) {
+    const firedDescription = [
+      `${state.count} confirmed. The draft is starting.`,
+      organizerLine(state.originGuildName),
+      playersLine(state.signupDiscordIds),
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join('\n')
+
     return {
       embeds: [
         {
           title: `${state.setCode} Draft Pod — Starting!`,
-          description: `${state.count} confirmed. The draft is starting.`,
+          description: firedDescription,
           color: POD_FULL_COLOR,
-          footer: originFooter(state.originGuildName),
         },
       ],
       components: [
@@ -103,13 +134,20 @@ export function buildPodRoundMessage(state: PodRoundMessageState): PodRoundMessa
     ? ` Fires automatically <t:${Math.floor(state.scheduledFor.getTime() / 1000)}:R> if at least ${state.threshold} have joined, otherwise cancels.`
     : ''
 
+  const collectingDescription = [
+    `${state.count}/${POD_CAPACITY} confirmed.${deadlineNote}`,
+    organizerLine(state.originGuildName),
+    playersLine(state.signupDiscordIds),
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join('\n')
+
   return {
     embeds: [
       {
         title: `${state.setCode} Draft Pod`,
-        description: `${state.count}/${POD_CAPACITY} confirmed.${deadlineNote}`,
+        description: collectingDescription,
         color: COLLECTING_COLOR,
-        footer: originFooter(state.originGuildName),
       },
     ],
     components: [
@@ -140,13 +178,16 @@ export function buildPodRoundMessage(state: PodRoundMessageState): PodRoundMessa
 // omitted field, since Discord treats a missing components field on an
 // edit as "leave the existing components alone," not "remove them."
 export function buildCancelledPodMessage(setCode: string, originGuildName?: string | null): PodRoundMessageBody {
+  const description = ['The organizer cancelled this round.', organizerLine(originGuildName)]
+    .filter((line): line is string => Boolean(line))
+    .join('\n')
+
   return {
     embeds: [
       {
         title: `${setCode} Draft Pod — Cancelled`,
-        description: 'The organizer cancelled this round.',
+        description,
         color: CANCELLED_COLOR,
-        footer: originFooter(originGuildName),
       },
     ],
     components: [],
@@ -159,13 +200,16 @@ export function buildCancelledPodMessage(setCode: string, originGuildName?: stri
 // buildCancelledPodMessage, but visually and textually distinct — this
 // wasn't the organizer giving up, it's just running out the clock.
 export function buildExpiredPodMessage(setCode: string, originGuildName?: string | null): PodRoundMessageBody {
+  const description = ['Not enough players joined before the deadline.', organizerLine(originGuildName)]
+    .filter((line): line is string => Boolean(line))
+    .join('\n')
+
   return {
     embeds: [
       {
         title: `${setCode} Draft Pod — Expired`,
-        description: 'Not enough players joined before the deadline.',
+        description,
         color: EXPIRED_COLOR,
-        footer: originFooter(originGuildName),
       },
     ],
     components: [],
@@ -179,13 +223,16 @@ export function buildExpiredPodMessage(setCode: string, originGuildName?: string
 // copy, and color: this is the "the draft actually finished" terminal
 // state, distinct from a round that never got off the ground.
 export function buildConcludedPodMessage(setCode: string, originGuildName?: string | null): PodRoundMessageBody {
+  const description = ['This draft has concluded.', organizerLine(originGuildName)]
+    .filter((line): line is string => Boolean(line))
+    .join('\n')
+
   return {
     embeds: [
       {
         title: `${setCode} Draft Pod — Concluded`,
-        description: 'This draft has concluded.',
+        description,
         color: CONCLUDED_COLOR,
-        footer: originFooter(originGuildName),
       },
     ],
     components: [],

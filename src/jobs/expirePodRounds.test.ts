@@ -55,6 +55,17 @@ function fakePodRoundRow(
   }
 }
 
+function fakePodRoundSignupRow(overrides: { discordId?: string } = {}) {
+  return {
+    podRoundId: 'round-1',
+    discordId: overrides.discordId ?? 'player-1',
+    usernameSnapshot: 'PlayerOne',
+    sourceGuildId: 'g1',
+    status: 'IN' as const,
+    signedUpAt: new Date(),
+  }
+}
+
 describe('expireOverduePodRounds', () => {
   it('does nothing (and calls no Discord API) when there is nothing overdue', async () => {
     const editMessage = stub(async () => {
@@ -80,7 +91,15 @@ describe('expireOverduePodRounds', () => {
           findMany: stubPodRoundFindMany(async () => [fakePodRoundRow({ threshold: 6 })]),
           updateMany: stub(async () => ({ count: 1 })),
         },
-        podRoundSignup: { count: stub(async () => 3), findMany: stub(async () => []) }, // below threshold: 6
+        // below threshold: 6 — count is derived from findMany's length,
+        // not a separate .count() call.
+        podRoundSignup: {
+          findMany: stub(async () => [
+            fakePodRoundSignupRow({ discordId: 'p1' }),
+            fakePodRoundSignupRow({ discordId: 'p2' }),
+            fakePodRoundSignupRow({ discordId: 'p3' }),
+          ]),
+        },
         podRoundTarget: {
           findMany: stub(async () => [
             { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
@@ -109,7 +128,17 @@ describe('expireOverduePodRounds', () => {
           updateMany: stub(async () => ({ count: 1 })),
           update: stub(async () => fakePodRoundRow()),
         },
-        podRoundSignup: { count: stub(async () => 5), findMany: stub(async () => []) }, // >= threshold (2), short of POD_CAPACITY (8)
+        // >= threshold (2), short of POD_CAPACITY (8) — count is derived
+        // from findMany's length, not a separate .count() call.
+        podRoundSignup: {
+          findMany: stub(async () => [
+            fakePodRoundSignupRow({ discordId: 'p1' }),
+            fakePodRoundSignupRow({ discordId: 'p2' }),
+            fakePodRoundSignupRow({ discordId: 'p3' }),
+            fakePodRoundSignupRow({ discordId: 'p4' }),
+            fakePodRoundSignupRow({ discordId: 'p5' }),
+          ]),
+        },
         podRoundTarget: {
           findMany: stub(async () => [
             { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
@@ -135,8 +164,8 @@ describe('expireOverduePodRounds', () => {
   })
 
   it("carries the origin guild's name into both the expired and fired message bodies", async () => {
-    const expiredEdit = stub(async (_channelId: string, _messageId: string, body: { embeds: Array<{ footer?: { text: string } }> }) => {
-      expect(body.embeds[0].footer?.text).toContain('Expired-From Guild')
+    const expiredEdit = stub(async (_channelId: string, _messageId: string, body: { embeds: Array<{ description?: string }> }) => {
+      expect(body.embeds[0].description).toContain('Organizer: Expired-From Guild')
       return {} as never
     })
     const expiredDeps: PodServiceDeps = {
@@ -145,7 +174,14 @@ describe('expireOverduePodRounds', () => {
           findMany: stubPodRoundFindMany(async () => [fakePodRoundRow({ threshold: 6, originGuildName: 'Expired-From Guild' })]),
           updateMany: stub(async () => ({ count: 1 })),
         },
-        podRoundSignup: { count: stub(async () => 3) },
+        // below threshold: 6 — count is derived from findMany's length.
+        podRoundSignup: {
+          findMany: stub(async () => [
+            fakePodRoundSignupRow({ discordId: 'p1' }),
+            fakePodRoundSignupRow({ discordId: 'p2' }),
+            fakePodRoundSignupRow({ discordId: 'p3' }),
+          ]),
+        },
         podRoundTarget: {
           findMany: stub(async () => [
             { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
@@ -159,8 +195,8 @@ describe('expireOverduePodRounds', () => {
     await expireOverduePodRounds(expiredDeps, createFakeDiscordRest({ editMessage: expiredEdit }))
     expect(expiredEdit.calls).toHaveLength(1)
 
-    const firedEdit = stub(async (_channelId: string, _messageId: string, body: { embeds: Array<{ footer?: { text: string } }> }) => {
-      expect(body.embeds[0].footer?.text).toContain('Fired-From Guild')
+    const firedEdit = stub(async (_channelId: string, _messageId: string, body: { embeds: Array<{ description?: string }> }) => {
+      expect(body.embeds[0].description).toContain('Organizer: Fired-From Guild')
       return {} as never
     })
     const firedDeps: PodServiceDeps = {
@@ -170,7 +206,17 @@ describe('expireOverduePodRounds', () => {
           updateMany: stub(async () => ({ count: 1 })),
           update: stub(async () => fakePodRoundRow()),
         },
-        podRoundSignup: { count: stub(async () => 5), findMany: stub(async () => []) },
+        // >= threshold (2), short of POD_CAPACITY (8) — count is derived
+        // from findMany's length.
+        podRoundSignup: {
+          findMany: stub(async () => [
+            fakePodRoundSignupRow({ discordId: 'p1' }),
+            fakePodRoundSignupRow({ discordId: 'p2' }),
+            fakePodRoundSignupRow({ discordId: 'p3' }),
+            fakePodRoundSignupRow({ discordId: 'p4' }),
+            fakePodRoundSignupRow({ discordId: 'p5' }),
+          ]),
+        },
         podRoundTarget: {
           findMany: stub(async () => [
             { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
@@ -192,6 +238,51 @@ describe('expireOverduePodRounds', () => {
     expect(firedEdit.calls).toHaveLength(1)
   })
 
+  it('includes a Players line with mentions for everyone signed up in the fired message body', async () => {
+    const firedEdit = stub(async (_channelId: string, _messageId: string, body: { embeds: Array<{ description?: string }> }) => {
+      expect(body.embeds[0].description).toContain('Players:\n- <@p1>\n- <@p2>\n- <@p3>\n- <@p4>\n- <@p5>')
+      return {} as never
+    })
+    const deps: PodServiceDeps = {
+      prisma: createFakePrismaClient({
+        podRound: {
+          findMany: stubPodRoundFindMany(async () => [fakePodRoundRow({ threshold: 2 })]),
+          updateMany: stub(async () => ({ count: 1 })),
+          update: stub(async () => fakePodRoundRow()),
+        },
+        podRoundSignup: {
+          findMany: stub(async () => [
+            fakePodRoundSignupRow({ discordId: 'p1' }),
+            fakePodRoundSignupRow({ discordId: 'p2' }),
+            fakePodRoundSignupRow({ discordId: 'p3' }),
+            fakePodRoundSignupRow({ discordId: 'p4' }),
+            fakePodRoundSignupRow({ discordId: 'p5' }),
+          ]),
+        },
+        podRoundTarget: {
+          findMany: stub(async () => [
+            { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
+          ]),
+        },
+      }),
+      ptp: createFakePtpClient({
+        createPod: stub(async () => ({
+          id: 'ptp-pod-1',
+          shareId: 'share-1',
+          shareUrl: 'https://www.protectthepod.com/draft/share-1',
+          createdAt: '2026-01-01T00:00:00Z',
+        })),
+      }),
+      tokenEncryptionKey: TOKEN_KEY,
+      logger: { error: () => {} },
+    }
+
+    const result = await expireOverduePodRounds(deps, createFakeDiscordRest({ editMessage: firedEdit }))
+
+    expect(result).toEqual({ expired: 0, fired: 1 })
+    expect(firedEdit.calls).toHaveLength(1)
+  })
+
   it('creates a chat space in the origin guild and DMs every signed-up player when a round fires', async () => {
     const editMessage = stub(async (_channelId: string, _messageId: string, _body: unknown) => ({}) as never)
     const createChannel = stub(async (_guildId: string, _body: unknown) => ({ id: 'chat-channel-1' }) as never)
@@ -205,8 +296,9 @@ describe('expireOverduePodRounds', () => {
           updateMany: stub(async () => ({ count: 1 })),
           update: stub(async () => fakePodRoundRow()),
         },
+        // count is derived from this findMany's length, not a separate
+        // .count() call — 2 rows still clears this round's threshold (2).
         podRoundSignup: {
-          count: stub(async () => 5),
           findMany: stub(async () => [
             { podRoundId: 'round-1', discordId: 'p1', usernameSnapshot: 'P1', sourceGuildId: 'g1', status: 'IN' as const, signedUpAt: new Date() },
             { podRoundId: 'round-1', discordId: 'p2', usernameSnapshot: 'P2', sourceGuildId: 'g1', status: 'IN' as const, signedUpAt: new Date() },
@@ -258,14 +350,15 @@ describe('expireOverduePodRounds', () => {
     expect(content).toContain('https://www.protectthepod.com/draft/share-1')
   })
 
-  it('does not attempt a chat space or any DMs for a round with no recorded origin guild', async () => {
+  it('does not attempt a chat space for a round with no recorded origin guild, but still DMs signed-up players', async () => {
     const editMessage = stub(async () => ({}) as never)
     const createChannel = stub(async () => {
       throw new Error('createChannel should not have been called')
     })
-    const createDmChannel = stub(async () => {
-      throw new Error('createDmChannel should not have been called')
-    })
+    // DMs are not gated by origin guild (only the chat-space creation is)
+    // — a round with no origin guild still notifies every signed-up player.
+    const createDmChannel = stub(async (userId: string) => ({ id: `dm-${userId}` }) as never)
+    const postMessage = stub(async (_channelId: string, _body: unknown) => ({}) as never)
     const deps: PodServiceDeps = {
       prisma: createFakePrismaClient({
         podRound: {
@@ -273,7 +366,16 @@ describe('expireOverduePodRounds', () => {
           updateMany: stub(async () => ({ count: 1 })),
           update: stub(async () => fakePodRoundRow()),
         },
-        podRoundSignup: { count: stub(async () => 5), findMany: stub(async () => []) },
+        // >= threshold (2) — count is derived from this findMany's length.
+        podRoundSignup: {
+          findMany: stub(async () => [
+            fakePodRoundSignupRow({ discordId: 'p1' }),
+            fakePodRoundSignupRow({ discordId: 'p2' }),
+            fakePodRoundSignupRow({ discordId: 'p3' }),
+            fakePodRoundSignupRow({ discordId: 'p4' }),
+            fakePodRoundSignupRow({ discordId: 'p5' }),
+          ]),
+        },
         podRoundTarget: {
           findMany: stub(async () => [
             { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
@@ -292,11 +394,14 @@ describe('expireOverduePodRounds', () => {
       logger: { error: () => {} },
     }
 
-    const result = await expireOverduePodRounds(deps, createFakeDiscordRest({ editMessage, createChannel, createDmChannel }))
+    const result = await expireOverduePodRounds(
+      deps,
+      createFakeDiscordRest({ editMessage, createChannel, createDmChannel, postMessage })
+    )
 
     expect(result).toEqual({ expired: 0, fired: 1 })
     expect(createChannel.calls).toHaveLength(0)
-    expect(createDmChannel.calls).toHaveLength(0)
+    expect(createDmChannel.calls.map((c) => c[0]).sort()).toEqual(['p1', 'p2', 'p3', 'p4', 'p5'])
   })
 
   it('logs (not throws) when editing a message fails for one target', async () => {
@@ -310,7 +415,15 @@ describe('expireOverduePodRounds', () => {
           findMany: stubPodRoundFindMany(async () => [fakePodRoundRow({ threshold: 6 })]),
           updateMany: stub(async () => ({ count: 1 })),
         },
-        podRoundSignup: { count: stub(async () => 3) },
+        // below threshold: 6 — count is derived from this findMany's
+        // length, not a separate .count() call.
+        podRoundSignup: {
+          findMany: stub(async () => [
+            fakePodRoundSignupRow({ discordId: 'p1' }),
+            fakePodRoundSignupRow({ discordId: 'p2' }),
+            fakePodRoundSignupRow({ discordId: 'p3' }),
+          ]),
+        },
         podRoundTarget: {
           findMany: stub(async () => [
             { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },

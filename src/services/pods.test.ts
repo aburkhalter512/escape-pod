@@ -140,18 +140,18 @@ describe('recordSignup', () => {
   ]
 
   for (const { status, message } of terminalStatusCases) {
-    it(`returns a validation error and does not upsert/count when the round is already ${status}`, async () => {
+    it(`returns a validation error and does not upsert/list signups when the round is already ${status}`, async () => {
       const round = fakeRoundWithOrganizer({ status })
       const findUnique = stubPodRoundFindUnique(async () => round)
       const upsert = stub(async () => {
         throw new Error('podRoundSignup.upsert should not have been called for a non-COLLECTING round')
       })
-      const count = stub(async () => {
-        throw new Error('podRoundSignup.count should not have been called for a non-COLLECTING round')
+      const findMany = stub(async () => {
+        throw new Error('podRoundSignup.findMany should not have been called for a non-COLLECTING round')
       })
       const deps = buildDeps({
         podRound: { findUnique },
-        podRoundSignup: { upsert, count },
+        podRoundSignup: { upsert, findMany },
       })
 
       const result = await recordSignup(deps, {
@@ -164,7 +164,7 @@ describe('recordSignup', () => {
 
       expect(result).toEqual({ ok: false, error: { kind: 'validation', message } })
       expect(upsert.calls).toHaveLength(0)
-      expect(count.calls).toHaveLength(0)
+      expect(findMany.calls).toHaveLength(0)
     })
   }
 
@@ -184,8 +184,18 @@ describe('recordSignup', () => {
     })
     const update = stub(async () => fakePodRoundRow())
     const upsert = stub(async (_args: PodRoundSignupUpsertArgs) => fakePodRoundSignupRow())
-    const count = stub(async () => 8)
-    const findManySignups = stub(async () => [fakePodRoundSignupRow({ discordId: 'p7' }), fakePodRoundSignupRow({ discordId: 'p8' })])
+    // A full table (POD_CAPACITY: 8) — count is now derived from this
+    // findMany's length, not a separate .count() call.
+    const findManySignups = stub(async () => [
+      fakePodRoundSignupRow({ discordId: 'p1' }),
+      fakePodRoundSignupRow({ discordId: 'p2' }),
+      fakePodRoundSignupRow({ discordId: 'p3' }),
+      fakePodRoundSignupRow({ discordId: 'p4' }),
+      fakePodRoundSignupRow({ discordId: 'p5' }),
+      fakePodRoundSignupRow({ discordId: 'p6' }),
+      fakePodRoundSignupRow({ discordId: 'p7' }),
+      fakePodRoundSignupRow({ discordId: 'p8' }),
+    ])
     const createPod = stub(async (_token: string, _params: CreatePodParams) => ({
       id: 'ptp-pod-1',
       shareId: 'share-1',
@@ -195,7 +205,7 @@ describe('recordSignup', () => {
     const deps: PodServiceDeps = {
       prisma: createFakePrismaClient({
         podRound: { findUnique, update, updateMany },
-        podRoundSignup: { upsert, count, findMany: findManySignups },
+        podRoundSignup: { upsert, findMany: findManySignups },
         podRoundTarget: { findMany: stub(async () => []) },
       }),
       ptp: createFakePtpClient({ createPod }),
@@ -212,6 +222,7 @@ describe('recordSignup', () => {
     expect(resultA.ok && resultB.ok).toBe(true)
     const podCreatedFlags = [resultA, resultB].map((r) => r.ok && r.value.podCreated)
     expect(podCreatedFlags.filter(Boolean)).toHaveLength(1)
+    expect(resultA.ok && resultA.value.signupDiscordIds).toEqual(['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'])
   })
 
   it('logs (not throws) when PTP pod creation fails after threshold reached', async () => {
@@ -219,8 +230,18 @@ describe('recordSignup', () => {
     const findUnique = stubPodRoundFindUnique(async () => round)
     const updateMany = stub(async () => ({ count: 1 }))
     const upsert = stub(async () => fakePodRoundSignupRow())
-    const count = stub(async () => 8)
-    const findManySignups = stub(async () => [fakePodRoundSignupRow({ discordId: 'p8' })])
+    // A full table (POD_CAPACITY: 8) — count is derived from this
+    // findMany's length, not a separate .count() call.
+    const findManySignups = stub(async () => [
+      fakePodRoundSignupRow({ discordId: 'p1' }),
+      fakePodRoundSignupRow({ discordId: 'p2' }),
+      fakePodRoundSignupRow({ discordId: 'p3' }),
+      fakePodRoundSignupRow({ discordId: 'p4' }),
+      fakePodRoundSignupRow({ discordId: 'p5' }),
+      fakePodRoundSignupRow({ discordId: 'p6' }),
+      fakePodRoundSignupRow({ discordId: 'p7' }),
+      fakePodRoundSignupRow({ discordId: 'p8' }),
+    ])
     const createPod = stub(async () => {
       throw new Error('PTP pod creation failed: 401')
     })
@@ -228,7 +249,7 @@ describe('recordSignup', () => {
     const deps: PodServiceDeps = {
       prisma: createFakePrismaClient({
         podRound: { findUnique, updateMany },
-        podRoundSignup: { upsert, count, findMany: findManySignups },
+        podRoundSignup: { upsert, findMany: findManySignups },
         podRoundTarget: { findMany: stub(async () => []) },
       }),
       ptp: createFakePtpClient({ createPod }),
@@ -245,7 +266,11 @@ describe('recordSignup', () => {
     })
 
     expect(result.ok).toBe(true)
-    expect(result.ok && result.value).toMatchObject({ full: true, podCreated: false, signupDiscordIds: ['p8'] })
+    expect(result.ok && result.value).toMatchObject({
+      full: true,
+      podCreated: false,
+      signupDiscordIds: ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'],
+    })
     expect(errors).toHaveLength(1)
   })
 
@@ -256,14 +281,19 @@ describe('recordSignup', () => {
       throw new Error('podRound.updateMany should not have been called below POD_CAPACITY')
     })
     const upsert = stub(async () => fakePodRoundSignupRow())
-    const count = stub(async () => 3) // >= threshold (2), well short of POD_CAPACITY (8)
+    // >= threshold (2), well short of POD_CAPACITY (8)
+    const findMany = stub(async () => [
+      fakePodRoundSignupRow({ discordId: 'p1' }),
+      fakePodRoundSignupRow({ discordId: 'p2' }),
+      fakePodRoundSignupRow({ discordId: 'p3' }),
+    ])
     const createPod = stub(async () => {
       throw new Error('createPod should not have been called below POD_CAPACITY')
     })
     const deps: PodServiceDeps = {
       prisma: createFakePrismaClient({
         podRound: { findUnique, updateMany },
-        podRoundSignup: { upsert, count },
+        podRoundSignup: { upsert, findMany },
         podRoundTarget: { findMany: stub(async () => []) },
       }),
       ptp: createFakePtpClient({ createPod }),
@@ -280,7 +310,45 @@ describe('recordSignup', () => {
     })
 
     expect(result.ok).toBe(true)
-    expect(result.ok && result.value).toMatchObject({ count: 3, threshold: 2, full: false, podCreated: false })
+    expect(result.ok && result.value).toMatchObject({
+      count: 3,
+      threshold: 2,
+      full: false,
+      podCreated: false,
+      signupDiscordIds: ['p1', 'p2', 'p3'],
+    })
+  })
+
+  it('sorts signupDiscordIds by usernameSnapshot, case-insensitively, not by insertion order', async () => {
+    const round = fakeRoundWithOrganizer()
+    const findUnique = stubPodRoundFindUnique(async () => round)
+    const upsert = stub(async () => fakePodRoundSignupRow())
+    const findMany = stub(async () => [
+      fakePodRoundSignupRow({ discordId: 'charlie-id', usernameSnapshot: 'charlie' }),
+      fakePodRoundSignupRow({ discordId: 'alice-id', usernameSnapshot: 'Alice' }),
+      fakePodRoundSignupRow({ discordId: 'bob-id', usernameSnapshot: 'bob' }),
+    ])
+    const deps: PodServiceDeps = {
+      prisma: createFakePrismaClient({
+        podRound: { findUnique },
+        podRoundSignup: { upsert, findMany },
+        podRoundTarget: { findMany: stub(async () => []) },
+      }),
+      ptp: createFakePtpClient(),
+      tokenEncryptionKey: TOKEN_KEY,
+      logger: { error: () => {} },
+    }
+
+    const result = await recordSignup(deps, {
+      podRoundId: 'round-1',
+      discordId: 'alice-id',
+      username: 'Alice',
+      sourceGuildId: 'g1',
+      action: 'in',
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.ok && result.value.signupDiscordIds).toEqual(['alice-id', 'bob-id', 'charlie-id'])
   })
 
   it("carries the round's scheduledFor through to the result (regression guard — this used to be dropped on every signup rebuild)", async () => {
@@ -288,10 +356,10 @@ describe('recordSignup', () => {
     const round = fakeRoundWithOrganizer({ scheduledFor })
     const findUnique = stubPodRoundFindUnique(async () => round)
     const upsert = stub(async () => fakePodRoundSignupRow())
-    const count = stub(async () => 3)
+    const findMany = stub(async () => [fakePodRoundSignupRow({ discordId: 'p3' })])
     const deps = buildDeps({
       podRound: { findUnique },
-      podRoundSignup: { upsert, count },
+      podRoundSignup: { upsert, findMany },
       podRoundTarget: { findMany: stub(async () => []) },
     })
 
@@ -311,10 +379,10 @@ describe('recordSignup', () => {
     const round = fakeRoundWithOrganizer({ scheduledFor: null })
     const findUnique = stubPodRoundFindUnique(async () => round)
     const upsert = stub(async () => fakePodRoundSignupRow())
-    const count = stub(async () => 3)
+    const findMany = stub(async () => [fakePodRoundSignupRow({ discordId: 'p3' })])
     const deps = buildDeps({
       podRound: { findUnique },
-      podRoundSignup: { upsert, count },
+      podRoundSignup: { upsert, findMany },
       podRoundTarget: { findMany: stub(async () => []) },
     })
 
@@ -336,8 +404,21 @@ describe('recordSignup', () => {
     const updateMany = stub(async () => ({ count: 1 }))
     const update = stub(async () => fakePodRoundRow())
     const upsert = stub(async () => fakePodRoundSignupRow())
-    const count = stub(async () => 8)
-    const findManySignups = stub(async () => [fakePodRoundSignupRow({ discordId: 'p7' }), fakePodRoundSignupRow({ discordId: 'p8' })])
+    // A full table (POD_CAPACITY: 8) — count is derived from this
+    // findMany's length, not a separate .count() call. onFiring's own ctx
+    // still gets fireRound's own separate signupDiscordIds fetch (see
+    // fireRound in services/pods.ts), which happens to read the same rows.
+    const eightSignups = [
+      fakePodRoundSignupRow({ discordId: 'p1' }),
+      fakePodRoundSignupRow({ discordId: 'p2' }),
+      fakePodRoundSignupRow({ discordId: 'p3' }),
+      fakePodRoundSignupRow({ discordId: 'p4' }),
+      fakePodRoundSignupRow({ discordId: 'p5' }),
+      fakePodRoundSignupRow({ discordId: 'p6' }),
+      fakePodRoundSignupRow({ discordId: 'p7' }),
+      fakePodRoundSignupRow({ discordId: 'p8' }),
+    ]
+    const findManySignups = stub(async () => eightSignups)
 
     const callOrder: string[] = []
     const onFiring = stub(async (ctx: Parameters<OnFiringHook>[0]) => {
@@ -346,7 +427,7 @@ describe('recordSignup', () => {
         setCode: 'JTL',
         organizerDiscordId: 'organizer-1',
         originGuildId: round.originGuildId,
-        signupDiscordIds: ['p7', 'p8'],
+        signupDiscordIds: ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'],
       })
       return { channelId: 'chat-channel-1', chatUrl: 'https://discord.com/invite/abc123' }
     })
@@ -362,7 +443,7 @@ describe('recordSignup', () => {
     const deps: PodServiceDeps = {
       prisma: createFakePrismaClient({
         podRound: { findUnique, update, updateMany },
-        podRoundSignup: { upsert, count, findMany: findManySignups },
+        podRoundSignup: { upsert, findMany: findManySignups },
         podRoundTarget: { findMany: stub(async () => []) },
       }),
       ptp: createFakePtpClient({ createPod }),
@@ -387,7 +468,7 @@ describe('recordSignup', () => {
       shareUrl: 'https://www.protectthepod.com/draft/share-1',
       chatUrl: 'https://discord.com/invite/abc123',
       chatChannelId: 'chat-channel-1',
-      signupDiscordIds: ['p7', 'p8'],
+      signupDiscordIds: ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'],
     })
   })
 
@@ -396,8 +477,18 @@ describe('recordSignup', () => {
     const findUnique = stubPodRoundFindUnique(async () => round)
     const updateMany = stub(async () => ({ count: 1 }))
     const upsert = stub(async () => fakePodRoundSignupRow())
-    const count = stub(async () => 8)
-    const findManySignups = stub(async () => [fakePodRoundSignupRow({ discordId: 'p8' })])
+    // A full table (POD_CAPACITY: 8) — count is derived from this
+    // findMany's length, not a separate .count() call.
+    const findManySignups = stub(async () => [
+      fakePodRoundSignupRow({ discordId: 'p1' }),
+      fakePodRoundSignupRow({ discordId: 'p2' }),
+      fakePodRoundSignupRow({ discordId: 'p3' }),
+      fakePodRoundSignupRow({ discordId: 'p4' }),
+      fakePodRoundSignupRow({ discordId: 'p5' }),
+      fakePodRoundSignupRow({ discordId: 'p6' }),
+      fakePodRoundSignupRow({ discordId: 'p7' }),
+      fakePodRoundSignupRow({ discordId: 'p8' }),
+    ])
 
     const callOrder: string[] = []
     const onFiring = stub(async () => {
@@ -412,7 +503,7 @@ describe('recordSignup', () => {
     const deps: PodServiceDeps = {
       prisma: createFakePrismaClient({
         podRound: { findUnique, updateMany },
-        podRoundSignup: { upsert, count, findMany: findManySignups },
+        podRoundSignup: { upsert, findMany: findManySignups },
         podRoundTarget: { findMany: stub(async () => []) },
       }),
       ptp: createFakePtpClient({ createPod }),
@@ -439,7 +530,7 @@ describe('recordSignup', () => {
       podCreated: false,
       chatUrl: 'https://discord.com/invite/abc123',
       chatChannelId: 'chat-channel-1',
-      signupDiscordIds: ['p8'],
+      signupDiscordIds: ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'],
     })
   })
 
@@ -449,8 +540,19 @@ describe('recordSignup', () => {
     const updateMany = stub(async () => ({ count: 1 }))
     const update = stub(async () => fakePodRoundRow())
     const upsert = stub(async () => fakePodRoundSignupRow())
-    const count = stub(async () => 8)
-    const findManySignups = stub(async () => [fakePodRoundSignupRow({ discordId: 'p8' })])
+    // A full table (POD_CAPACITY: 8) — count is derived from this
+    // findMany's length, not a separate .count() call.
+    const eightSignups = [
+      fakePodRoundSignupRow({ discordId: 'p1' }),
+      fakePodRoundSignupRow({ discordId: 'p2' }),
+      fakePodRoundSignupRow({ discordId: 'p3' }),
+      fakePodRoundSignupRow({ discordId: 'p4' }),
+      fakePodRoundSignupRow({ discordId: 'p5' }),
+      fakePodRoundSignupRow({ discordId: 'p6' }),
+      fakePodRoundSignupRow({ discordId: 'p7' }),
+      fakePodRoundSignupRow({ discordId: 'p8' }),
+    ]
+    const findManySignups = stub(async () => eightSignups)
     const createPod = stub(async () => ({
       id: 'ptp-pod-1',
       shareId: 'share-1',
@@ -460,7 +562,7 @@ describe('recordSignup', () => {
     const deps: PodServiceDeps = {
       prisma: createFakePrismaClient({
         podRound: { findUnique, update, updateMany },
-        podRoundSignup: { upsert, count, findMany: findManySignups },
+        podRoundSignup: { upsert, findMany: findManySignups },
         podRoundTarget: { findMany: stub(async () => []) },
       }),
       ptp: createFakePtpClient({ createPod }),
@@ -482,7 +584,7 @@ describe('recordSignup', () => {
       shareUrl: 'https://www.protectthepod.com/draft/share-1',
       chatUrl: undefined,
       chatChannelId: undefined,
-      signupDiscordIds: ['p8'],
+      signupDiscordIds: ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'],
     })
   })
 
@@ -492,8 +594,18 @@ describe('recordSignup', () => {
     const updateMany = stub(async () => ({ count: 1 }))
     const update = stub(async () => fakePodRoundRow())
     const upsert = stub(async () => fakePodRoundSignupRow())
-    const count = stub(async () => 8)
-    const findManySignups = stub(async () => [fakePodRoundSignupRow({ discordId: 'p8' })])
+    // A full table (POD_CAPACITY: 8) — count is derived from this
+    // findMany's length, not a separate .count() call.
+    const findManySignups = stub(async () => [
+      fakePodRoundSignupRow({ discordId: 'p1' }),
+      fakePodRoundSignupRow({ discordId: 'p2' }),
+      fakePodRoundSignupRow({ discordId: 'p3' }),
+      fakePodRoundSignupRow({ discordId: 'p4' }),
+      fakePodRoundSignupRow({ discordId: 'p5' }),
+      fakePodRoundSignupRow({ discordId: 'p6' }),
+      fakePodRoundSignupRow({ discordId: 'p7' }),
+      fakePodRoundSignupRow({ discordId: 'p8' }),
+    ])
     const onFiring: OnFiringHook = async () => undefined
     const createPod = stub(async () => ({
       id: 'ptp-pod-1',
@@ -504,7 +616,7 @@ describe('recordSignup', () => {
     const deps: PodServiceDeps = {
       prisma: createFakePrismaClient({
         podRound: { findUnique, update, updateMany },
-        podRoundSignup: { upsert, count, findMany: findManySignups },
+        podRoundSignup: { upsert, findMany: findManySignups },
         podRoundTarget: { findMany: stub(async () => []) },
       }),
       ptp: createFakePtpClient({ createPod }),
@@ -895,7 +1007,13 @@ describe('expireOverdueRounds', () => {
 
   it('expires a round that never reached its own minimum threshold by the deadline', async () => {
     const findManyRounds = stubPodRoundFindMany(async () => [fakePodRoundRow({ id: 'round-1', setCode: 'JTL', threshold: 6 })])
-    const count = stub(async () => 3) // below threshold: 6
+    // below threshold: 6 — count is derived from this findMany's length,
+    // not a separate .count() call.
+    const findMany = stub(async () => [
+      fakePodRoundSignupRow({ discordId: 'p1' }),
+      fakePodRoundSignupRow({ discordId: 'p2' }),
+      fakePodRoundSignupRow({ discordId: 'p3' }),
+    ])
     const updateMany = stub(async (args: PodRoundUpdateManyArgs) => {
       const expected: PodRoundUpdateManyArgs = { where: { id: 'round-1', status: 'COLLECTING' }, data: { status: 'EXPIRED' } }
       if (!deepEqual(args, expected)) throw new Error(`unexpected updateMany args: ${JSON.stringify(args)}`)
@@ -906,7 +1024,7 @@ describe('expireOverdueRounds', () => {
     ])
     const deps = buildDeps({
       podRound: { findMany: findManyRounds, updateMany },
-      podRoundSignup: { count },
+      podRoundSignup: { findMany },
       podRoundTarget: { findMany: findManyTargets },
     })
 
@@ -917,6 +1035,7 @@ describe('expireOverdueRounds', () => {
         podRoundId: 'round-1',
         setCode: 'JTL',
         outcome: 'expired',
+        signupDiscordIds: ['p1', 'p2', 'p3'],
         originGuildName: null,
         targets: [{ channelId: 'channel-1', messageId: 'msg-1' }],
       },
@@ -926,7 +1045,8 @@ describe('expireOverdueRounds', () => {
   it('fires a round short of a full table if it reached its own minimum threshold by the deadline', async () => {
     const round = fakeRoundWithOrganizer({ id: 'round-1', setCode: 'JTL', threshold: 2 })
     const findManyRounds = stubPodRoundFindMany(async () => [round])
-    const count = stub(async () => 5) // >= threshold (2), short of POD_CAPACITY (8)
+    // >= threshold (2), short of POD_CAPACITY (8) — count is derived from
+    // the findMany below's length, not a separate .count() call.
     const updateMany = stub(async (args: PodRoundUpdateManyArgs) => {
       const expected: PodRoundUpdateManyArgs = { where: { id: 'round-1', status: 'COLLECTING' }, data: { status: 'THRESHOLD_REACHED' } }
       if (!deepEqual(args, expected)) throw new Error(`unexpected updateMany args: ${JSON.stringify(args)}`)
@@ -951,14 +1071,20 @@ describe('expireOverdueRounds', () => {
         createdAt: '2026-01-01T00:00:00Z',
       }
     })
-    const findManySignups = stub(async () => [fakePodRoundSignupRow({ discordId: 'p1' })])
+    const findManySignups = stub(async () => [
+      fakePodRoundSignupRow({ discordId: 'p1' }),
+      fakePodRoundSignupRow({ discordId: 'p2' }),
+      fakePodRoundSignupRow({ discordId: 'p3' }),
+      fakePodRoundSignupRow({ discordId: 'p4' }),
+      fakePodRoundSignupRow({ discordId: 'p5' }),
+    ])
     const findManyTargets = stub(async () => [
       { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
     ])
     const deps: PodServiceDeps = {
       prisma: createFakePrismaClient({
         podRound: { findMany: findManyRounds, updateMany, update },
-        podRoundSignup: { count, findMany: findManySignups },
+        podRoundSignup: { findMany: findManySignups },
         podRoundTarget: { findMany: findManyTargets },
       }),
       ptp: createFakePtpClient({ createPod }),
@@ -978,7 +1104,7 @@ describe('expireOverdueRounds', () => {
         shareUrl: 'https://www.protectthepod.com/draft/share-1',
         chatUrl: undefined,
         chatChannelId: undefined,
-        signupDiscordIds: ['p1'],
+        signupDiscordIds: ['p1', 'p2', 'p3', 'p4', 'p5'],
         originGuildName: null,
         targets: [{ channelId: 'channel-1', messageId: 'msg-1' }],
       },
@@ -988,17 +1114,22 @@ describe('expireOverdueRounds', () => {
   it('does not surface a result when firing at the deadline fails after the claim (logs instead)', async () => {
     const round = fakeRoundWithOrganizer({ id: 'round-1', threshold: 2 })
     const findManyRounds = stubPodRoundFindMany(async () => [round])
-    const count = stub(async () => 5)
+    const findMany = stub(async () => [
+      fakePodRoundSignupRow({ discordId: 'p1' }),
+      fakePodRoundSignupRow({ discordId: 'p2' }),
+      fakePodRoundSignupRow({ discordId: 'p3' }),
+      fakePodRoundSignupRow({ discordId: 'p4' }),
+      fakePodRoundSignupRow({ discordId: 'p5' }),
+    ])
     const updateMany = stub(async () => ({ count: 1 }))
     const createPod = stub(async () => {
       throw new Error('PTP pod creation failed: 401')
     })
-    const findManySignups = stub(async () => [fakePodRoundSignupRow({ discordId: 'p1' })])
     const errors: unknown[] = []
     const deps: PodServiceDeps = {
       prisma: createFakePrismaClient({
         podRound: { findMany: findManyRounds, updateMany },
-        podRoundSignup: { count, findMany: findManySignups },
+        podRoundSignup: { findMany },
       }),
       ptp: createFakePtpClient({ createPod }),
       tokenEncryptionKey: TOKEN_KEY,
@@ -1014,10 +1145,17 @@ describe('expireOverdueRounds', () => {
   it('invokes onFiring with the right ctx before ptp.createPod, and threads chatUrl into the fired result', async () => {
     const round = fakeRoundWithOrganizer({ id: 'round-1', setCode: 'JTL', threshold: 2, organizerDiscordId: 'organizer-1' })
     const findManyRounds = stubPodRoundFindMany(async () => [round])
-    const count = stub(async () => 5)
     const updateMany = stub(async () => ({ count: 1 }))
     const update = stub(async () => fakePodRoundRow())
-    const findManySignups = stub(async () => [fakePodRoundSignupRow({ discordId: 'p1' }), fakePodRoundSignupRow({ discordId: 'p2' })])
+    // count is derived from this findMany's length, not a separate
+    // .count() call.
+    const findManySignups = stub(async () => [
+      fakePodRoundSignupRow({ discordId: 'p1' }),
+      fakePodRoundSignupRow({ discordId: 'p2' }),
+      fakePodRoundSignupRow({ discordId: 'p3' }),
+      fakePodRoundSignupRow({ discordId: 'p4' }),
+      fakePodRoundSignupRow({ discordId: 'p5' }),
+    ])
 
     const callOrder: string[] = []
     const onFiring = stub(async (ctx: Parameters<OnFiringHook>[0]) => {
@@ -1026,7 +1164,7 @@ describe('expireOverdueRounds', () => {
         setCode: 'JTL',
         organizerDiscordId: 'organizer-1',
         originGuildId: round.originGuildId,
-        signupDiscordIds: ['p1', 'p2'],
+        signupDiscordIds: ['p1', 'p2', 'p3', 'p4', 'p5'],
       })
       return { channelId: 'chat-channel-1', chatUrl: 'https://discord.com/invite/xyz789' }
     })
@@ -1045,7 +1183,7 @@ describe('expireOverdueRounds', () => {
     const deps: PodServiceDeps = {
       prisma: createFakePrismaClient({
         podRound: { findMany: findManyRounds, updateMany, update },
-        podRoundSignup: { count, findMany: findManySignups },
+        podRoundSignup: { findMany: findManySignups },
         podRoundTarget: { findMany: findManyTargets },
       }),
       ptp: createFakePtpClient({ createPod }),
@@ -1067,7 +1205,7 @@ describe('expireOverdueRounds', () => {
         shareUrl: 'https://www.protectthepod.com/draft/share-1',
         chatUrl: 'https://discord.com/invite/xyz789',
         chatChannelId: 'chat-channel-1',
-        signupDiscordIds: ['p1', 'p2'],
+        signupDiscordIds: ['p1', 'p2', 'p3', 'p4', 'p5'],
         originGuildName: null,
         targets: [{ channelId: 'channel-1', messageId: 'msg-1' }],
       },
@@ -1077,10 +1215,17 @@ describe('expireOverdueRounds', () => {
   it('omitting onFiring entirely does not change the fired outcome (regression guard)', async () => {
     const round = fakeRoundWithOrganizer({ id: 'round-1', setCode: 'JTL', threshold: 2 })
     const findManyRounds = stubPodRoundFindMany(async () => [round])
-    const count = stub(async () => 5)
     const updateMany = stub(async () => ({ count: 1 }))
     const update = stub(async () => fakePodRoundRow())
-    const findManySignups = stub(async () => [fakePodRoundSignupRow({ discordId: 'p1' })])
+    // count is derived from this findMany's length, not a separate
+    // .count() call.
+    const findManySignups = stub(async () => [
+      fakePodRoundSignupRow({ discordId: 'p1' }),
+      fakePodRoundSignupRow({ discordId: 'p2' }),
+      fakePodRoundSignupRow({ discordId: 'p3' }),
+      fakePodRoundSignupRow({ discordId: 'p4' }),
+      fakePodRoundSignupRow({ discordId: 'p5' }),
+    ])
     const createPod = stub(async () => ({
       id: 'ptp-pod-1',
       shareId: 'share-1',
@@ -1093,7 +1238,7 @@ describe('expireOverdueRounds', () => {
     const deps: PodServiceDeps = {
       prisma: createFakePrismaClient({
         podRound: { findMany: findManyRounds, updateMany, update },
-        podRoundSignup: { count, findMany: findManySignups },
+        podRoundSignup: { findMany: findManySignups },
         podRoundTarget: { findMany: findManyTargets },
       }),
       ptp: createFakePtpClient({ createPod }),
@@ -1113,7 +1258,7 @@ describe('expireOverdueRounds', () => {
         shareUrl: 'https://www.protectthepod.com/draft/share-1',
         chatUrl: undefined,
         chatChannelId: undefined,
-        signupDiscordIds: ['p1'],
+        signupDiscordIds: ['p1', 'p2', 'p3', 'p4', 'p5'],
         originGuildName: null,
         targets: [{ channelId: 'channel-1', messageId: 'msg-1' }],
       },
@@ -1122,14 +1267,20 @@ describe('expireOverdueRounds', () => {
 
   it('skips a round that another concurrent sweep (or a racing signup) already claimed', async () => {
     const findManyRounds = stubPodRoundFindMany(async () => [fakePodRoundRow({ id: 'round-1' })])
-    const count = stub(async () => 3) // below the default threshold (8) — takes the expire path
+    // below the default threshold (8) — takes the expire path; count is
+    // derived from this findMany's length, not a separate .count() call.
+    const findMany = stub(async () => [
+      fakePodRoundSignupRow({ discordId: 'p1' }),
+      fakePodRoundSignupRow({ discordId: 'p2' }),
+      fakePodRoundSignupRow({ discordId: 'p3' }),
+    ])
     const updateMany = stub(async () => ({ count: 0 }))
     const findManyTargets = stub(async () => {
       throw new Error('podRoundTarget.findMany should not have been called for an unclaimed round')
     })
     const deps = buildDeps({
       podRound: { findMany: findManyRounds, updateMany },
-      podRoundSignup: { count },
+      podRoundSignup: { findMany },
       podRoundTarget: { findMany: findManyTargets },
     })
 

@@ -26,7 +26,6 @@ type PodRoundTargetUpdateArgs = Parameters<AppPrismaClient['podRoundTarget']['up
 type PodRoundTargetFindManyArgs = Parameters<AppPrismaClient['podRoundTarget']['findMany']>[0]
 type PodRoundSignupUpsertArgs = Parameters<AppPrismaClient['podRoundSignup']['upsert']>[0]
 type PodRoundSignupRow = Awaited<ReturnType<AppPrismaClient['podRoundSignup']['upsert']>>
-type PodRoundSignupCountArgs = Parameters<AppPrismaClient['podRoundSignup']['count']>[0]
 
 function fakePodRoundRow(overrides: Partial<PodRoundRow> = {}): PodRoundRow {
   return {
@@ -385,12 +384,20 @@ describe('POST /pods/:id/signup', () => {
       if (!deepEqual(args, expected)) throw new Error(`unexpected signup upsert args: ${JSON.stringify(args)}`)
       return fakePodRoundSignupRow()
     })
-    const count = stub(async (_args: PodRoundSignupCountArgs) => 5)
+    // count is derived from this findMany's length, not a separate
+    // .count() call.
+    const findMany = stub(async (_args: unknown) => [
+      fakePodRoundSignupRow({ discordId: 'player-1' }),
+      fakePodRoundSignupRow({ discordId: 'player-2' }),
+      fakePodRoundSignupRow({ discordId: 'player-3' }),
+      fakePodRoundSignupRow({ discordId: 'player-4' }),
+      fakePodRoundSignupRow({ discordId: 'player-5' }),
+    ])
     const createPod = stub(async (_token: string, _params: CreatePodParams) => {
       throw new Error('createPod should not have been called below threshold')
     })
     const { app } = buildApp({
-      prisma: { podRound: { findUnique }, podRoundSignup: { upsert, count } },
+      prisma: { podRound: { findUnique }, podRoundSignup: { upsert, findMany } },
       ptp: { createPod },
     })
 
@@ -406,6 +413,7 @@ describe('POST /pods/:id/signup', () => {
       setCode: 'JTL',
       full: false,
       podCreated: false,
+      signupDiscordIds: ['player-1', 'player-2', 'player-3', 'player-4', 'player-5'],
       originGuildName: null,
       scheduledFor: null,
       targets: [],
@@ -429,13 +437,18 @@ describe('POST /pods/:id/signup', () => {
       if (!deepEqual(args, expected)) throw new Error(`unexpected signup upsert args: ${JSON.stringify(args)}`)
       return fakePodRoundSignupRow({ status: 'LEFT' })
     })
-    // podRoundSignup.count already filters `status: 'IN'` in production
+    // podRoundSignup.findMany already filters `status: 'IN'` in production
     // code (unchanged by this fix) — a player whose upsert just wrote
-    // LEFT is excluded from the next count query for real, in Postgres.
+    // LEFT is excluded from the next findMany query for real, in Postgres.
     // This test proves the write side; the read side is covered by the
-    // "below threshold" test above using the same count() filter.
-    const count = stub(async (_args: PodRoundSignupCountArgs) => 4)
-    const { app } = buildApp({ prisma: { podRound: { findUnique }, podRoundSignup: { upsert, count } } })
+    // "below threshold" test above using the same findMany filter.
+    const findMany = stub(async (_args: unknown) => [
+      fakePodRoundSignupRow({ discordId: 'player-2' }),
+      fakePodRoundSignupRow({ discordId: 'player-3' }),
+      fakePodRoundSignupRow({ discordId: 'player-4' }),
+      fakePodRoundSignupRow({ discordId: 'player-5' }),
+    ])
+    const { app } = buildApp({ prisma: { podRound: { findUnique }, podRoundSignup: { upsert, findMany } } })
 
     const response = await app.inject({
       method: 'POST',
@@ -468,8 +481,10 @@ describe('POST /pods/:id/signup', () => {
       return fakePodRoundRow()
     })
     const upsert = stub(async (_args: PodRoundSignupUpsertArgs) => fakePodRoundSignupRow())
-    const count = stub(async (_args: PodRoundSignupCountArgs) => 8)
-    const findManySignups = stub(async (_args: unknown) => [fakePodRoundSignupRow({ discordId: 'player-8' })])
+    // A full table (POD_CAPACITY: 8) — count is derived from this
+    // findMany's length, not a separate .count() call.
+    const eightSignupIds = ['player-1', 'player-2', 'player-3', 'player-4', 'player-5', 'player-6', 'player-7', 'player-8']
+    const findManySignups = stub(async (_args: unknown) => eightSignupIds.map((discordId) => fakePodRoundSignupRow({ discordId })))
     const findManyTargets = stub(async (_args: PodRoundTargetFindManyArgs) => targetRows)
     const createPod = stub(async (token: string, params: CreatePodParams) => {
       const validArgs = token === 'a-real-token' && deepEqual(params, { setCode: 'JTL', maxPlayers: 8 })
@@ -484,7 +499,7 @@ describe('POST /pods/:id/signup', () => {
     const { app } = buildApp({
       prisma: {
         podRound: { findUnique, update, updateMany },
-        podRoundSignup: { upsert, count, findMany: findManySignups },
+        podRoundSignup: { upsert, findMany: findManySignups },
         podRoundTarget: { findMany: findManyTargets },
       },
       ptp: { createPod },
@@ -503,7 +518,7 @@ describe('POST /pods/:id/signup', () => {
       full: true,
       podCreated: true,
       shareUrl: 'https://www.protectthepod.com/draft/share-1',
-      signupDiscordIds: ['player-8'],
+      signupDiscordIds: eightSignupIds,
       originGuildName: null,
       scheduledFor: null,
       targets: targetRows.map((t) => ({ guildId: t.guildId, channelId: t.channelId, messageId: t.messageId })),
@@ -534,8 +549,13 @@ describe('POST /pods/:id/signup', () => {
       return fakePodRoundRow()
     })
     const upsert = stub(async (_args: PodRoundSignupUpsertArgs) => fakePodRoundSignupRow())
-    const count = stub(async (_args: PodRoundSignupCountArgs) => 8)
-    const findManySignups = stub(async (_args: unknown) => [fakePodRoundSignupRow({ discordId: 'player-7' })])
+    // A full table (POD_CAPACITY: 8) — count is derived from this
+    // findMany's length, not a separate .count() call.
+    const findManySignups = stub(async (_args: unknown) =>
+      ['player-1', 'player-2', 'player-3', 'player-4', 'player-5', 'player-6', 'player-7', 'player-8'].map((discordId) =>
+        fakePodRoundSignupRow({ discordId })
+      )
+    )
     const createPod = stub(async (_token: string, _params: CreatePodParams) => ({
       id: 'ptp-pod-1',
       shareId: 'share-1',
@@ -543,7 +563,7 @@ describe('POST /pods/:id/signup', () => {
       createdAt: '2026-01-01T00:00:00Z',
     }))
     const { app } = buildApp({
-      prisma: { podRound: { findUnique, update, updateMany }, podRoundSignup: { upsert, count, findMany: findManySignups } },
+      prisma: { podRound: { findUnique, update, updateMany }, podRoundSignup: { upsert, findMany: findManySignups } },
       ptp: { createPod },
     })
 
@@ -588,13 +608,18 @@ describe('POST /pods/:id/signup', () => {
       throw new Error('podRound.update should not have been called')
     })
     const upsert = stub(async (_args: PodRoundSignupUpsertArgs) => fakePodRoundSignupRow())
-    const count = stub(async (_args: PodRoundSignupCountArgs) => 8)
-    const findManySignups = stub(async (_args: unknown) => [fakePodRoundSignupRow({ discordId: 'player-8' })])
+    // A full table (POD_CAPACITY: 8) — count is derived from this
+    // findMany's length, not a separate .count() call.
+    const findManySignups = stub(async (_args: unknown) =>
+      ['player-1', 'player-2', 'player-3', 'player-4', 'player-5', 'player-6', 'player-7', 'player-8'].map((discordId) =>
+        fakePodRoundSignupRow({ discordId })
+      )
+    )
     const createPod = stub(async (_token: string, _params: CreatePodParams) => {
       throw new Error('PTP pod creation failed: 401')
     })
     const { app } = buildApp({
-      prisma: { podRound: { findUnique, update, updateMany }, podRoundSignup: { upsert, count, findMany: findManySignups } },
+      prisma: { podRound: { findUnique, update, updateMany }, podRoundSignup: { upsert, findMany: findManySignups } },
       ptp: { createPod },
     })
 
@@ -624,14 +649,14 @@ describe('POST /pods/:id/signup', () => {
     const upsert = stub(async (_args: PodRoundSignupUpsertArgs) => {
       throw new Error('podRoundSignup.upsert should not have been called')
     })
-    const count = stub(async (_args: PodRoundSignupCountArgs) => {
-      throw new Error('podRoundSignup.count should not have been called')
+    const findMany = stub(async (_args: unknown) => {
+      throw new Error('podRoundSignup.findMany should not have been called')
     })
     const createPod = stub(async (_token: string, _params: CreatePodParams) => {
       throw new Error('createPod should not have been called')
     })
     const { app } = buildApp({
-      prisma: { podRound: { findUnique, update }, podRoundSignup: { upsert, count } },
+      prisma: { podRound: { findUnique, update }, podRoundSignup: { upsert, findMany } },
       ptp: { createPod },
     })
 

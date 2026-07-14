@@ -43,6 +43,7 @@ export async function expireOverduePodRounds(
         shareUrl: round.shareUrl,
         originGuildName: round.originGuildName,
         chatUrl: round.chatUrl,
+        signupDiscordIds: round.signupDiscordIds,
       })
     } else {
       expired++

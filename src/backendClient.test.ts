@@ -192,10 +192,18 @@ describe('LocalBackendClient', () => {
       status: 'IN' as const,
       signedUpAt: new Date(),
     }))
-    const count = stub(async (_args: unknown) => 8)
-    const findManySignups = stub(async (_args: unknown) => [
-      { podRoundId: 'round-1', discordId: 'p8', usernameSnapshot: 'P8', sourceGuildId: 'g1', status: 'IN' as const, signedUpAt: new Date() },
-    ])
+    // A full table (POD_CAPACITY: 8) — count is derived from this
+    // findMany's length, not a separate .count() call.
+    const findManySignups = stub(async (_args: unknown) =>
+      ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'].map((discordId) => ({
+        podRoundId: 'round-1',
+        discordId,
+        usernameSnapshot: discordId,
+        sourceGuildId: 'g1',
+        status: 'IN' as const,
+        signedUpAt: new Date(),
+      }))
+    )
     const findManyTargets = stub(async (_args: unknown) => [])
     const updateMany = stub(async (_args: unknown) => ({ count: 1 }))
     const update = stub(async (_args: unknown) => ({
@@ -226,7 +234,7 @@ describe('LocalBackendClient', () => {
     const backendClient = new LocalBackendClient({
       prisma: createFakePrismaClient({
         podRound: { findUnique, updateMany, update },
-        podRoundSignup: { upsert, count, findMany: findManySignups },
+        podRoundSignup: { upsert, findMany: findManySignups },
         podRoundTarget: { findMany: findManyTargets },
       }),
       ptp: createFakePtpClient({ createPod }),
@@ -243,7 +251,7 @@ describe('LocalBackendClient', () => {
       shareUrl: 'https://www.protectthepod.com/draft/share-1',
       chatUrl: 'https://discord.com/invite/abc123',
       chatChannelId: 'chat-channel-1',
-      signupDiscordIds: ['p8'],
+      signupDiscordIds: ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'],
       scheduledFor: null,
     })
   })
@@ -280,13 +288,19 @@ describe('LocalBackendClient', () => {
       status: 'IN' as const,
       signedUpAt: new Date(),
     }))
-    const count = stub(async (_args: unknown) => 3) // below POD_CAPACITY — no fire, no findMany needed
+    // Below POD_CAPACITY — no fire, so fireRound's own separate findMany
+    // never runs; only recordSignup's own unconditional findMany does.
+    const findManySignups = stub(async (_args: unknown) => [
+      { podRoundId: 'round-1', discordId: 'p8', usernameSnapshot: 'P8', sourceGuildId: 'g1', status: 'IN' as const, signedUpAt: new Date() },
+      { podRoundId: 'round-1', discordId: 'p9', usernameSnapshot: 'P9', sourceGuildId: 'g1', status: 'IN' as const, signedUpAt: new Date() },
+      { podRoundId: 'round-1', discordId: 'p10', usernameSnapshot: 'P10', sourceGuildId: 'g1', status: 'IN' as const, signedUpAt: new Date() },
+    ])
     const findManyTargets = stub(async (_args: unknown) => [])
 
     const backendClient = new LocalBackendClient({
       prisma: createFakePrismaClient({
         podRound: { findUnique },
-        podRoundSignup: { upsert, count },
+        podRoundSignup: { upsert, findMany: findManySignups },
         podRoundTarget: { findMany: findManyTargets },
       }),
       ptp: createFakePtpClient(),
@@ -297,7 +311,18 @@ describe('LocalBackendClient', () => {
     const result = await backendClient.recordSignup('round-1', 'p8', 'P8', 'g1', 'in')
 
     expect(result.ok).toBe(true)
-    expect(result.ok && result.value).toMatchObject({ full: false, podCreated: false, chatUrl: undefined, scheduledFor: null })
+    // Sorted by usernameSnapshot (alphabetical, not numeric) — "P10" sorts
+    // before "P8"/"P9" as a string, which is exactly why this fixture uses
+    // double-digit vs. single-digit usernames: it's the one test in this
+    // file where the sort actually reorders something, rather than being a
+    // stable no-op over identical/already-sorted usernames.
+    expect(result.ok && result.value).toMatchObject({
+      full: false,
+      podCreated: false,
+      chatUrl: undefined,
+      scheduledFor: null,
+      signupDiscordIds: ['p10', 'p8', 'p9'],
+    })
   })
 
   it('delegates cancelPod to podRound.findUnique + update, returning a forbidden error for a non-organizer requester', async () => {

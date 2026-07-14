@@ -124,7 +124,7 @@ export interface RecordSignupResult {
   shareUrl?: string
   chatUrl?: string
   chatChannelId?: string
-  signupDiscordIds?: string[]
+  signupDiscordIds: string[]
   originGuildName: string | null
   scheduledFor: Date | null
   targets: Array<{ guildId: string; channelId: string; messageId: string | null }>
@@ -292,24 +292,43 @@ export async function recordSignup(
     update: { status },
   })
 
-  const count = await deps.prisma.podRoundSignup.count({
+  // Single findMany instead of a separate count-then-list pair — count is
+  // just the result's length, and signupDiscordIds (below) needs this same
+  // row set anyway for the "Players:" line (discord/podMessage.ts). One
+  // query instead of two also closes a tiny theoretical race between a
+  // separate count and list read landing on different underlying data.
+  const signups = await deps.prisma.podRoundSignup.findMany({
     where: { podRoundId, status: 'IN' },
   })
+  const count = signups.length
+  // Sorted by the username captured at signup time (not a live lookup —
+  // this function is Discord-agnostic) so the "Players:" list renders in a
+  // stable, predictable order rather than insertion order; discord/
+  // podMessage.ts still renders each entry as a live `<@id>` mention, this
+  // sort only controls the list's order, not what text is actually shown.
+  const signupDiscordIds = [...signups]
+    .sort((a, b) => a.usernameSnapshot.localeCompare(b.usernameSnapshot, undefined, { sensitivity: 'base' }))
+    .map((s) => s.discordId)
 
   const full = count >= POD_CAPACITY
   let podCreated = false
   let shareUrl: string | undefined
   let chatUrl: string | undefined
   let chatChannelId: string | undefined
-  let signupDiscordIds: string[] | undefined
 
   if (full && round.status === 'COLLECTING') {
+    // fireRound does its own separate signupDiscordIds fetch internally
+    // (for the chat-channel/DM feature — see its FireRoundResult) — not
+    // reused here to keep that fetch's purpose and this function's own
+    // list-for-the-message-body purpose independent. In practice the two
+    // are identical (nothing else touches podRoundSignup between them), so
+    // this function's own `signupDiscordIds` above is used for the
+    // returned field either way; fireResult.signupDiscordIds is discarded.
     const fireResult = await fireRound(deps, round, onFiring)
     podCreated = fireResult.podCreated
     shareUrl = fireResult.shareUrl
     chatUrl = fireResult.chatUrl
     chatChannelId = fireResult.chatChannelId
-    signupDiscordIds = fireResult.signupDiscordIds
   }
 
   // Every target for the round, not just sourceGuildId's — the caller
@@ -526,7 +545,14 @@ export async function concludeActiveRound(
 type ExpiredRoundTarget = { channelId: string; messageId: string | null }
 
 export type ExpiredRoundInfo =
-  | { podRoundId: string; setCode: string; outcome: 'expired'; originGuildName: string | null; targets: ExpiredRoundTarget[] }
+  | {
+      podRoundId: string
+      setCode: string
+      outcome: 'expired'
+      signupDiscordIds: string[]
+      originGuildName: string | null
+      targets: ExpiredRoundTarget[]
+    }
   | {
       podRoundId: string
       setCode: string
@@ -536,7 +562,7 @@ export type ExpiredRoundInfo =
       shareUrl?: string
       chatUrl?: string
       chatChannelId?: string
-      signupDiscordIds?: string[]
+      signupDiscordIds: string[]
       originGuildName: string | null
       targets: ExpiredRoundTarget[]
     }
@@ -560,9 +586,24 @@ export async function expireOverdueRounds(deps: PodServiceDeps, onFiring?: OnFir
 
   const results: ExpiredRoundInfo[] = []
   for (const round of candidates) {
-    const count = await deps.prisma.podRoundSignup.count({
+    // Single findMany instead of a separate count-then-list pair, same
+    // restructuring as recordSignup above — count is just the result's
+    // length, and signupDiscordIds is needed either way for the message
+    // body's "Players:" line (discord/podMessage.ts). Fetched before firing
+    // is even attempted, so it's a superset-safe source of truth for "who's
+    // signed up" — used for both outcomes below rather than mixing in
+    // fireRound's own separate internal fetch (which exists for the
+    // chat-channel/DM feature, a different purpose).
+    const signups = await deps.prisma.podRoundSignup.findMany({
       where: { podRoundId: round.id, status: 'IN' },
     })
+    const count = signups.length
+    // Sorted by signup-time username snapshot — see the matching comment
+    // in recordSignup above for why (stable "Players:" list order, this
+    // sort doesn't affect what discord/podMessage.ts actually renders).
+    const signupDiscordIds = [...signups]
+      .sort((a, b) => a.usernameSnapshot.localeCompare(b.usernameSnapshot, undefined, { sensitivity: 'base' }))
+      .map((s) => s.discordId)
 
     if (count >= round.threshold) {
       const fireResult = await fireRound(deps, round, onFiring)
@@ -578,7 +619,7 @@ export async function expireOverdueRounds(deps: PodServiceDeps, onFiring?: OnFir
         shareUrl: fireResult.shareUrl,
         chatUrl: fireResult.chatUrl,
         chatChannelId: fireResult.chatChannelId,
-        signupDiscordIds: fireResult.signupDiscordIds,
+        signupDiscordIds,
         originGuildName: round.originGuildName,
         targets: targetRows.map((t) => ({ channelId: t.channelId, messageId: t.messageId })),
       })
@@ -594,6 +635,7 @@ export async function expireOverdueRounds(deps: PodServiceDeps, onFiring?: OnFir
     const targetRows = await deps.prisma.podRoundTarget.findMany({ where: { podRoundId: round.id } })
     results.push({
       podRoundId: round.id,
+      signupDiscordIds,
       setCode: round.setCode,
       outcome: 'expired',
       originGuildName: round.originGuildName,

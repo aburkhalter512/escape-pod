@@ -95,14 +95,20 @@ describe('buildPodRoundMessage', () => {
     expect(body.embeds[0].description).not.toContain('Fires automatically')
   })
 
-  it("shows the origin guild's name in the footer when present", () => {
+  it("shows the origin guild's name as an Organizer line in the description when present", () => {
     const body = buildPodRoundMessage({ podRoundId: 'round-1', setCode: 'JTL', threshold: 8, count: 5, originGuildName: 'Sister Community' })
 
-    expect(body.embeds[0].footer?.text).toContain('Sister Community')
+    expect(body.embeds[0].description).toContain('Organizer: Sister Community')
   })
 
-  it('omits the footer entirely when there is no origin guild name', () => {
+  it('omits the Organizer line entirely when there is no origin guild name', () => {
     const body = buildPodRoundMessage({ podRoundId: 'round-1', setCode: 'JTL', threshold: 8, count: 5 })
+
+    expect(body.embeds[0].description).not.toContain('Organizer:')
+  })
+
+  it('no longer sets a footer at all (moved into the description body)', () => {
+    const body = buildPodRoundMessage({ podRoundId: 'round-1', setCode: 'JTL', threshold: 8, count: 5, originGuildName: 'Sister Community' })
 
     expect(body.embeds[0].footer).toBeUndefined()
   })
@@ -117,7 +123,7 @@ describe('buildPodRoundMessage', () => {
       originGuildName: 'Sister Community',
     })
 
-    expect(body.embeds[0].footer?.text).toContain('Sister Community')
+    expect(body.embeds[0].description).toContain('Organizer: Sister Community')
   })
 
   it('adds a "Join the chat" link button alongside "Join the draft" once fired, when chatUrl is present', () => {
@@ -159,6 +165,82 @@ describe('buildPodRoundMessage', () => {
     expect(buttons).toHaveLength(1)
     expect(buttons.some((b) => (b as { label?: string }).label === 'Join the chat')).toBe(false)
   })
+
+  it('shows a Players line as a bulleted list of mentions for everyone signed up while still collecting', () => {
+    const body = buildPodRoundMessage({
+      podRoundId: 'round-1',
+      setCode: 'JTL',
+      threshold: 8,
+      count: 2,
+      signupDiscordIds: ['p1', 'p2'],
+    })
+
+    expect(body.embeds[0].description).toContain('Players:\n- <@p1>\n- <@p2>')
+  })
+
+  it('omits the Players line entirely when signupDiscordIds is empty (freshly-posted round)', () => {
+    const body = buildPodRoundMessage({
+      podRoundId: 'round-1',
+      setCode: 'JTL',
+      threshold: 8,
+      count: 0,
+      signupDiscordIds: [],
+    })
+
+    expect(body.embeds[0].description).not.toContain('Players:')
+  })
+
+  it('omits the Players line entirely when signupDiscordIds is undefined', () => {
+    const body = buildPodRoundMessage({ podRoundId: 'round-1', setCode: 'JTL', threshold: 8, count: 5 })
+
+    expect(body.embeds[0].description).not.toContain('Players:')
+  })
+
+  it('shows a Players line as a bulleted list of mentions for everyone signed up once fired/full', () => {
+    const body = buildPodRoundMessage({
+      podRoundId: 'round-1',
+      setCode: 'JTL',
+      threshold: 8,
+      count: 8,
+      shareUrl: 'https://www.protectthepod.com/draft/share-1',
+      signupDiscordIds: ['p1', 'p2', 'p3'],
+    })
+
+    expect(body.embeds[0].description).toContain('Players:\n- <@p1>\n- <@p2>\n- <@p3>')
+  })
+
+  it('omits the Players line in the fired embed when signupDiscordIds is empty/undefined', () => {
+    const body = buildPodRoundMessage({
+      podRoundId: 'round-1',
+      setCode: 'JTL',
+      threshold: 8,
+      count: 8,
+      shareUrl: 'https://www.protectthepod.com/draft/share-1',
+    })
+
+    expect(body.embeds[0].description).not.toContain('Players:')
+  })
+
+  it('includes both the Organizer and Players lines together, in order, with no stray blank lines', () => {
+    const body = buildPodRoundMessage({
+      podRoundId: 'round-1',
+      setCode: 'JTL',
+      threshold: 8,
+      count: 2,
+      originGuildName: 'Sister Community',
+      signupDiscordIds: ['p1', 'p2'],
+    })
+
+    const description = body.embeds[0].description ?? ''
+    const lines = description.split('\n')
+    expect(lines).toEqual([
+      '2/8 confirmed.',
+      'Organizer: Sister Community',
+      'Players:',
+      '- <@p1>',
+      '- <@p2>',
+    ])
+  })
 })
 
 describe('buildCancelledPodMessage', () => {
@@ -170,16 +252,28 @@ describe('buildCancelledPodMessage', () => {
     expect(body.components).toHaveLength(0)
   })
 
-  it("shows the origin guild's name in the footer when present", () => {
+  it("shows the origin guild's name as an Organizer line in the description when present", () => {
     const body = buildCancelledPodMessage('JTL', 'Sister Community')
 
-    expect(body.embeds[0].footer?.text).toContain('Sister Community')
+    expect(body.embeds[0].description).toContain('Organizer: Sister Community')
   })
 
-  it('omits the footer when there is no origin guild name', () => {
+  it('omits the Organizer line when there is no origin guild name', () => {
     const body = buildCancelledPodMessage('JTL')
 
+    expect(body.embeds[0].description).not.toContain('Organizer:')
+  })
+
+  it('no longer sets a footer at all (moved into the description body)', () => {
+    const body = buildCancelledPodMessage('JTL', 'Sister Community')
+
     expect(body.embeds[0].footer).toBeUndefined()
+  })
+
+  it('never shows a Players line (cancelled messages do not take signupDiscordIds)', () => {
+    const body = buildCancelledPodMessage('JTL', 'Sister Community')
+
+    expect(body.embeds[0].description).not.toContain('Players:')
   })
 })
 
@@ -200,10 +294,28 @@ describe('buildExpiredPodMessage', () => {
     expect(expired.embeds[0].color).not.toBe(cancelled.embeds[0].color)
   })
 
-  it("shows the origin guild's name in the footer when present", () => {
+  it("shows the origin guild's name as an Organizer line in the description when present", () => {
     const body = buildExpiredPodMessage('JTL', 'Sister Community')
 
-    expect(body.embeds[0].footer?.text).toContain('Sister Community')
+    expect(body.embeds[0].description).toContain('Organizer: Sister Community')
+  })
+
+  it('omits the Organizer line when there is no origin guild name', () => {
+    const body = buildExpiredPodMessage('JTL')
+
+    expect(body.embeds[0].description).not.toContain('Organizer:')
+  })
+
+  it('no longer sets a footer at all (moved into the description body)', () => {
+    const body = buildExpiredPodMessage('JTL', 'Sister Community')
+
+    expect(body.embeds[0].footer).toBeUndefined()
+  })
+
+  it('never shows a Players line (expired messages do not take signupDiscordIds)', () => {
+    const body = buildExpiredPodMessage('JTL', 'Sister Community')
+
+    expect(body.embeds[0].description).not.toContain('Players:')
   })
 })
 
@@ -228,14 +340,20 @@ describe('buildConcludedPodMessage', () => {
     expect(concluded.embeds[0].color).not.toBe(full.embeds[0].color)
   })
 
-  it("shows the origin guild's name in the footer when present", () => {
+  it("shows the origin guild's name as an Organizer line in the description when present", () => {
     const body = buildConcludedPodMessage('JTL', 'Sister Community')
 
-    expect(body.embeds[0].footer?.text).toContain('Sister Community')
+    expect(body.embeds[0].description).toContain('Organizer: Sister Community')
   })
 
-  it('omits the footer when there is no origin guild name', () => {
+  it('omits the Organizer line when there is no origin guild name', () => {
     const body = buildConcludedPodMessage('JTL')
+
+    expect(body.embeds[0].description).not.toContain('Organizer:')
+  })
+
+  it('no longer sets a footer at all (moved into the description body)', () => {
+    const body = buildConcludedPodMessage('JTL', 'Sister Community')
 
     expect(body.embeds[0].footer).toBeUndefined()
   })
