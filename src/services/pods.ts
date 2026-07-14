@@ -163,6 +163,56 @@ export type OnFiringHook = (ctx: {
   signupDiscordIds: string[]
 }) => Promise<{ channelId: string; chatUrl: string } | undefined>
 
+interface AttemptPodCreationResult {
+  podCreated: boolean
+  shareUrl?: string
+}
+
+// The one PTP-touching step shared by fireRound's first attempt (below) and
+// retryFailedFires's later retries of an already-claimed round (see below)
+// — decrypts the organizer's token, calls ptp.createPod, and on success
+// updates the round to POD_CREATED (persisting chatChannelId alongside it,
+// if one was already recorded). Deliberately does NOT touch the
+// COLLECTING -> THRESHOLD_REACHED claim, the signups fetch, or onFiring —
+// those only ever happen once, on the first attempt (see fireRound); a
+// retry re-runs only this step against a round that's already
+// THRESHOLD_REACHED with its chat channel (if any) already created. On
+// failure this logs and returns podCreated: false rather than throwing —
+// same never-throws contract fireRound's own try/catch used to have
+// inline, now shared by both callers.
+async function attemptPodCreation(
+  deps: PodServiceDeps,
+  round: RoundWithOrganizer,
+  chatChannelId: string | undefined
+): Promise<AttemptPodCreationResult> {
+  try {
+    const token = decryptToken(round.organizer.encryptedToken, deps.tokenEncryptionKey)
+    const result = await deps.ptp.createPod(token, {
+      setCode: round.setCode,
+      maxPlayers: POD_CAPACITY,
+    })
+    await deps.prisma.podRound.update({
+      where: { id: round.id },
+      data: {
+        status: 'POD_CREATED',
+        ptpPodShareId: result.shareId,
+        ...(chatChannelId ? { chatChannelId } : {}),
+      },
+    })
+    return { podCreated: true, shareUrl: result.shareUrl }
+  } catch (err) {
+    // Pod creation failed (e.g. expired/revoked token) even though we've
+    // hit the fire condition — the round is already at THRESHOLD_REACHED
+    // (set by the claim in fireRound, before this ever runs), so this
+    // doesn't silently retry on every subsequent signup or sweep tick on
+    // its own. The bounded retry sweep (retryFailedFires below) is what
+    // actually retries this, and eventually gives up with a visible
+    // notification if it keeps failing.
+    deps.logger.error({ err, podRoundId: round.id }, 'PTP pod creation failed after threshold reached')
+    return { podCreated: false }
+  }
+}
+
 // Atomically claims a COLLECTING round for firing (see tasks/001) and, if
 // this call won the claim, creates the PTP pod. Always sized to
 // POD_CAPACITY, never to however many players actually committed —
@@ -188,9 +238,13 @@ async function fireRound(
   // sees count: 0 and skips PTP entirely. The claim itself lands on
   // THRESHOLD_REACHED — so a claim that's never followed by a successful
   // create still leaves the round in a correct, non-retrying state.
+  // thresholdReachedAt is stamped in this same call — it's the one
+  // unambiguous "this round got claimed" moment, and the retry sweep
+  // (retryFailedFires below) needs it to know how long a stuck round has
+  // been waiting.
   const claim = await deps.prisma.podRound.updateMany({
     where: { id: round.id, status: 'COLLECTING' },
-    data: { status: 'THRESHOLD_REACHED' },
+    data: { status: 'THRESHOLD_REACHED', thresholdReachedAt: new Date() },
   })
   if (claim.count !== 1) {
     return { claimed: false, podCreated: false }
@@ -218,29 +272,14 @@ async function fireRound(
     chatChannelId = chatSpace?.channelId
   }
 
-  try {
-    const token = decryptToken(round.organizer.encryptedToken, deps.tokenEncryptionKey)
-    const result = await deps.ptp.createPod(token, {
-      setCode: round.setCode,
-      maxPlayers: POD_CAPACITY,
-    })
-    await deps.prisma.podRound.update({
-      where: { id: round.id },
-      data: {
-        status: 'POD_CREATED',
-        ptpPodShareId: result.shareId,
-        ...(chatChannelId ? { chatChannelId } : {}),
-      },
-    })
-    return { claimed: true, podCreated: true, shareUrl: result.shareUrl, chatUrl, chatChannelId, signupDiscordIds }
-  } catch (err) {
-    // Pod creation failed (e.g. expired/revoked token) even though we've
-    // hit the fire condition — the claim above already recorded
-    // THRESHOLD_REACHED, so this doesn't silently retry on every
-    // subsequent signup or sweep. Needs an operator-facing alert path, not
-    // yet built.
-    deps.logger.error({ err, podRoundId: round.id }, 'PTP pod creation failed after threshold reached')
-    return { claimed: true, podCreated: false, chatUrl, chatChannelId, signupDiscordIds }
+  const attempt = await attemptPodCreation(deps, round, chatChannelId)
+  return {
+    claimed: true,
+    podCreated: attempt.podCreated,
+    shareUrl: attempt.shareUrl,
+    chatUrl,
+    chatChannelId,
+    signupDiscordIds,
   }
 }
 
@@ -638,6 +677,143 @@ export async function expireOverdueRounds(deps: PodServiceDeps, onFiring?: OnFir
       signupDiscordIds,
       setCode: round.setCode,
       outcome: 'expired',
+      originGuildName: round.originGuildName,
+      targets: targetRows.map((t) => ({ channelId: t.channelId, messageId: t.messageId })),
+    })
+  }
+
+  return results
+}
+
+// Bounded window a round is allowed to keep retrying pod creation after its
+// initial fireRound attempt failed (see issue #5 — a round stuck at
+// THRESHOLD_REACHED with a failed PTP call used to notify no one). Once a
+// round has been stuck this long without a successful create, retryFailedFires
+// below gives up and sends a one-time visible failure notification instead
+// of continuing to retry silently forever.
+const RETRY_WINDOW_MS = 30 * 60 * 1000
+
+type RetryRoundTarget = { channelId: string; messageId: string | null }
+
+export type RetryFireResult =
+  | {
+      podRoundId: string
+      setCode: string
+      outcome: 'succeeded'
+      count: number
+      shareUrl: string
+      chatUrl?: string
+      chatChannelId?: string
+      signupDiscordIds: string[]
+      originGuildName: string | null
+      targets: RetryRoundTarget[]
+    }
+  | {
+      podRoundId: string
+      setCode: string
+      outcome: 'gave-up'
+      originGuildName: string | null
+      targets: RetryRoundTarget[]
+    }
+
+// Opaque, plain-data hook invoked only for a round that (a) just succeeded
+// on retry and (b) already has a chat channel from its first attempt — asks
+// the Discord-touching caller for a fresh invite link into that *existing*
+// channel. Never recreates the channel or its permission overwrites (those
+// already happened during the original fireRound call); see
+// discord/podChat.ts's refreshPodChatInvite, the one real implementation.
+// Same Discord-agnostic-services boundary rationale as OnFiringHook above —
+// this file only ever deals in plain data in, a plain optional URL back out.
+export type OnRetrySuccessHook = (ctx: { chatChannelId: string }) => Promise<string | undefined>
+
+// Runs on a periodic sweep (jobs/retryFailedFires.ts), not on any user
+// action — finds every round stuck at THRESHOLD_REACHED whose initial
+// fireRound attempt failed to create the PTP pod (issue #5: previously such
+// a round just sat there forever with zero visible signal to anyone).
+// Query excludes fireFailureNotified: true so a round that already got its
+// one give-up notification is never re-processed or re-notified on a later
+// tick. For each candidate still within RETRY_WINDOW_MS of its
+// thresholdReachedAt, this re-attempts only the PTP-creation step (via
+// attemptPodCreation) — NOT the original claim, signups fetch, or onFiring
+// chat-channel creation, all of which only ever happen once, during the
+// first fireRound call. A round past the window (or with a null
+// thresholdReachedAt — pre-migration data, or any other edge case that
+// shouldn't crash this) gives up: fireFailureNotified is set so this never
+// re-fires for that round again, but status stays THRESHOLD_REACHED,
+// deliberately not auto-cancelled — still manually cancellable via
+// /cancel-pod, preserving the ability to retry a still-recoverable round by
+// hand if the operator intervenes.
+export async function retryFailedFires(
+  deps: PodServiceDeps,
+  onRetrySuccess?: OnRetrySuccessHook
+): Promise<RetryFireResult[]> {
+  const candidates = await deps.prisma.podRound.findMany({
+    where: { status: 'THRESHOLD_REACHED', fireFailureNotified: false },
+    include: { organizer: true },
+  })
+
+  const results: RetryFireResult[] = []
+  const now = Date.now()
+
+  for (const round of candidates) {
+    const stuckSince = round.thresholdReachedAt?.getTime()
+    const withinWindow = stuckSince !== undefined && now - stuckSince < RETRY_WINDOW_MS
+
+    if (withinWindow) {
+      // Single findMany instead of a separate count-then-list pair, same
+      // restructuring as recordSignup/expireOverdueRounds above — count is
+      // just the result's length, and signupDiscordIds is needed either way
+      // for the succeeded result's "Players:" line (discord/podMessage.ts).
+      const signups = await deps.prisma.podRoundSignup.findMany({
+        where: { podRoundId: round.id, status: 'IN' },
+      })
+      const count = signups.length
+      const signupDiscordIds = [...signups]
+        .sort((a, b) => a.usernameSnapshot.localeCompare(b.usernameSnapshot, undefined, { sensitivity: 'base' }))
+        .map((s) => s.discordId)
+
+      const attempt = await attemptPodCreation(deps, round, round.chatChannelId ?? undefined)
+      if (!attempt.podCreated || !attempt.shareUrl) {
+        // Still failing, still within the window — nothing to do this tick,
+        // fireFailureNotified stays false so the next sweep tick picks this
+        // round back up.
+        continue
+      }
+
+      const chatUrl =
+        round.chatChannelId && onRetrySuccess ? await onRetrySuccess({ chatChannelId: round.chatChannelId }) : undefined
+
+      const targetRows = await deps.prisma.podRoundTarget.findMany({ where: { podRoundId: round.id } })
+      results.push({
+        podRoundId: round.id,
+        setCode: round.setCode,
+        outcome: 'succeeded',
+        count,
+        shareUrl: attempt.shareUrl,
+        chatUrl,
+        chatChannelId: round.chatChannelId ?? undefined,
+        signupDiscordIds,
+        originGuildName: round.originGuildName,
+        targets: targetRows.map((t) => ({ channelId: t.channelId, messageId: t.messageId })),
+      })
+      continue
+    }
+
+    // Past the retry window (or thresholdReachedAt is null and so can't be
+    // measured at all) — give up. Deliberately NOT a compare-and-swap
+    // updateMany like fireRound's claim: there's no concurrent writer racing
+    // to give up on the same round (this sweep is the only place
+    // fireFailureNotified is ever set), so a plain update is sufficient.
+    await deps.prisma.podRound.update({
+      where: { id: round.id },
+      data: { fireFailureNotified: true },
+    })
+
+    const targetRows = await deps.prisma.podRoundTarget.findMany({ where: { podRoundId: round.id } })
+    results.push({
+      podRoundId: round.id,
+      setCode: round.setCode,
+      outcome: 'gave-up',
       originGuildName: round.originGuildName,
       targets: targetRows.map((t) => ({ channelId: t.channelId, messageId: t.messageId })),
     })

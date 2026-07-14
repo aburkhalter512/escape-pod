@@ -40,6 +40,8 @@ function fakePodRoundRow(
     originGuildName: overrides.originGuildName ?? null,
     originGuildId: overrides.originGuildId ?? null,
     chatChannelId: null,
+    thresholdReachedAt: null,
+    fireFailureNotified: false,
     createdAt: new Date(),
     organizer: {
       discordId: 'organizer-1',

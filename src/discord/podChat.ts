@@ -88,3 +88,27 @@ export async function postPodChatWelcomeMessage(
     log(err, 'failed to post pod chat welcome message')
   }
 }
+
+// Best-effort supplement used only by the fire-retry path (see
+// services/pods.ts's retryFailedFires, jobs/retryFailedFires.ts) — gets a
+// fresh invite link for a chat channel that createPodChatSpace above already
+// created on the round's first (failed) fire attempt. Deliberately does NOT
+// recreate the channel or its permission overwrites: those already
+// happened, and re-running them on a retry would be wasteful at best and
+// wrong at worst (e.g. clobbering overwrites for players who left/joined
+// since). Same never-throws, single-try-catch, log-and-return-undefined
+// shape as createPodChatSpace/postPodChatWelcomeMessage above — the caller
+// just omits the "Join the chat" button/message if this fails.
+export async function refreshPodChatInvite(
+  discordRest: DiscordRestClient,
+  channelId: string,
+  log: (err: unknown, message: string) => void
+): Promise<string | undefined> {
+  try {
+    const invite = await discordRest.createInvite(channelId)
+    return `https://discord.com/invite/${invite.code}`
+  } catch (err) {
+    log(err, 'failed to refresh pod chat invite')
+    return undefined
+  }
+}

@@ -13,6 +13,7 @@ import { registerGuildRoutes } from './routes/guilds.js'
 import { registerPodRoutes } from './routes/pods.js'
 import { ephemeral } from './commands/helpers.js'
 import { expireOverduePodRounds } from './jobs/expirePodRounds.js'
+import { retryOverdueFailedFires } from './jobs/retryFailedFires.js'
 import { refreshExpiringTokens } from './jobs/refreshTokens.js'
 import { createInMemoryPendingStartPodStore } from './pendingStartPods.js'
 import { createGracefulShutdown } from './shutdown.js'
@@ -125,10 +126,10 @@ await app.register(async (instance) => {
   registerPodRoutes(instance, backendDeps)
 })
 
-// Two periodic jobs, both in-process rather than separate scheduled AWS
-// resources since neither needs state beyond what's already in Postgres.
-// Both are registered as sweeps on the one shutdown lifecycle (see
-// shutdown.ts) — SIGTERM/SIGINT stop new ticks for both and wait out
+// Three periodic jobs, all in-process rather than separate scheduled AWS
+// resources since none needs state beyond what's already in Postgres.
+// All three are registered as sweeps on the one shutdown lifecycle (see
+// shutdown.ts) — SIGTERM/SIGINT stop new ticks for all of them and wait out
 // whichever is in flight before the process (and its DB connection) goes
 // away.
 //
@@ -150,6 +151,18 @@ const gracefulShutdown = createGracefulShutdown({
     {
       name: 'pod-round-expiration',
       run: () => expireOverduePodRounds(backendDeps, discordRest),
+      intervalMs: SWEEP_INTERVAL_MS,
+    },
+    {
+      // Retries a round stuck at THRESHOLD_REACHED after its initial
+      // fireRound attempt failed to create the PTP pod (issue #5) — reuses
+      // the same 1-minute cadence as pod-round-expiration since retries
+      // should be checked at least as often as rounds fire in the first
+      // place; services/pods.ts's RETRY_WINDOW_MS (30 minutes) bounds how
+      // long a round keeps retrying before this sweep gives up and sends a
+      // visible failure notification instead.
+      name: 'fire-retry',
+      run: () => retryOverdueFailedFires(backendDeps, discordRest),
       intervalMs: SWEEP_INTERVAL_MS,
     },
     {

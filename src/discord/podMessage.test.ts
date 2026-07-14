@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { ButtonStyle, ComponentType } from 'discord-api-types/v10'
-import { buildCancelledPodMessage, buildConcludedPodMessage, buildExpiredPodMessage, buildPodRoundMessage } from './podMessage.js'
+import {
+  buildCancelledPodMessage,
+  buildConcludedPodMessage,
+  buildExpiredPodMessage,
+  buildFireFailedPodMessage,
+  buildPodRoundMessage,
+} from './podMessage.js'
 
 describe('buildPodRoundMessage', () => {
   it('shows the running count and signup buttons while still collecting', () => {
@@ -356,5 +362,53 @@ describe('buildConcludedPodMessage', () => {
     const body = buildConcludedPodMessage('JTL', 'Sister Community')
 
     expect(body.embeds[0].footer).toBeUndefined()
+  })
+})
+
+describe('buildFireFailedPodMessage', () => {
+  it('shows a failed title, actionable copy pointing at /cancel-pod, and no buttons', () => {
+    const body = buildFireFailedPodMessage('JTL')
+
+    expect(body.embeds[0].title).toContain('Failed')
+    expect(body.embeds[0].title).toContain('JTL')
+    expect(body.embeds[0].description).toContain('/cancel-pod')
+    expect(body.components).toHaveLength(0)
+  })
+
+  it('uses a color distinct from cancelled, expired, concluded, and pod-full', () => {
+    const fireFailed = buildFireFailedPodMessage('JTL')
+    const cancelled = buildCancelledPodMessage('JTL')
+    const expired = buildExpiredPodMessage('JTL')
+    const concluded = buildConcludedPodMessage('JTL')
+    const full = buildPodRoundMessage({ podRoundId: 'round-1', setCode: 'JTL', threshold: 8, count: 8, shareUrl: 'https://example.com' })
+
+    expect(fireFailed.embeds[0].color).not.toBe(cancelled.embeds[0].color)
+    expect(fireFailed.embeds[0].color).not.toBe(expired.embeds[0].color)
+    expect(fireFailed.embeds[0].color).not.toBe(concluded.embeds[0].color)
+    expect(fireFailed.embeds[0].color).not.toBe(full.embeds[0].color)
+  })
+
+  it("shows the origin guild's name as an Organizer line in the description when present", () => {
+    const body = buildFireFailedPodMessage('JTL', 'Sister Community')
+
+    expect(body.embeds[0].description).toContain('Organizer: Sister Community')
+  })
+
+  it('omits the Organizer line when there is no origin guild name', () => {
+    const body = buildFireFailedPodMessage('JTL')
+
+    expect(body.embeds[0].description).not.toContain('Organizer:')
+  })
+
+  it('no longer sets a footer at all (moved into the description body)', () => {
+    const body = buildFireFailedPodMessage('JTL', 'Sister Community')
+
+    expect(body.embeds[0].footer).toBeUndefined()
+  })
+
+  it('never shows a Players line (fire-failed messages do not take signupDiscordIds)', () => {
+    const body = buildFireFailedPodMessage('JTL', 'Sister Community')
+
+    expect(body.embeds[0].description).not.toContain('Players:')
   })
 })

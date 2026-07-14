@@ -39,6 +39,8 @@ function fakePodRoundRow(overrides: Partial<PodRoundRow> = {}): PodRoundRow {
     originGuildName: null,
     originGuildId: null,
     chatChannelId: null,
+    thresholdReachedAt: null,
+    fireFailureNotified: false,
     createdAt: new Date(),
     ...overrides,
   }
@@ -468,11 +470,14 @@ describe('POST /pods/:id/signup', () => {
     ]
     const findUnique = stubPodRoundFindUnique(async () => round)
     const updateMany = stub(async (args: PodRoundUpdateManyArgs) => {
-      const expected: PodRoundUpdateManyArgs = {
-        where: { id: 'round-1', status: 'COLLECTING' },
-        data: { status: 'THRESHOLD_REACHED' },
-      }
-      if (!deepEqual(args, expected)) throw new Error(`unexpected podRound.updateMany args: ${JSON.stringify(args)}`)
+      const where = args.where as { id?: string; status?: string } | undefined
+      const data = args.data as { status?: string; thresholdReachedAt?: unknown } | undefined
+      const argsLookRight =
+        where?.id === 'round-1' &&
+        where.status === 'COLLECTING' &&
+        data?.status === 'THRESHOLD_REACHED' &&
+        data.thresholdReachedAt instanceof Date
+      if (!argsLookRight) throw new Error(`unexpected podRound.updateMany args: ${JSON.stringify(args)}`)
       return { count: 1 }
     })
     const update = stub(async (args: PodRoundUpdateArgs) => {
@@ -534,11 +539,14 @@ describe('POST /pods/:id/signup', () => {
     // requests interleave — everyone else sees count: 0.
     let claimed = false
     const updateMany = stub(async (args: PodRoundUpdateManyArgs) => {
-      const expected: PodRoundUpdateManyArgs = {
-        where: { id: 'round-1', status: 'COLLECTING' },
-        data: { status: 'THRESHOLD_REACHED' },
-      }
-      if (!deepEqual(args, expected)) throw new Error(`unexpected podRound.updateMany args: ${JSON.stringify(args)}`)
+      const where = args.where as { id?: string; status?: string } | undefined
+      const data = args.data as { status?: string; thresholdReachedAt?: unknown } | undefined
+      const argsLookRight =
+        where?.id === 'round-1' &&
+        where.status === 'COLLECTING' &&
+        data?.status === 'THRESHOLD_REACHED' &&
+        data.thresholdReachedAt instanceof Date
+      if (!argsLookRight) throw new Error(`unexpected podRound.updateMany args: ${JSON.stringify(args)}`)
       if (claimed) return { count: 0 }
       claimed = true
       return { count: 1 }
@@ -595,11 +603,14 @@ describe('POST /pods/:id/signup', () => {
     const round = fakeRoundWithOrganizer()
     const findUnique = stubPodRoundFindUnique(async () => round)
     const updateMany = stub(async (args: PodRoundUpdateManyArgs) => {
-      const expected: PodRoundUpdateManyArgs = {
-        where: { id: 'round-1', status: 'COLLECTING' },
-        data: { status: 'THRESHOLD_REACHED' },
-      }
-      if (!deepEqual(args, expected)) throw new Error(`unexpected podRound.updateMany args: ${JSON.stringify(args)}`)
+      const where = args.where as { id?: string; status?: string } | undefined
+      const data = args.data as { status?: string; thresholdReachedAt?: unknown } | undefined
+      const argsLookRight =
+        where?.id === 'round-1' &&
+        where.status === 'COLLECTING' &&
+        data?.status === 'THRESHOLD_REACHED' &&
+        data.thresholdReachedAt instanceof Date
+      if (!argsLookRight) throw new Error(`unexpected podRound.updateMany args: ${JSON.stringify(args)}`)
       return { count: 1 }
     })
     const update = stub(async (_args: PodRoundUpdateArgs) => {

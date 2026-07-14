@@ -123,6 +123,23 @@ model PodRound {
   // Read back out by /conclude-pod (services/pods.ts's concludeActiveRound)
   // to delete the channel once the draft concludes.
   chatChannelId     String?        @map("chat_channel_id")
+  // Set in the same updateMany call that atomically claims COLLECTING ->
+  // THRESHOLD_REACHED (see services/pods.ts's fireRound) — the moment this
+  // round was claimed for firing. Lets the retry sweep
+  // (services/pods.ts's retryFailedFires) know how long a round has been
+  // stuck at THRESHOLD_REACHED without a successful PTP pod creation, so it
+  // can bound its retry window. Nullable: rounds claimed before this column
+  // existed have none, and are treated as immediately give-up-eligible
+  // rather than crashing (see retryFailedFires).
+  thresholdReachedAt DateTime?     @map("threshold_reached_at")
+  // Set to true once the one-time "we gave up retrying" notification has
+  // been sent for this round (see retryFailedFires) — stops the retry
+  // sweep from re-processing (and re-notifying for) the same round on every
+  // future tick. The round stays at THRESHOLD_REACHED afterward, still
+  // manually cancellable via /cancel-pod (which already handles that
+  // status) — this flag deliberately does NOT auto-cancel, preserving the
+  // ability to retry a still-recoverable round.
+  fireFailureNotified Boolean      @default(false) @map("fire_failure_notified")
 
   organizer Organizer         @relation(fields: [organizerDiscordId], references: [discordId])
   targets   PodRoundTarget[]

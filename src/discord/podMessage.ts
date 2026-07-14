@@ -12,6 +12,7 @@ const POD_FULL_COLOR = 0x57f287 // green
 const CANCELLED_COLOR = 0xed4245 // Discord red
 const EXPIRED_COLOR = 0xfaa61a // Discord orange — distinct from CANCELLED
 const CONCLUDED_COLOR = 0x99aab5 // Discord greyple — muted, distinct from all four above
+const FIRE_FAILED_COLOR = 0x992d22 // Discord dark red — distinct from CANCELLED's brighter red
 
 export interface PodRoundMessageState {
   podRoundId: string
@@ -233,6 +234,36 @@ export function buildConcludedPodMessage(setCode: string, originGuildName?: stri
         title: `${setCode} Draft Pod — Concluded`,
         description,
         color: CONCLUDED_COLOR,
+      },
+    ],
+    components: [],
+  }
+}
+
+// What every target guild's RSVP message gets edited to when the retry
+// sweep (services/pods.ts's retryFailedFires, jobs/retryFailedFires.ts)
+// gives up after RETRY_WINDOW_MS of failed PTP pod-creation attempts (issue
+// #5 — this round would otherwise sit at THRESHOLD_REACHED forever with no
+// visible signal to anyone). Same no-buttons shape as
+// buildCancelledPodMessage/buildExpiredPodMessage/buildConcludedPodMessage,
+// but its own title, copy, and color: unlike those, the round is NOT
+// auto-cancelled here (still THRESHOLD_REACHED under the hood, still
+// cancellable via /cancel-pod) — the copy says so explicitly since there
+// are no buttons left on this message to do it from.
+export function buildFireFailedPodMessage(setCode: string, originGuildName?: string | null): PodRoundMessageBody {
+  const description = [
+    'Something went wrong creating this draft pod after several attempts. Run `/cancel-pod` and try again.',
+    organizerLine(originGuildName),
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join('\n')
+
+  return {
+    embeds: [
+      {
+        title: `${setCode} Draft Pod — Failed`,
+        description,
+        color: FIRE_FAILED_COLOR,
       },
     ],
     components: [],

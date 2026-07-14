@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { Prisma } from '@prisma/client'
 import type { AppPrismaClient } from '../prismaClient.js'
 import type { CreatePodParams } from '../ptp/client.js'
@@ -15,9 +15,11 @@ import {
   concludeActiveRound,
   recordTargetMessage,
   expireOverdueRounds,
+  retryFailedFires,
   startPod,
   type PodServiceDeps,
   type OnFiringHook,
+  type OnRetrySuccessHook,
 } from './pods.js'
 
 const TOKEN_KEY = '00'.repeat(32)
@@ -43,6 +45,8 @@ function fakePodRoundRow(overrides: Partial<PodRoundRow> = {}): PodRoundRow {
     originGuildName: null,
     originGuildId: null,
     chatChannelId: null,
+    thresholdReachedAt: null,
+    fireFailureNotified: false,
     createdAt: new Date(),
     ...overrides,
   }
@@ -173,11 +177,14 @@ describe('recordSignup', () => {
     const findUnique = stubPodRoundFindUnique(async () => round)
     let claimed = false
     const updateMany = stub(async (args: PodRoundUpdateManyArgs) => {
-      const expected: PodRoundUpdateManyArgs = {
-        where: { id: 'round-1', status: 'COLLECTING' },
-        data: { status: 'THRESHOLD_REACHED' },
-      }
-      if (!deepEqual(args, expected)) throw new Error(`unexpected updateMany args: ${JSON.stringify(args)}`)
+      const where = args.where as { id?: string; status?: string } | undefined
+      const data = args.data as { status?: string; thresholdReachedAt?: unknown } | undefined
+      const argsLookRight =
+        where?.id === 'round-1' &&
+        where.status === 'COLLECTING' &&
+        data?.status === 'THRESHOLD_REACHED' &&
+        data.thresholdReachedAt instanceof Date
+      if (!argsLookRight) throw new Error(`unexpected updateMany args: ${JSON.stringify(args)}`)
       if (claimed) return { count: 0 }
       claimed = true
       return { count: 1 }
@@ -1048,8 +1055,14 @@ describe('expireOverdueRounds', () => {
     // >= threshold (2), short of POD_CAPACITY (8) — count is derived from
     // the findMany below's length, not a separate .count() call.
     const updateMany = stub(async (args: PodRoundUpdateManyArgs) => {
-      const expected: PodRoundUpdateManyArgs = { where: { id: 'round-1', status: 'COLLECTING' }, data: { status: 'THRESHOLD_REACHED' } }
-      if (!deepEqual(args, expected)) throw new Error(`unexpected updateMany args: ${JSON.stringify(args)}`)
+      const where = args.where as { id?: string; status?: string } | undefined
+      const data = args.data as { status?: string; thresholdReachedAt?: unknown } | undefined
+      const argsLookRight =
+        where?.id === 'round-1' &&
+        where.status === 'COLLECTING' &&
+        data?.status === 'THRESHOLD_REACHED' &&
+        data.thresholdReachedAt instanceof Date
+      if (!argsLookRight) throw new Error(`unexpected updateMany args: ${JSON.stringify(args)}`)
       return { count: 1 }
     })
     const update = stub(async (args: PodRoundUpdateArgs) => {
@@ -1296,5 +1309,284 @@ describe('expireOverdueRounds', () => {
     const result = await expireOverdueRounds(deps)
 
     expect(result).toEqual([])
+  })
+})
+
+describe('retryFailedFires', () => {
+  const NOW = new Date('2026-01-01T12:00:00Z')
+  const WITHIN_WINDOW = new Date(NOW.getTime() - 10 * 60 * 1000) // 10 min ago, < 30 min window
+  const PAST_WINDOW = new Date(NOW.getTime() - 31 * 60 * 1000) // 31 min ago, > 30 min window
+
+  it('queries for THRESHOLD_REACHED rounds that have not yet been notified', async () => {
+    const findManyRounds = stub(async (args: PodRoundFindManyArgs) => {
+      expect(args?.where).toEqual({ status: 'THRESHOLD_REACHED', fireFailureNotified: false })
+      return []
+    })
+    const deps = buildDeps({ podRound: { findMany: findManyRounds } })
+
+    await retryFailedFires(deps)
+
+    expect(findManyRounds.calls).toHaveLength(1)
+  })
+
+  it('a round with fireFailureNotified: true already set is never picked up (excluded by the query itself)', async () => {
+    // The query's own where-clause is what guarantees this — asserted above
+    // — but this test additionally guards that nothing downstream ever
+    // even sees such a round, by returning an empty candidate set (as the
+    // real query would) and confirming zero side effects follow.
+    const findManyRounds = stub(async () => [])
+    const updateMany = stub(async () => {
+      throw new Error('podRound updates should not have been called')
+    })
+    const deps = buildDeps({ podRound: { findMany: findManyRounds, updateMany } })
+
+    const result = await retryFailedFires(deps)
+
+    expect(result).toEqual([])
+  })
+
+  it('retries and succeeds for a round within the retry window, requesting a fresh invite when chatChannelId is present', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
+    try {
+      const round = fakeRoundWithOrganizer({
+        id: 'round-1',
+        setCode: 'JTL',
+        status: 'THRESHOLD_REACHED',
+        thresholdReachedAt: WITHIN_WINDOW,
+        fireFailureNotified: false,
+        chatChannelId: 'chat-channel-1',
+      })
+      const findManyRounds = stubPodRoundFindMany(async () => [round])
+      const update = stub(async (args: PodRoundUpdateArgs) => {
+        const expected: PodRoundUpdateArgs = {
+          where: { id: 'round-1' },
+          data: { status: 'POD_CREATED', ptpPodShareId: 'share-1', chatChannelId: 'chat-channel-1' },
+        }
+        if (!deepEqual(args, expected)) throw new Error(`unexpected update args: ${JSON.stringify(args)}`)
+        return fakePodRoundRow()
+      })
+      const findManySignups = stub(async () => [
+        fakePodRoundSignupRow({ discordId: 'p1' }),
+        fakePodRoundSignupRow({ discordId: 'p2' }),
+      ])
+      const findManyTargets = stub(async () => [
+        { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
+      ])
+      const createPod = stub(async () => ({
+        id: 'ptp-pod-1',
+        shareId: 'share-1',
+        shareUrl: 'https://www.protectthepod.com/draft/share-1',
+        createdAt: '2026-01-01T00:00:00Z',
+      }))
+      const onRetrySuccess = stub(async (ctx: Parameters<OnRetrySuccessHook>[0]) => {
+        expect(ctx).toEqual({ chatChannelId: 'chat-channel-1' })
+        return 'https://discord.com/invite/fresh123'
+      })
+      const deps: PodServiceDeps = {
+        prisma: createFakePrismaClient({
+          podRound: { findMany: findManyRounds, update },
+          podRoundSignup: { findMany: findManySignups },
+          podRoundTarget: { findMany: findManyTargets },
+        }),
+        ptp: createFakePtpClient({ createPod }),
+        tokenEncryptionKey: TOKEN_KEY,
+        logger: { error: () => {} },
+      }
+
+      const result = await retryFailedFires(deps, onRetrySuccess)
+
+      expect(onRetrySuccess.calls).toHaveLength(1)
+      expect(result).toEqual([
+        {
+          podRoundId: 'round-1',
+          setCode: 'JTL',
+          outcome: 'succeeded',
+          count: 2,
+          shareUrl: 'https://www.protectthepod.com/draft/share-1',
+          chatUrl: 'https://discord.com/invite/fresh123',
+          chatChannelId: 'chat-channel-1',
+          signupDiscordIds: ['p1', 'p2'],
+          originGuildName: null,
+          targets: [{ channelId: 'channel-1', messageId: 'msg-1' }],
+        },
+      ])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not call the invite hook when the round has no chatChannelId', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
+    try {
+      const round = fakeRoundWithOrganizer({
+        id: 'round-1',
+        status: 'THRESHOLD_REACHED',
+        thresholdReachedAt: WITHIN_WINDOW,
+        fireFailureNotified: false,
+        chatChannelId: null,
+      })
+      const findManyRounds = stubPodRoundFindMany(async () => [round])
+      const update = stub(async () => fakePodRoundRow())
+      const findManySignups = stub(async () => [fakePodRoundSignupRow({ discordId: 'p1' })])
+      const findManyTargets = stub(async () => [])
+      const createPod = stub(async () => ({
+        id: 'ptp-pod-1',
+        shareId: 'share-1',
+        shareUrl: 'https://www.protectthepod.com/draft/share-1',
+        createdAt: '2026-01-01T00:00:00Z',
+      }))
+      const onRetrySuccess = stub(async (_ctx: Parameters<OnRetrySuccessHook>[0]) => {
+        throw new Error('onRetrySuccess should not have been called when chatChannelId is null')
+      })
+      const deps: PodServiceDeps = {
+        prisma: createFakePrismaClient({
+          podRound: { findMany: findManyRounds, update },
+          podRoundSignup: { findMany: findManySignups },
+          podRoundTarget: { findMany: findManyTargets },
+        }),
+        ptp: createFakePtpClient({ createPod }),
+        tokenEncryptionKey: TOKEN_KEY,
+        logger: { error: () => {} },
+      }
+
+      const result = await retryFailedFires(deps, onRetrySuccess)
+
+      expect(onRetrySuccess.calls).toHaveLength(0)
+      expect(result[0]).toMatchObject({ outcome: 'succeeded', chatUrl: undefined })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('leaves everything unchanged and pushes no result when a retry within the window fails again', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
+    try {
+      const round = fakeRoundWithOrganizer({
+        id: 'round-1',
+        status: 'THRESHOLD_REACHED',
+        thresholdReachedAt: WITHIN_WINDOW,
+        fireFailureNotified: false,
+      })
+      const findManyRounds = stubPodRoundFindMany(async () => [round])
+      const update = stub(async () => {
+        throw new Error('podRound.update should not have been called — still-failing retry changes nothing')
+      })
+      const findManySignups = stub(async () => [fakePodRoundSignupRow({ discordId: 'p1' })])
+      const createPod = stub(async () => {
+        throw new Error('PTP pod creation failed: 401')
+      })
+      const errors: unknown[] = []
+      const deps: PodServiceDeps = {
+        prisma: createFakePrismaClient({
+          podRound: { findMany: findManyRounds, update },
+          podRoundSignup: { findMany: findManySignups },
+        }),
+        ptp: createFakePtpClient({ createPod }),
+        tokenEncryptionKey: TOKEN_KEY,
+        logger: { error: (obj) => errors.push(obj) },
+      }
+
+      const result = await retryFailedFires(deps)
+
+      expect(result).toEqual([])
+      expect(errors).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('gives up on a round past the retry window: sets fireFailureNotified, leaves status at THRESHOLD_REACHED, pushes a gave-up result', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
+    try {
+      const round = fakeRoundWithOrganizer({
+        id: 'round-1',
+        setCode: 'JTL',
+        status: 'THRESHOLD_REACHED',
+        thresholdReachedAt: PAST_WINDOW,
+        fireFailureNotified: false,
+      })
+      const findManyRounds = stubPodRoundFindMany(async () => [round])
+      const update = stub(async (args: PodRoundUpdateArgs) => {
+        const expected: PodRoundUpdateArgs = { where: { id: 'round-1' }, data: { fireFailureNotified: true } }
+        if (!deepEqual(args, expected)) throw new Error(`unexpected update args: ${JSON.stringify(args)}`)
+        return fakePodRoundRow({ fireFailureNotified: true })
+      })
+      const findManyTargets = stub(async () => [
+        { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
+      ])
+      const createPod = stub(async () => {
+        throw new Error('createPod should not have been called past the retry window')
+      })
+      const deps: PodServiceDeps = {
+        prisma: createFakePrismaClient({
+          podRound: { findMany: findManyRounds, update },
+          podRoundTarget: { findMany: findManyTargets },
+        }),
+        ptp: createFakePtpClient({ createPod }),
+        tokenEncryptionKey: TOKEN_KEY,
+        logger: { error: () => {} },
+      }
+
+      const result = await retryFailedFires(deps)
+
+      expect(update.calls).toHaveLength(1)
+      expect(result).toEqual([
+        {
+          podRoundId: 'round-1',
+          setCode: 'JTL',
+          outcome: 'gave-up',
+          originGuildName: null,
+          targets: [{ channelId: 'channel-1', messageId: 'msg-1' }],
+        },
+      ])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('treats a null thresholdReachedAt as immediately give-up-eligible (pre-migration data) rather than crashing', async () => {
+    const round = fakeRoundWithOrganizer({
+      id: 'round-1',
+      setCode: 'JTL',
+      status: 'THRESHOLD_REACHED',
+      thresholdReachedAt: null,
+      fireFailureNotified: false,
+    })
+    const findManyRounds = stubPodRoundFindMany(async () => [round])
+    const update = stub(async (args: PodRoundUpdateArgs) => {
+      const expected: PodRoundUpdateArgs = { where: { id: 'round-1' }, data: { fireFailureNotified: true } }
+      if (!deepEqual(args, expected)) throw new Error(`unexpected update args: ${JSON.stringify(args)}`)
+      return fakePodRoundRow({ fireFailureNotified: true })
+    })
+    const findManyTargets = stub(async () => [])
+    const createPod = stub(async () => {
+      throw new Error('createPod should not have been called for a null thresholdReachedAt')
+    })
+    const deps: PodServiceDeps = {
+      prisma: createFakePrismaClient({
+        podRound: { findMany: findManyRounds, update },
+        podRoundTarget: { findMany: findManyTargets },
+      }),
+      ptp: createFakePtpClient({ createPod }),
+      tokenEncryptionKey: TOKEN_KEY,
+      logger: { error: () => {} },
+    }
+
+    const result = await retryFailedFires(deps)
+
+    expect(update.calls).toHaveLength(1)
+    expect(result).toEqual([
+      {
+        podRoundId: 'round-1',
+        setCode: 'JTL',
+        outcome: 'gave-up',
+        originGuildName: null,
+        targets: [],
+      },
+    ])
   })
 })

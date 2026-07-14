@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { OverwriteType, PermissionFlagsBits, type RESTPostAPIGuildChannelJSONBody } from 'discord-api-types/v10'
-import { createPodChatSpace, postPodChatWelcomeMessage } from './podChat.js'
+import { createPodChatSpace, postPodChatWelcomeMessage, refreshPodChatInvite } from './podChat.js'
 import { createFakeDiscordRest } from '../testUtils/fakeDiscordRest.js'
 import { stub } from '../testUtils/stub.js'
 import type { DiscordRestClient } from './rest.js'
@@ -191,5 +191,40 @@ describe('postPodChatWelcomeMessage', () => {
 
     expect(log).toHaveBeenCalledTimes(1)
     expect(log.mock.calls[0][1]).toBe('failed to post pod chat welcome message')
+  })
+})
+
+describe('refreshPodChatInvite', () => {
+  it('returns a fresh invite URL for the given channel, without recreating the channel itself', async () => {
+    const createInvite = stub<Parameters<DiscordRestClient['createInvite']>, ReturnType<DiscordRestClient['createInvite']>>(
+      async () => ({ code: 'xyz789' }) as never
+    )
+    const createChannel = stub<Parameters<DiscordRestClient['createChannel']>, ReturnType<DiscordRestClient['createChannel']>>(
+      async () => {
+        throw new Error('createChannel should not have been called — retry only refreshes the invite')
+      }
+    )
+    const discordRest = createFakeDiscordRest({ createInvite, createChannel })
+
+    const result = await refreshPodChatInvite(discordRest, 'chat-channel-1', vi.fn())
+
+    expect(result).toBe('https://discord.com/invite/xyz789')
+    expect(createInvite.calls).toEqual([['chat-channel-1']])
+    expect(createChannel.calls).toHaveLength(0)
+  })
+
+  it('returns undefined and logs, never throwing, when createInvite rejects', async () => {
+    const discordRest = createFakeDiscordRest({
+      createInvite: async () => {
+        throw new Error('bot no longer in guild')
+      },
+    })
+    const log = vi.fn()
+
+    const result = await refreshPodChatInvite(discordRest, 'chat-channel-1', log)
+
+    expect(result).toBeUndefined()
+    expect(log).toHaveBeenCalledTimes(1)
+    expect(log.mock.calls[0][1]).toBe('failed to refresh pod chat invite')
   })
 })

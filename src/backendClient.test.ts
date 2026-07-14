@@ -112,6 +112,8 @@ describe('LocalBackendClient', () => {
       originGuildName: null,
       originGuildId: null,
       chatChannelId: null,
+      thresholdReachedAt: null,
+      fireFailureNotified: false,
       createdAt: new Date(),
     }))
 
@@ -140,6 +142,8 @@ describe('LocalBackendClient', () => {
         originGuildName: null,
         originGuildId: 'guild-123',
         chatChannelId: null,
+        thresholdReachedAt: null,
+        fireFailureNotified: false,
         createdAt: new Date(),
       }
     })
@@ -217,6 +221,8 @@ describe('LocalBackendClient', () => {
       originGuildName: null,
       originGuildId: null,
       chatChannelId: 'chat-channel-1',
+      thresholdReachedAt: new Date(),
+      fireFailureNotified: false,
       createdAt: new Date(),
     }))
     const createPod = stub(async (_token: string, _params: unknown) => ({
@@ -363,6 +369,8 @@ describe('LocalBackendClient', () => {
       originGuildName: null,
       originGuildId: null,
       chatChannelId: null,
+      thresholdReachedAt: null,
+      fireFailureNotified: false,
       createdAt: new Date(),
     }))
     function findUnique() {
