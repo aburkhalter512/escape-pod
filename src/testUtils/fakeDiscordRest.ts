@@ -6,6 +6,7 @@ import type { DiscordRestClient } from '../discord/rest.js'
 // if called; pass overrides for the ones a given test cares about.
 export function createFakeDiscordRest(overrides: Partial<DiscordRestClient> = {}): DiscordRestClient {
   return {
+    botUserId: 'bot-user-id',
     postMessage: unimplemented('postMessage'),
     editMessage: unimplemented('editMessage'),
     getGuild: unimplemented('getGuild'),

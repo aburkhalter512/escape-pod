@@ -43,7 +43,12 @@ describe('createPodChatSpace', () => {
       PermissionFlagsBits.ViewChannel
     )
 
-    for (const id of ['organizer-1', 'player-1', 'player-2']) {
+    // Regression guard (bug found live): the bot's own ID needs a member
+    // overwrite too, not just the organizer/signups — the @everyone deny
+    // above applies to the bot itself (it's a member of @everyone same as
+    // anyone else), so without this the bot gets "Missing Access" trying
+    // to post into a channel it just created.
+    for (const id of ['organizer-1', 'player-1', 'player-2', discordRest.botUserId]) {
       const overwrite = overwrites.find((o) => o.id === id)
       expect(overwrite, `expected an overwrite for ${id}`).toBeDefined()
       expect(overwrite?.type).toBe(OverwriteType.Member)
@@ -80,7 +85,9 @@ describe('createPodChatSpace', () => {
     const overwrites = (body as RESTPostAPIGuildChannelJSONBody & { permission_overwrites: { id: string }[] })
       .permission_overwrites
     const memberOverwrites = overwrites.filter((o) => o.id !== 'guild-1')
-    expect(memberOverwrites).toHaveLength(2)
+    // organizer-1 (deduped against its own entry in signupDiscordIds) +
+    // player-1 + the bot's own id.
+    expect(memberOverwrites).toHaveLength(3)
   })
 
   it('returns undefined and logs, never throwing, when createChannel rejects', async () => {

@@ -28,8 +28,14 @@ export async function createPodChatSpace(
     // Overwrites for IDs who aren't currently members of originGuildId are
     // inert until they join — this is what lets a signup from a different
     // guild still land with access the moment they use the invite link
-    // below, with no membership check needed up front.
-    const memberIds = new Set([params.organizerDiscordId, ...params.signupDiscordIds])
+    // below, with no membership check needed up front. The bot's own ID
+    // has to be included too, not just implied by its guild-wide OAuth
+    // permissions: the @everyone deny below applies to every member
+    // including the bot itself, and nothing else in this overwrite list
+    // grants it back — omitting it caused a live "Missing Access" 403 the
+    // first time postPodChatWelcomeMessage tried to post into a channel
+    // the bot had just created but denied itself access to.
+    const memberIds = new Set([params.organizerDiscordId, discordRest.botUserId, ...params.signupDiscordIds])
 
     const channel = await discordRest.createChannel(params.originGuildId, {
       name: `${params.setCode}-pod-chat`,

@@ -25,6 +25,10 @@ import { createGracefulShutdown } from './shutdown.js'
 // at boot.
 const discordPublicKey = requireEnv('DISCORD_PUBLIC_KEY')
 const discordBotToken = requireEnv('DISCORD_BOT_TOKEN')
+// A bot's user ID is always identical to its application/client ID — see
+// discord/rest.ts's DiscordRestClient.botUserId doc comment for why this
+// is threaded in rather than fetched live.
+const discordApplicationId = requireEnv('DISCORD_APPLICATION_ID')
 const botApiKey = requireEnv('BOT_API_KEY')
 const tokenEncryptionKey = requireEnv('TOKEN_ENCRYPTION_KEY')
 const ptpBaseUrl = requireEnv('PTP_BASE_URL')
@@ -32,7 +36,7 @@ requireEnv('DATABASE_URL')
 
 const prisma = new PrismaClient()
 const ptp = new HttpPtpClient({ baseUrl: ptpBaseUrl })
-const discordRest = createDiscordRest(discordBotToken)
+const discordRest = createDiscordRest(discordBotToken, discordApplicationId)
 const pendingStartPods = createInMemoryPendingStartPodStore()
 
 // Fastify's default is logger: false — silent on every request/response/

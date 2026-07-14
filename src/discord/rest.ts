@@ -16,6 +16,12 @@ import {
 // operations we actually perform, with real response types (no
 // `unknown`). See testUtils/fakeDiscordRest.ts.
 export interface DiscordRestClient {
+  // A bot's user ID is always identical to its application/client ID
+  // (standard Discord convention) — exposed here rather than fetched via
+  // an extra `GET /users/@me` call, since discord/podChat.ts's
+  // createPodChatSpace needs it synchronously to grant itself a
+  // permission overwrite on a channel it's about to create.
+  readonly botUserId: string
   postMessage(channelId: string, body: RESTPostAPIChannelMessageJSONBody): Promise<RESTPostAPIChannelMessageResult>
   editMessage(
     channelId: string,
@@ -59,9 +65,11 @@ interface RawRestClient {
 // with DiscordRestClient's real response types directly.
 export class HttpDiscordRest implements DiscordRestClient {
   #raw: RawRestClient
+  readonly botUserId: string
 
-  constructor(raw: RawRestClient) {
+  constructor(raw: RawRestClient, botUserId: string) {
     this.#raw = raw
+    this.botUserId = botUserId
   }
 
   async postMessage(
@@ -113,6 +121,6 @@ export class HttpDiscordRest implements DiscordRestClient {
 // interaction response itself can't do inline, e.g. editing a message in a
 // *different* guild than the one that triggered the interaction (needed for
 // the cross-guild shared-counter sync in INTEGRATIONS.md §7.5 step 3).
-export function createDiscordRest(botToken: string): DiscordRestClient {
-  return new HttpDiscordRest(new REST({ version: '10' }).setToken(botToken))
+export function createDiscordRest(botToken: string, botUserId: string): DiscordRestClient {
+  return new HttpDiscordRest(new REST({ version: '10' }).setToken(botToken), botUserId)
 }
