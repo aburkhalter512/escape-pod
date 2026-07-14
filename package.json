@@ -21,7 +21,8 @@
     "prisma:deploy": "prisma migrate deploy",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:integration": "scripts/test-db-setup.sh && vitest run --config vitest.integration.config.ts"
+    "test:integration": "scripts/test-db-setup.sh && npm run test:integration:run",
+    "test:integration:run": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
     "@discordjs/rest": "^2.4.0",

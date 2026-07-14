@@ -26,6 +26,13 @@ jobs:
 
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/draft_pod
+      # Reuses the same throwaway postgres service/database the migration
+      # check below already applies migrations to — this runner is
+      # ephemeral and single-purpose for the duration of this job, so
+      # there's no real dev data to protect here the way
+      # scripts/test-db-setup.sh's separate draft_pod_test database
+      # protects a developer's local dev DB.
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/draft_pod
 
     steps:
       - uses: actions/checkout@v4
@@ -51,6 +58,16 @@ jobs:
       # throwaway Postgres instance.
       - name: Verify Prisma migrations apply cleanly
         run: npm run prisma:deploy
+
+      # Real Postgres (the service above, already migrated by the step
+      # right above this one) + a real Fastify app (src/app.ts's
+      # buildApp), Discord/PTP still faked — see README's Testing section.
+      # Runs vitest directly (test:integration:run), not the local-only
+      # `npm run test:integration`, since that also shells out to
+      # scripts/test-db-setup.sh to manage a docker/podman container this
+      # runner doesn't have.
+      - name: Run integration tests
+        run: npm run test:integration:run
 
       # Build-only — catches a broken Dockerfile before merge. Doesn't
       # push anywhere; no registry is configured.

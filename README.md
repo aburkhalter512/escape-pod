@@ -151,7 +151,11 @@ npm run db:up
 npm run test:integration
 ```
 
-Local-only for now — not wired into CI.
+Also runs in CI (`.github/workflows/ci.yml`), after the migration-deploy
+check, against the same throwaway `postgres:16` service that step already
+migrates — via `npm run test:integration:run` directly (just the vitest
+invocation), skipping `scripts/test-db-setup.sh` since that manages a
+local docker/podman container the CI runner doesn't have.
 
 ## Container
 
