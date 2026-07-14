@@ -15,3 +15,11 @@ export function ephemeral(content: string): APIInteractionResponse {
     data: { flags: MessageFlags.Ephemeral, content },
   }
 }
+
+// Shared label format for a round in any human-facing list — the
+// ambiguity message in cancelPod.ts/concludePod.ts and the `round`
+// option's autocomplete choices both use this, so what an organizer
+// sees in one matches what they'd see in the other (GitHub issue #6).
+export function describeCandidates(candidates: Array<{ setCode: string; organizerRoundNumber: number }>): string {
+  return candidates.map((c) => `${c.setCode} #${c.organizerRoundNumber}`).join(', ')
+}

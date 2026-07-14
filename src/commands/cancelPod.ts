@@ -1,18 +1,38 @@
+import { ApplicationCommandOptionType } from 'discord-api-types/v10'
 import { buildCancelledPodMessage } from '../discord/podMessage.js'
-import { ephemeral } from './helpers.js'
+import { describeCandidates, ephemeral, getOption } from './helpers.js'
 import type { CommandHandler } from './types.js'
 
-// INTEGRATIONS.md §7.4/§7.5 step 5 — cancels the organizer's own
-// most-recent in-progress round (see services/pods.ts's cancelActiveRound
-// for what "most recent" and "in-progress" mean precisely) and edits
-// every target guild's RSVP message to show it's cancelled.
+// INTEGRATIONS.md §7.4/§7.5 step 5 — cancels an in-progress round for the
+// organizer and edits every target guild's RSVP message to show it's
+// cancelled. GitHub issue #6: an organizer with more than one
+// simultaneous active round can target a specific one via the optional
+// `round` option; omitting it still works exactly as before when there's
+// only one candidate (see services/pods.ts's cancelActiveRound for what
+// "in-progress" and the no-argument fallback mean precisely).
 export const cancelPod: CommandHandler = async ({ interaction, backend, discordRest }) => {
   const organizerId = interaction.member?.user.id ?? interaction.user?.id
   if (!organizerId) {
     return ephemeral('Could not determine your Discord user ID.')
   }
 
-  const result = await backend.cancelActiveRound(organizerId)
+  const roundOption = getOption(interaction, 'round')
+  const organizerRoundNumber = roundOption?.type === ApplicationCommandOptionType.Integer ? roundOption.value : undefined
+
+  // Only worth checking for ambiguity when the organizer didn't already
+  // name a specific round — an explicit round number goes straight to
+  // cancelActiveRound below, which resolves it exactly.
+  if (organizerRoundNumber === undefined) {
+    const candidates = await backend.listActiveRounds(organizerId, 'cancellable')
+    if (candidates.length > 1) {
+      return ephemeral(
+        `You have multiple active rounds — specify which one: \`/cancel-pod round:<number>\`.\n` +
+          `Your active rounds: ${describeCandidates(candidates)}.`
+      )
+    }
+  }
+
+  const result = await backend.cancelActiveRound(organizerId, organizerRoundNumber)
   if (!result) {
     return ephemeral("You don't have an active pod round to cancel.")
   }

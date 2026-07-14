@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { ApplicationCommandOptionType } from 'discord-api-types/v10'
 import { concludePod } from './concludePod.js'
 import type { CommandContext } from './types.js'
 import { createFakeBackendClient } from '../testUtils/fakeBackendClient.js'
@@ -8,6 +9,22 @@ import { responseData } from '../testUtils/responseData.js'
 import { stub } from '../testUtils/stub.js'
 import type { ConcludeActiveRoundResult } from '../services/pods.js'
 import type { Result } from '../services/errors.js'
+import type { BackendClient } from '../backendClient.js'
+
+// Every test below goes through concludePod's new ambiguity check, which
+// calls backend.listActiveRounds whenever no `round` option was given —
+// defaults to "no other active rounds" so existing single-round-flow
+// tests don't all need to repeat this override.
+function backend(overrides: Partial<BackendClient> = {}) {
+  return createFakeBackendClient({ listActiveRounds: stub(async () => []), ...overrides })
+}
+
+function withRoundOption(value: number) {
+  return fakeChatInputInteraction({
+    member: fakeMember({ user: fakeUser({ id: 'organizer-1' }) }),
+    options: [{ name: 'round', type: ApplicationCommandOptionType.Integer, value }],
+  })
+}
 
 function okResult(overrides: Partial<ConcludeActiveRoundResult> = {}): Result<ConcludeActiveRoundResult> {
   return {
@@ -28,7 +45,7 @@ describe('concludePod', () => {
   it('rejects when neither member nor user is present', async () => {
     const ctx: CommandContext = {
       interaction: fakeChatInputInteraction({ guild_id: undefined, member: undefined }),
-      backend: createFakeBackendClient(),
+      backend: backend(),
       discordRest: createFakeDiscordRest(),
     }
 
@@ -43,13 +60,13 @@ describe('concludePod', () => {
     )
     const ctx: CommandContext = {
       interaction: fakeChatInputInteraction({ member: fakeMember({ user: fakeUser({ id: 'organizer-1' }) }) }),
-      backend: createFakeBackendClient({ concludeActiveRound }),
+      backend: backend({ concludeActiveRound }),
       discordRest: createFakeDiscordRest(),
     }
 
     const response = await concludePod(ctx)
 
-    expect(concludeActiveRound.calls).toEqual([['organizer-1']])
+    expect(concludeActiveRound.calls).toEqual([['organizer-1', undefined]])
     expect(responseData(response).content).toMatch(/don't have a pod round to conclude/i)
   })
 
@@ -64,7 +81,7 @@ describe('concludePod', () => {
     )
     const ctx: CommandContext = {
       interaction: fakeChatInputInteraction({ member: fakeMember({ user: fakeUser({ id: 'organizer-1' }) }) }),
-      backend: createFakeBackendClient({ concludeActiveRound }),
+      backend: backend({ concludeActiveRound }),
       discordRest: createFakeDiscordRest(),
     }
 
@@ -88,7 +105,7 @@ describe('concludePod', () => {
     const deleteChannel = stub(async (_channelId: string) => undefined)
     const ctx: CommandContext = {
       interaction: fakeChatInputInteraction({ member: fakeMember({ user: fakeUser({ id: 'organizer-1' }) }) }),
-      backend: createFakeBackendClient({ concludeActiveRound }),
+      backend: backend({ concludeActiveRound }),
       discordRest: createFakeDiscordRest({ editMessage, deleteChannel }),
     }
 
@@ -105,7 +122,7 @@ describe('concludePod', () => {
     const deleteChannel = stub(async (_channelId: string) => undefined)
     const ctx: CommandContext = {
       interaction: fakeChatInputInteraction({ member: fakeMember({ user: fakeUser({ id: 'organizer-1' }) }) }),
-      backend: createFakeBackendClient({ concludeActiveRound }),
+      backend: backend({ concludeActiveRound }),
       discordRest: createFakeDiscordRest({ editMessage: stub(async () => ({}) as never), deleteChannel }),
     }
 
@@ -122,7 +139,7 @@ describe('concludePod', () => {
     })
     const ctx: CommandContext = {
       interaction: fakeChatInputInteraction({ member: fakeMember({ user: fakeUser({ id: 'organizer-1' }) }) }),
-      backend: createFakeBackendClient({ concludeActiveRound }),
+      backend: backend({ concludeActiveRound }),
       discordRest: createFakeDiscordRest({ editMessage, deleteChannel }),
     }
 
@@ -144,7 +161,7 @@ describe('concludePod', () => {
     )
     const ctx: CommandContext = {
       interaction: fakeChatInputInteraction({ member: fakeMember({ user: fakeUser({ id: 'organizer-1' }) }) }),
-      backend: createFakeBackendClient({ concludeActiveRound }),
+      backend: backend({ concludeActiveRound }),
       discordRest: createFakeDiscordRest({ editMessage }),
     }
 
@@ -159,12 +176,76 @@ describe('concludePod', () => {
     )
     const ctx: CommandContext = {
       interaction: fakeChatInputInteraction({ member: undefined, user: fakeUser({ id: 'organizer-2' }) }),
-      backend: createFakeBackendClient({ concludeActiveRound }),
+      backend: backend({ concludeActiveRound }),
       discordRest: createFakeDiscordRest(),
     }
 
     await concludePod(ctx)
 
-    expect(concludeActiveRound.calls).toEqual([['organizer-2']])
+    expect(concludeActiveRound.calls).toEqual([['organizer-2', undefined]])
+  })
+
+  // GitHub issue #6 — an organizer with more than one concludable round
+  // can't be resolved to a single one automatically; this asks them to
+  // specify rather than guessing (and never touches any round while asking).
+  it('asks the organizer to specify a round, and calls neither concludeActiveRound nor any edit, when 2+ candidates exist and round was omitted', async () => {
+    const listActiveRounds = stub(async (_organizerDiscordId: string, _kind: 'cancellable' | 'concludable') => [
+      { podRoundId: 'round-1', setCode: 'JTL', organizerRoundNumber: 1 },
+      { podRoundId: 'round-3', setCode: 'SOR', organizerRoundNumber: 3 },
+    ])
+    const concludeActiveRound = stub(async (_organizerDiscordId: string) => {
+      throw new Error('concludeActiveRound should not have been called while ambiguous')
+    })
+    const editMessage = stub(async (_channelId: string, _messageId: string, _body: unknown) => {
+      throw new Error('editMessage should not have been called while ambiguous')
+    })
+    const ctx: CommandContext = {
+      interaction: fakeChatInputInteraction({ member: fakeMember({ user: fakeUser({ id: 'organizer-1' }) }) }),
+      backend: createFakeBackendClient({ listActiveRounds, concludeActiveRound }),
+      discordRest: createFakeDiscordRest({ editMessage }),
+    }
+
+    const response = await concludePod(ctx)
+
+    expect(listActiveRounds.calls).toEqual([['organizer-1', 'concludable']])
+    expect(responseData(response).content).toMatch(/multiple rounds ready to conclude/i)
+    expect(responseData(response).content).toContain('JTL #1')
+    expect(responseData(response).content).toContain('SOR #3')
+  })
+
+  it('proceeds without asking when round is omitted but only one candidate exists (unchanged single-round behavior)', async () => {
+    const listActiveRounds = stub(async (_organizerDiscordId: string, _kind: 'cancellable' | 'concludable') => [
+      { podRoundId: 'round-1', setCode: 'JTL', organizerRoundNumber: 1 },
+    ])
+    const concludeActiveRound = stub(async (_organizerDiscordId: string) => okResult())
+    const ctx: CommandContext = {
+      interaction: fakeChatInputInteraction({ member: fakeMember({ user: fakeUser({ id: 'organizer-1' }) }) }),
+      backend: createFakeBackendClient({ listActiveRounds, concludeActiveRound }),
+      discordRest: createFakeDiscordRest({ editMessage: stub(async () => ({}) as never) }),
+    }
+
+    const response = await concludePod(ctx)
+
+    expect(concludeActiveRound.calls).toEqual([['organizer-1', undefined]])
+    expect(responseData(response).content).toMatch(/concluded your jtl round/i)
+  })
+
+  it('skips the ambiguity check and resolves the exact round directly when round is given', async () => {
+    const listActiveRounds = stub(async (_organizerDiscordId: string, _kind: 'cancellable' | 'concludable') => {
+      throw new Error('listActiveRounds should not have been called when round was given explicitly')
+    })
+    const concludeActiveRound = stub(async (_organizerDiscordId: string, _organizerRoundNumber?: number) =>
+      okResult({ podRoundId: 'round-3', setCode: 'SOR', organizerRoundNumber: 3 })
+    )
+    const ctx: CommandContext = {
+      interaction: withRoundOption(3),
+      backend: createFakeBackendClient({ listActiveRounds, concludeActiveRound }),
+      discordRest: createFakeDiscordRest({ editMessage: stub(async () => ({}) as never) }),
+    }
+
+    const response = await concludePod(ctx)
+
+    expect(concludeActiveRound.calls).toEqual([['organizer-1', 3]])
+    expect(responseData(response).content).toMatch(/concluded your sor round/i)
   })
 })

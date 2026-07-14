@@ -93,11 +93,30 @@ export const commandDefinitions: RESTPostAPIChatInputApplicationCommandsJSONBody
     description: 'Cancel your in-progress draft pod round',
     type: ApplicationCommandType.ChatInput,
     default_member_permissions: PermissionFlagsBits.ManageGuild.toString(),
+    options: [
+      {
+        name: 'round',
+        // GitHub issue #6 — only needed when the organizer has more than
+        // one active round at once; omitting it still works exactly as
+        // before when there's just one. Autocomplete not enabled yet.
+        description: 'Which round number (see the "#N" in its broadcast message) — omit if you only have one active',
+        type: ApplicationCommandOptionType.Integer,
+        required: false,
+      },
+    ],
   },
   {
     name: 'conclude-pod',
     description: 'Conclude your finished draft pod round',
     type: ApplicationCommandType.ChatInput,
     default_member_permissions: PermissionFlagsBits.ManageGuild.toString(),
+    options: [
+      {
+        name: 'round',
+        description: 'Which round number (see the "#N" in its broadcast message) — omit if you only have one active',
+        type: ApplicationCommandOptionType.Integer,
+        required: false,
+      },
+    ],
   },
 ]
