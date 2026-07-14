@@ -32,6 +32,51 @@ still needs to run `/subscribe-guild` there (§7.2 in `INTEGRATIONS.md`
 covers open-posting vs. allowlist policy) before organizers can actually
 post draft rounds into it.
 
+## Commands
+
+### Server setup (requires "Manage Guild")
+
+- **`/subscribe-guild [channel] [policy]`** — opts this server in to
+  receive draft-pod broadcasts. `channel` (where rounds get posted) is
+  required the first time; `policy` defaults to allow-list on first setup
+  (only organizers approved via `/allow-organizer` can post here) or set
+  it to open (any organizer with a linked PTP account can post). Re-run
+  anytime to change either — an omitted option is left unchanged. Also
+  reactivates a server that previously ran `/unsubscribe-guild`.
+- **`/unsubscribe-guild`** — stops this server from receiving broadcasts.
+  A soft-delete, not a hard removal — round history is preserved, and
+  running `/subscribe-guild` again reactivates it.
+- **`/allow-organizer <organizer>`** — approves a specific organizer to
+  post into this server. Only consulted when the server's policy is
+  allow-list; harmless (but pointless) to run under an open policy.
+
+### Organizer commands
+
+- **`/connect-ptp`** — links your Protect the Pod account. One-time
+  setup, required before you can start a round — walks you through
+  signing in on protectthepod.com, grabbing a token, and pasting it back
+  via a modal.
+- **`/start-pod set:<code> [threshold] [deadline]`** — starts a new RSVP
+  round for the given set across every server you're eligible to post
+  into (open-policy servers, plus any allow-list server that's approved
+  you). Pick which server(s) to post into from a menu, review the
+  summary, then confirm to actually post — nothing is created until you
+  do. `threshold` (2-8, default 8) is the minimum signups still needed to
+  fire at the deadline if the table isn't full by then; `deadline` (e.g.
+  `2h`, `90m`, `1d`) auto-fires (if `threshold` was reached) or expires
+  the round once it passes. Omit `deadline` and the round only ever fires
+  by filling all 8 seats.
+- **`/cancel-pod`** — cancels your own most recent round, as long as it
+  hasn't fired yet (still collecting signups, or just past its threshold
+  but not yet turned into a real pod). No effect on a round that's
+  already fired, expired, or been cancelled.
+- **`/conclude-pod`** — marks your own most recent *fired* round as
+  finished: updates its broadcast message and deletes the round's
+  temporary chat channel (`src/discord/podChat.ts`). Works the instant
+  the pod is created — there's no check that the draft itself actually
+  finished on PTP, this is fully organizer-trust by design (see
+  `../tasks/010-conclude-draft-feature.md` for why).
+
 ## Setup
 
 ```bash
