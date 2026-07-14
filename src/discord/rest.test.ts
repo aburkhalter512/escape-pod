@@ -74,6 +74,25 @@ describe('HttpDiscordRest.createDmChannel', () => {
   })
 })
 
+describe('HttpDiscordRest.editOriginalInteractionResponse', () => {
+  it('PATCHes the webhook @original message route with the given body, using the interaction token (not the bot token)', async () => {
+    const patch = stub(async (_route: string, _options?: unknown) => ({ id: 'msg-1', content: 'followup' }))
+    const rest = new HttpDiscordRest({ get: stub(async () => ({})), post: stub(async () => ({})), patch, delete: stub(async () => ({})) }, 'bot-user-id')
+
+    const result = await rest.editOriginalInteractionResponse('app-1', 'interaction-token-1', { content: 'followup' })
+
+    // discord-api-types' Routes helpers URL-encode every path segment that
+    // isn't already "URL safe" — `@` isn't, so `@original` comes out as
+    // `%40original` here (same as it would in the real outgoing request;
+    // Discord's API decodes it back to the literal `@original` route).
+    expect(patch.calls[0]).toEqual([
+      '/webhooks/app-1/interaction-token-1/messages/%40original',
+      { body: { content: 'followup' } },
+    ])
+    expect(result).toEqual({ id: 'msg-1', content: 'followup' })
+  })
+})
+
 describe('HttpDiscordRest.deleteChannel', () => {
   it('DELETEs the specific channel route', async () => {
     const del = stub(async (_route: string, _options?: unknown) => ({}))

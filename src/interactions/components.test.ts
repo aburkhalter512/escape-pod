@@ -6,6 +6,8 @@ import {
   type APIInteractionGuildMember,
   type RESTPatchAPIChannelMessageJSONBody,
   type RESTPatchAPIChannelMessageResult,
+  type RESTPatchAPIWebhookWithTokenMessageJSONBody,
+  type RESTPatchAPIWebhookWithTokenMessageResult,
   type RESTPostAPIChannelMessageJSONBody,
   type RESTPostAPIChannelMessageResult,
 } from 'discord-api-types/v10'
@@ -18,6 +20,31 @@ import { responseData } from '../testUtils/responseData.js'
 import { stub } from '../testUtils/stub.js'
 import { deepEqual } from '../testUtils/deepEqual.js'
 import { createInMemoryPendingStartPodStore, type PendingStartPod, type PendingStartPodStore } from '../pendingStartPods.js'
+
+// pod-signup:/start-pod:confirm: now defer their response and do their real
+// work in a detached async function (see components.ts, issue #1) that
+// handleMessageComponent itself never awaits — its returned promise
+// resolves as soon as the deferred ack is built, before that background
+// work has necessarily finished. handleMessageComponent's 5th parameter is
+// a test-only seam that, when passed, is called with that detached
+// function's own promise, so tests here can await it before asserting on
+// its effects (editOriginalInteractionResponse/editMessage/postMessage
+// calls) without resorting to timing-based flushes. Production callers
+// (interactions/router.ts) never pass this — there it's genuinely
+// fire-and-forget.
+async function runAndAwaitBackgroundWork(
+  interaction: Parameters<typeof handleMessageComponent>[0],
+  backend: Parameters<typeof handleMessageComponent>[1],
+  discordRest: Parameters<typeof handleMessageComponent>[2],
+  pendingStartPods: Parameters<typeof handleMessageComponent>[3]
+): Promise<Awaited<ReturnType<typeof handleMessageComponent>>> {
+  let backgroundWork: Promise<void> | undefined
+  const response = await handleMessageComponent(interaction, backend, discordRest, pendingStartPods, (work) => {
+    backgroundWork = work
+  })
+  await backgroundWork
+  return response
+}
 
 function fakeJwt(payload: Record<string, unknown>): string {
   const encode = (obj: Record<string, unknown>) => Buffer.from(JSON.stringify(obj)).toString('base64url')
@@ -294,17 +321,30 @@ describe('handleMessageComponent', () => {
         throw new Error(`unexpected postMessage channelId: ${channelId}`)
       })
 
-      const response = await handleMessageComponent(
+      const editOriginalInteractionResponse = stub(
+        async (_applicationId: string, _interactionToken: string, _body: RESTPatchAPIWebhookWithTokenMessageJSONBody) =>
+          ({}) as RESTPatchAPIWebhookWithTokenMessageResult
+      )
+
+      const response = await runAndAwaitBackgroundWork(
         confirmInteraction(token),
         createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: recordMessagePostedMock }),
-        createFakeDiscordRest({ postMessage }),
+        createFakeDiscordRest({ postMessage, editOriginalInteractionResponse }),
         pendingStartPods
       )
 
+      // The immediate response is just the deferred ack — nothing Discord-
+      // API-related has happened yet by the time it goes out (issue #1).
+      expect(response).toEqual({ type: InteractionResponseType.DeferredMessageUpdate })
+
       expect(postMessage.calls).toHaveLength(2)
       expect(recordMessagePostedMock.calls).toHaveLength(2)
-      expect(responseData(response).content).toContain('2 server(s)')
-      expect(responseData(response).content).not.toMatch(/failed to post/i)
+      expect(editOriginalInteractionResponse.calls).toHaveLength(1)
+      const [applicationId, interactionToken, followupBody] = editOriginalInteractionResponse.calls[0]
+      expect(applicationId).toBe('bot-user-id')
+      expect(interactionToken).toBe('interaction-token')
+      expect(followupBody.content).toContain('2 server(s)')
+      expect(followupBody.content).not.toMatch(/failed to post/i)
     })
 
     it("includes the origin guild's name as an Organizer line in the posted message's description", async () => {
@@ -320,10 +360,15 @@ describe('handleMessageComponent', () => {
         return { id: 'msg-1' } as RESTPostAPIChannelMessageResult
       })
 
-      await handleMessageComponent(
+      await runAndAwaitBackgroundWork(
         confirmInteraction(token),
         createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: stub(async () => ({ ok: true as const, value: undefined })) }),
-        createFakeDiscordRest({ postMessage }),
+        createFakeDiscordRest({
+          postMessage,
+          editOriginalInteractionResponse: stub(
+            async () => ({}) as RESTPatchAPIWebhookWithTokenMessageResult
+          ),
+        }),
         pendingStartPods
       )
 
@@ -341,10 +386,15 @@ describe('handleMessageComponent', () => {
         async (_channelId: string, _body: RESTPostAPIChannelMessageJSONBody) => ({ id: 'msg-1' }) as RESTPostAPIChannelMessageResult
       )
 
-      await handleMessageComponent(
+      await runAndAwaitBackgroundWork(
         confirmInteraction(token),
         createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: stub(async () => ({ ok: true as const, value: undefined })) }),
-        createFakeDiscordRest({ postMessage }),
+        createFakeDiscordRest({
+          postMessage,
+          editOriginalInteractionResponse: stub(
+            async () => ({}) as RESTPatchAPIWebhookWithTokenMessageResult
+          ),
+        }),
         pendingStartPods
       )
 
@@ -374,10 +424,15 @@ describe('handleMessageComponent', () => {
         throw new Error('Missing Access')
       })
 
-      const response = await handleMessageComponent(
+      const editOriginalInteractionResponse = stub(
+        async (_applicationId: string, _interactionToken: string, _body: RESTPatchAPIWebhookWithTokenMessageJSONBody) =>
+          ({}) as RESTPatchAPIWebhookWithTokenMessageResult
+      )
+
+      await runAndAwaitBackgroundWork(
         confirmInteraction(token),
         createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: recordMessagePostedMock }),
-        createFakeDiscordRest({ postMessage }),
+        createFakeDiscordRest({ postMessage, editOriginalInteractionResponse }),
         pendingStartPods
       )
 
@@ -386,7 +441,7 @@ describe('handleMessageComponent', () => {
       // the rest (Promise.allSettled, not Promise.all).
       expect(recordMessagePostedMock.calls).toHaveLength(1)
       expect(recordMessagePostedMock.calls[0]).toEqual(['round-1', 'g1', 'msg-1'])
-      expect(responseData(response).content).toMatch(/1 server\(s\) failed to post/i)
+      expect(editOriginalInteractionResponse.calls[0][2].content).toMatch(/1 server\(s\) failed to post/i)
     })
 
     it('threads a seeded deadline through to startPod and the posted message', async () => {
@@ -403,10 +458,15 @@ describe('handleMessageComponent', () => {
         return { id: 'msg-1' } as RESTPostAPIChannelMessageResult
       })
 
-      await handleMessageComponent(
+      await runAndAwaitBackgroundWork(
         confirmInteraction(token),
         createFakeBackendClient({ startPod: startPodMock, recordMessagePosted: stub(async () => ({ ok: true as const, value: undefined })) }),
-        createFakeDiscordRest({ postMessage }),
+        createFakeDiscordRest({
+          postMessage,
+          editOriginalInteractionResponse: stub(
+            async () => ({}) as RESTPatchAPIWebhookWithTokenMessageResult
+          ),
+        }),
         pendingStartPods
       )
 
@@ -441,13 +501,67 @@ describe('handleMessageComponent', () => {
       })
       const discordRest = createFakeDiscordRest({
         postMessage: stub(async () => ({ id: 'msg-1' }) as RESTPostAPIChannelMessageResult),
+        editOriginalInteractionResponse: stub(
+          async () => ({}) as RESTPatchAPIWebhookWithTokenMessageResult
+        ),
       })
 
-      await handleMessageComponent(confirmInteraction(token), backend, discordRest, pendingStartPods)
+      await runAndAwaitBackgroundWork(confirmInteraction(token), backend, discordRest, pendingStartPods)
       const secondResponse = await handleMessageComponent(confirmInteraction(token), backend, discordRest, pendingStartPods)
 
       expect(responseData(secondResponse).content).toMatch(/expired/i)
       expect(startPodMock.calls).toHaveLength(1)
+    })
+
+    it('returns the deferred ack immediately (with no body/content) before any Discord API call happens', async () => {
+      const pendingStartPods = createInMemoryPendingStartPodStore()
+      const token = seedPending(pendingStartPods, { guildIds: ['g1'] })
+      const startPodMock = stub(async (_params: unknown) => ({
+        podRoundId: 'round-1',
+        targets: [{ guildId: 'g1', channelId: 'channel-1' }],
+      }))
+
+      // No overrides for postMessage/editOriginalInteractionResponse (both
+      // default to throwing) — if the immediate response were anything but
+      // the bare deferred ack, or if it required either of those to have
+      // already run, this would throw before the assertion below runs.
+      const response = await handleMessageComponent(
+        confirmInteraction(token),
+        createFakeBackendClient({ startPod: startPodMock }),
+        createFakeDiscordRest(),
+        pendingStartPods
+      )
+
+      expect(response).toEqual({ type: InteractionResponseType.DeferredMessageUpdate })
+    })
+
+    it('logs and still delivers a followup edit when the background work throws unexpectedly', async () => {
+      const pendingStartPods = createInMemoryPendingStartPodStore()
+      const token = seedPending(pendingStartPods, { guildIds: ['g1'] })
+      const startPodMock = stub(async (_params: unknown) => {
+        throw new Error('unexpected backend failure')
+      })
+      const editOriginalInteractionResponse = stub(
+        async (_applicationId: string, _interactionToken: string, _body: RESTPatchAPIWebhookWithTokenMessageJSONBody) =>
+          ({}) as RESTPatchAPIWebhookWithTokenMessageResult
+      )
+      const consoleErrorSpy = stub((..._args: unknown[]) => undefined)
+      const originalConsoleError = console.error
+      console.error = consoleErrorSpy
+      try {
+        await runAndAwaitBackgroundWork(
+          confirmInteraction(token),
+          createFakeBackendClient({ startPod: startPodMock }),
+          createFakeDiscordRest({ editOriginalInteractionResponse }),
+          pendingStartPods
+        )
+      } finally {
+        console.error = originalConsoleError
+      }
+
+      expect(editOriginalInteractionResponse.calls).toHaveLength(1)
+      expect(editOriginalInteractionResponse.calls[0][2].content).toMatch(/something went wrong/i)
+      expect(consoleErrorSpy.calls.some((call) => String(call[0]).includes('background work failed'))).toBe(true)
     })
   })
 
@@ -526,62 +640,89 @@ describe('handleMessageComponent', () => {
       }
     }
 
-    it('records the signup and returns an UpdateMessage with the new embed', async () => {
+    // The immediate response is now always just the deferred ack once
+    // identity resolution succeeds — the real work (recordSignup + fan-out)
+    // happens in the detached background function and is only observable
+    // via discordRest.editOriginalInteractionResponse's calls, after
+    // awaiting runAndAwaitBackgroundWork below (see this file's top for how
+    // that seam works). fakeEditOriginal() builds a stub with a sensible
+    // default so most tests below don't need to inspect its return value.
+    function fakeEditOriginal() {
+      return stub(
+        async (_applicationId: string, _interactionToken: string, _body: RESTPatchAPIWebhookWithTokenMessageJSONBody) =>
+          ({}) as RESTPatchAPIWebhookWithTokenMessageResult
+      )
+    }
+
+    it('returns the deferred ack immediately, then edits the original response with the new embed once the background work finishes', async () => {
       const recordSignupMock = stub(async (podRoundId: string, discordId: string, username: string, sourceGuildId: string, action: SignupAction) => {
         const valid =
           podRoundId === 'round-1' && discordId === 'player-1' && username === 'PlayerOne' && sourceGuildId === 'guild-1' && action === 'in'
         if (!valid) throw new Error(`unexpected recordSignup args: ${podRoundId} ${discordId} ${username} ${sourceGuildId} ${action}`)
         return signupResult()
       })
+      const editOriginalInteractionResponse = fakeEditOriginal()
 
-      const response = await handleMessageComponent(
+      const response = await runAndAwaitBackgroundWork(
         interaction(),
         createFakeBackendClient({ recordSignup: recordSignupMock }),
         // signupResult()'s default targets include guild-2, which triggers a
         // cross-guild edit fan-out (§7.5 step 3) irrelevant to this test.
         createFakeDiscordRest({
           editMessage: stub(async (_channelId: string, _messageId: string, _body: RESTPatchAPIChannelMessageJSONBody) => ({}) as RESTPatchAPIChannelMessageResult),
+          editOriginalInteractionResponse,
         }),
         createInMemoryPendingStartPodStore()
       )
 
-      expect(response.type).toBe(InteractionResponseType.UpdateMessage)
-      expect(responseData(response).content).toBeUndefined() // embeds/components now, not plain content
-      expect(responseData(response).components?.[0]).toBeDefined()
+      // Nothing Discord-API-related has happened by the time this comes
+      // back (issue #1) — just the bare deferred ack.
+      expect(response).toEqual({ type: InteractionResponseType.DeferredMessageUpdate })
+
+      expect(editOriginalInteractionResponse.calls).toHaveLength(1)
+      const [applicationId, interactionToken, followupBody] = editOriginalInteractionResponse.calls[0]
+      expect(applicationId).toBe('bot-user-id')
+      expect(interactionToken).toBe('interaction-token')
+      expect(followupBody.content).toBeUndefined() // embeds/components now, not plain content
+      expect(followupBody.components?.[0]).toBeDefined()
     })
 
     it("rebuilds the embed's description with a Players line of mentions for everyone recordSignup reports as signed up", async () => {
       const recordSignupMock = stub(async () => signupResult({ signupDiscordIds: ['player-1', 'player-9'] }))
+      const editOriginalInteractionResponse = fakeEditOriginal()
 
-      const response = await handleMessageComponent(
+      await runAndAwaitBackgroundWork(
         interaction(),
         createFakeBackendClient({ recordSignup: recordSignupMock }),
         createFakeDiscordRest({
           editMessage: stub(async (_channelId: string, _messageId: string, _body: RESTPatchAPIChannelMessageJSONBody) => ({}) as RESTPatchAPIChannelMessageResult),
+          editOriginalInteractionResponse,
         }),
         createInMemoryPendingStartPodStore()
       )
 
-      const embeds = (response as { data?: { embeds?: Array<{ description?: string }> } }).data?.embeds
+      const embeds = editOriginalInteractionResponse.calls[0][2].embeds
       expect(embeds?.[0].description).toContain('Players:\n- <@player-1>\n- <@player-9>')
     })
 
     it('still shows the deadline note after a signup click, not just on the initial post (regression guard)', async () => {
       const scheduledFor = new Date(Date.now() + 2 * 60 * 60_000)
       const recordSignupMock = stub(async () => signupResult({ scheduledFor }))
+      const editOriginalInteractionResponse = fakeEditOriginal()
 
-      const response = await handleMessageComponent(
+      await runAndAwaitBackgroundWork(
         interaction(),
         createFakeBackendClient({ recordSignup: recordSignupMock }),
         // signupResult()'s default targets include guild-2, which triggers a
         // cross-guild edit fan-out (§7.5 step 3) irrelevant to this test.
         createFakeDiscordRest({
           editMessage: stub(async (_channelId: string, _messageId: string, _body: RESTPatchAPIChannelMessageJSONBody) => ({}) as RESTPatchAPIChannelMessageResult),
+          editOriginalInteractionResponse,
         }),
         createInMemoryPendingStartPodStore()
       )
 
-      const embeds = (response as { data?: { embeds?: Array<{ description?: string }> } }).data?.embeds
+      const embeds = editOriginalInteractionResponse.calls[0][2].embeds
       expect(embeds?.[0].description).toContain('Fires automatically')
       expect(embeds?.[0].description).toContain(`<t:${Math.floor(scheduledFor.getTime() / 1000)}:R>`)
     })
@@ -593,21 +734,24 @@ describe('handleMessageComponent', () => {
         if (!valid) throw new Error(`unexpected recordSignup args: ${podRoundId} ${discordId} ${username} ${sourceGuildId} ${action}`)
         return signupResult({ count: 4 })
       })
+      const editOriginalInteractionResponse = fakeEditOriginal()
 
-      const response = await handleMessageComponent(
+      const response = await runAndAwaitBackgroundWork(
         interaction({ customId: 'pod-signup:round-1:leave' }),
         createFakeBackendClient({ recordSignup: recordSignupMock }),
         createFakeDiscordRest({
           editMessage: stub(async (_channelId: string, _messageId: string, _body: RESTPatchAPIChannelMessageJSONBody) => ({}) as RESTPatchAPIChannelMessageResult),
+          editOriginalInteractionResponse,
         }),
         createInMemoryPendingStartPodStore()
       )
 
       expect(recordSignupMock.calls).toHaveLength(1)
-      expect(response.type).toBe(InteractionResponseType.UpdateMessage)
+      expect(response).toEqual({ type: InteractionResponseType.DeferredMessageUpdate })
+      expect(editOriginalInteractionResponse.calls).toHaveLength(1)
     })
 
-    it("edits every OTHER target guild's message, but not the one the click came from", async () => {
+    it("edits every OTHER target guild's message via editMessage, and the clicked guild's own message via editOriginalInteractionResponse", async () => {
       const recordSignupMock = stub(async (_podRoundId: string, _discordId: string, _username: string, _sourceGuildId: string) =>
         signupResult()
       )
@@ -617,17 +761,20 @@ describe('handleMessageComponent', () => {
         }
         return { id: messageId } as RESTPatchAPIChannelMessageResult
       })
+      const editOriginalInteractionResponse = fakeEditOriginal()
 
-      await handleMessageComponent(
+      await runAndAwaitBackgroundWork(
         interaction(), // guild_id: 'guild-1'
         createFakeBackendClient({ recordSignup: recordSignupMock }),
-        createFakeDiscordRest({ editMessage }),
+        createFakeDiscordRest({ editMessage, editOriginalInteractionResponse }),
         createInMemoryPendingStartPodStore()
       )
 
-      // Only guild-2's message should be REST-edited — guild-1's is handled
-      // by the UpdateMessage interaction response itself (§7.5 step 3).
+      // Only guild-2's message should be REST-edited via editMessage —
+      // guild-1's (the one the click came from) is handled via the
+      // deferred-response followup edit instead (§7.5 step 3).
       expect(editMessage.calls).toHaveLength(1)
+      expect(editOriginalInteractionResponse.calls).toHaveLength(1)
     })
 
     it('skips targets with no recorded messageId yet', async () => {
@@ -643,30 +790,32 @@ describe('handleMessageComponent', () => {
         throw new Error('editMessage should not have been called')
       })
 
-      await handleMessageComponent(
+      await runAndAwaitBackgroundWork(
         interaction(),
         createFakeBackendClient({ recordSignup: recordSignupMock }),
-        createFakeDiscordRest({ editMessage }),
+        createFakeDiscordRest({ editMessage, editOriginalInteractionResponse: fakeEditOriginal() }),
         createInMemoryPendingStartPodStore()
       )
     })
 
-    it('one guild\'s edit failing does not throw or block the interaction response', async () => {
+    it("one guild's edit failing does not throw or block the deferred followup", async () => {
       const recordSignupMock = stub(async (_podRoundId: string, _discordId: string, _username: string, _sourceGuildId: string) =>
         signupResult()
       )
       const editMessage = stub(async (_channelId: string, _messageId: string, _body: RESTPatchAPIChannelMessageJSONBody) => {
         throw new Error('Unknown Message')
       })
+      const editOriginalInteractionResponse = fakeEditOriginal()
 
-      const response = await handleMessageComponent(
+      const response = await runAndAwaitBackgroundWork(
         interaction(),
         createFakeBackendClient({ recordSignup: recordSignupMock }),
-        createFakeDiscordRest({ editMessage }),
+        createFakeDiscordRest({ editMessage, editOriginalInteractionResponse }),
         createInMemoryPendingStartPodStore()
       )
 
-      expect(response.type).toBe(InteractionResponseType.UpdateMessage)
+      expect(response).toEqual({ type: InteractionResponseType.DeferredMessageUpdate })
+      expect(editOriginalInteractionResponse.calls).toHaveLength(1)
     })
 
     it('shows the pod-full embed with a join link once threshold is reached and the pod is created', async () => {
@@ -678,20 +827,22 @@ describe('handleMessageComponent', () => {
           shareUrl: 'https://www.protectthepod.com/draft/share-1',
         })
       )
+      const editOriginalInteractionResponse = fakeEditOriginal()
 
-      const response = await handleMessageComponent(
+      await runAndAwaitBackgroundWork(
         interaction(),
         createFakeBackendClient({ recordSignup: recordSignupMock }),
         // signupResult()'s default targets include guild-2, which triggers a
         // cross-guild edit fan-out (§7.5 step 3) irrelevant to this test.
         createFakeDiscordRest({
           editMessage: stub(async (_channelId: string, _messageId: string, _body: RESTPatchAPIChannelMessageJSONBody) => ({}) as RESTPatchAPIChannelMessageResult),
+          editOriginalInteractionResponse,
         }),
         createInMemoryPendingStartPodStore()
       )
 
-      const data = responseData(response)
-      const buttons = (data.components?.[0] as { components: unknown[] }).components
+      const followupBody = editOriginalInteractionResponse.calls[0][2]
+      const buttons = (followupBody.components?.[0] as { components: unknown[] }).components
       expect(buttons).toEqual([expect.objectContaining({ url: 'https://www.protectthepod.com/draft/share-1' })])
       // §7.5 step 4: no more "I'm in"/"Leave" buttons once the pod is full.
       expect((buttons[0] as { custom_id?: string }).custom_id).toBeUndefined()
@@ -708,18 +859,20 @@ describe('handleMessageComponent', () => {
           signupDiscordIds: [],
         })
       )
+      const editOriginalInteractionResponse = fakeEditOriginal()
 
-      const response = await handleMessageComponent(
+      await runAndAwaitBackgroundWork(
         interaction(),
         createFakeBackendClient({ recordSignup: recordSignupMock }),
         createFakeDiscordRest({
           editMessage: stub(async () => ({}) as RESTPatchAPIChannelMessageResult),
+          editOriginalInteractionResponse,
         }),
         createInMemoryPendingStartPodStore()
       )
 
-      const data = responseData(response)
-      const buttons = (data.components?.[0] as { components: unknown[] }).components
+      const followupBody = editOriginalInteractionResponse.calls[0][2]
+      const buttons = (followupBody.components?.[0] as { components: unknown[] }).components
       expect(buttons).toEqual([
         expect.objectContaining({ url: 'https://www.protectthepod.com/draft/share-1' }),
         expect.objectContaining({ url: 'https://discord.com/invite/abc123' }),
@@ -740,11 +893,12 @@ describe('handleMessageComponent', () => {
       const createDmChannel = stub(async (userId: string) => ({ id: dmChannelIds[userId] }) as never)
       const postMessage = stub(async (_channelId: string, _body: RESTPostAPIChannelMessageJSONBody) => ({}) as RESTPostAPIChannelMessageResult)
 
-      await handleMessageComponent(
+      await runAndAwaitBackgroundWork(
         interaction(),
         createFakeBackendClient({ recordSignup: recordSignupMock }),
         createFakeDiscordRest({
           editMessage: stub(async () => ({}) as RESTPatchAPIChannelMessageResult),
+          editOriginalInteractionResponse: fakeEditOriginal(),
           createDmChannel,
           postMessage,
         }),
@@ -769,11 +923,12 @@ describe('handleMessageComponent', () => {
       )
       const postMessage = stub(async (_channelId: string, _body: RESTPostAPIChannelMessageJSONBody) => ({}) as RESTPostAPIChannelMessageResult)
 
-      await handleMessageComponent(
+      await runAndAwaitBackgroundWork(
         interaction(),
         createFakeBackendClient({ recordSignup: recordSignupMock }),
         createFakeDiscordRest({
           editMessage: stub(async () => ({}) as RESTPatchAPIChannelMessageResult),
+          editOriginalInteractionResponse: fakeEditOriginal(),
           createDmChannel: stub(async (userId: string) => ({ id: `dm-${userId}` }) as never),
           postMessage,
         }),
@@ -794,11 +949,12 @@ describe('handleMessageComponent', () => {
         throw new Error('createDmChannel should not have been called')
       })
 
-      await handleMessageComponent(
+      await runAndAwaitBackgroundWork(
         interaction(),
         createFakeBackendClient({ recordSignup: recordSignupMock }),
         createFakeDiscordRest({
           editMessage: stub(async () => ({}) as RESTPatchAPIChannelMessageResult),
+          editOriginalInteractionResponse: fakeEditOriginal(),
           createDmChannel,
         }),
         createInMemoryPendingStartPodStore()
@@ -812,6 +968,9 @@ describe('handleMessageComponent', () => {
         throw new Error('recordSignup should not have been called')
       })
 
+      // No overrides — this check must stay synchronous (no defer, no
+      // Discord API call) since it fails before anything backgroundable
+      // would even start.
       const response = await handleMessageComponent(
         interaction({ member: undefined }),
         createFakeBackendClient({ recordSignup: recordSignupMock }),
@@ -843,26 +1002,54 @@ describe('handleMessageComponent', () => {
     // returns an err() rather than a stale "still collecting" ok() value
     // (see services/pods.test.ts). This asserts the existing
     // `if (!signupResult.ok)` branch already does the right thing with
-    // that: an ephemeral, private reply to the clicker, and — critically —
-    // no edit/post/DM fan-out that could stomp the correct public message
-    // other processes already left in place. createFakeDiscordRest() with
-    // no overrides already throws on any call, so any fan-out attempt
-    // fails this test.
-    it('shows an ephemeral, status-appropriate message and does not touch Discord when the round already resolved', async () => {
+    // that: a followup edit with the specific error message, and —
+    // critically — no edit/post/DM fan-out that could stomp the correct
+    // public message other processes already left in place.
+    it('edits the original response with a status-appropriate message and does not touch any other guild when the round already resolved', async () => {
       const recordSignupMock = stub(async () => ({
         ok: false as const,
         error: { kind: 'validation' as const, message: 'This round was cancelled by the organizer.' },
       }))
+      const editOriginalInteractionResponse = fakeEditOriginal()
+      const editMessage = stub(async (_channelId: string, _messageId: string, _body: RESTPatchAPIChannelMessageJSONBody) => {
+        throw new Error('editMessage should not have been called')
+      })
 
-      const response = await handleMessageComponent(
+      const response = await runAndAwaitBackgroundWork(
         interaction(),
         createFakeBackendClient({ recordSignup: recordSignupMock }),
-        createFakeDiscordRest(),
+        createFakeDiscordRest({ editOriginalInteractionResponse, editMessage }),
         createInMemoryPendingStartPodStore()
       )
 
-      expect(response.type).toBe(InteractionResponseType.ChannelMessageWithSource)
-      expect(responseData(response).content).toBe('This round was cancelled by the organizer.')
+      expect(response).toEqual({ type: InteractionResponseType.DeferredMessageUpdate })
+      expect(editOriginalInteractionResponse.calls).toHaveLength(1)
+      expect(editOriginalInteractionResponse.calls[0][2].content).toBe('This round was cancelled by the organizer.')
+      expect(editMessage.calls).toHaveLength(0)
+    })
+
+    it('logs and still delivers a followup edit when the background work throws unexpectedly', async () => {
+      const recordSignupMock = stub(async () => {
+        throw new Error('unexpected backend failure')
+      })
+      const editOriginalInteractionResponse = fakeEditOriginal()
+      const consoleErrorSpy = stub((..._args: unknown[]) => undefined)
+      const originalConsoleError = console.error
+      console.error = consoleErrorSpy
+      try {
+        await runAndAwaitBackgroundWork(
+          interaction(),
+          createFakeBackendClient({ recordSignup: recordSignupMock }),
+          createFakeDiscordRest({ editOriginalInteractionResponse }),
+          createInMemoryPendingStartPodStore()
+        )
+      } finally {
+        console.error = originalConsoleError
+      }
+
+      expect(editOriginalInteractionResponse.calls).toHaveLength(1)
+      expect(editOriginalInteractionResponse.calls[0][2].content).toMatch(/something went wrong/i)
+      expect(consoleErrorSpy.calls.some((call) => String(call[0]).includes('background work failed'))).toBe(true)
     })
   })
 

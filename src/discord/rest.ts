@@ -10,6 +10,8 @@ import {
   type RESTPostAPIGuildChannelResult,
   type RESTPostAPIChannelInviteResult,
   type RESTPostAPICurrentUserCreateDMChannelResult,
+  type RESTPatchAPIWebhookWithTokenMessageJSONBody,
+  type RESTPatchAPIWebhookWithTokenMessageResult,
 } from 'discord-api-types/v10'
 
 // The contract the app depends on for talking to Discord — scoped to the
@@ -49,6 +51,27 @@ export interface DiscordRestClient {
   // the organizer concludes the round. Best-effort at the call site: a 404
   // from an already-deleted channel is swallowed there, not here.
   deleteChannel(channelId: string): Promise<void>
+  // Followup for a *deferred* interaction response (InteractionResponseType
+  // .DeferredMessageUpdate) — edits the interaction's own original response
+  // via `PATCH /webhooks/{application_id}/{interaction_token}/messages/@original`,
+  // any time within the interaction token's 15-minute validity window.
+  // Distinct from editMessage above: editMessage edits a normal channel
+  // message by ID using bot-token auth against a guild channel (and
+  // requires the bot to actually be present there); this instead
+  // authenticates with the interaction token itself and always works
+  // regardless of bot guild presence, but only for that interaction's own
+  // original response. Used by interactions/components.ts's pod-signup:/
+  // start-pod:confirm: branches to deliver the real result once background
+  // work finishes, after already acking with a deferred response to stay
+  // inside Discord's 3-second budget (see rest.test.ts for exact route
+  // shape). applicationId is the same value as botUserId (see doc comment
+  // above) — passed explicitly here rather than implied, since this method
+  // is about a specific interaction's webhook, not the bot's own identity.
+  editOriginalInteractionResponse(
+    applicationId: string,
+    interactionToken: string,
+    body: RESTPatchAPIWebhookWithTokenMessageJSONBody
+  ): Promise<RESTPatchAPIWebhookWithTokenMessageResult>
 }
 
 // The raw @discordjs/rest surface HttpDiscordRest wraps. A real REST
@@ -114,6 +137,16 @@ export class HttpDiscordRest implements DiscordRestClient {
 
   async deleteChannel(channelId: string): Promise<void> {
     await this.#raw.delete(Routes.channel(channelId))
+  }
+
+  async editOriginalInteractionResponse(
+    applicationId: string,
+    interactionToken: string,
+    body: RESTPatchAPIWebhookWithTokenMessageJSONBody
+  ): Promise<RESTPatchAPIWebhookWithTokenMessageResult> {
+    return this.#raw.patch(Routes.webhookMessage(applicationId, interactionToken, '@original'), {
+      body,
+    }) as Promise<RESTPatchAPIWebhookWithTokenMessageResult>
   }
 }
 

@@ -22,7 +22,18 @@ export async function handleMessageComponent(
   interaction: APIMessageComponentInteraction,
   backend: BackendClient,
   discordRest: DiscordRestClient,
-  pendingStartPods: PendingStartPodStore
+  pendingStartPods: PendingStartPodStore,
+  // Test-only seam: the pod-signup:/start-pod:confirm: branches below defer
+  // their real response and kick off a detached (not awaited by this
+  // function) async function to do the actual work, then report back via
+  // discordRest.editOriginalInteractionResponse — see this file's top-of-
+  // branch comments for why (Discord's 3-second interaction-response
+  // budget, issue #1). Production callers (interactions/router.ts) never
+  // pass this, so the detached work stays genuinely fire-and-forget there —
+  // this hook exists purely so components.test.ts can `await` that
+  // detached promise before asserting on its effects, without changing
+  // handleMessageComponent's return type/contract for every other branch.
+  onBackgroundWork?: (work: Promise<void>) => void
 ): Promise<APIInteractionResponse> {
   const customId = interaction.data.custom_id
 
@@ -144,6 +155,9 @@ export async function handleMessageComponent(
     const [, , token] = customId.split(':')
     const pending = pendingStartPods.get(token)
     if (!pending) {
+      // Fast, no-Discord-API-calls check — resolved synchronously, no need
+      // to defer just to then immediately fail (same principle as the
+      // identity-resolution check in pod-signup: below).
       return {
         type: InteractionResponseType.UpdateMessage,
         data: { content: "This selection has expired — run `/start-pod` again.", components: [] },
@@ -151,74 +165,98 @@ export async function handleMessageComponent(
     }
     pendingStartPods.delete(token)
     const { organizerDiscordId, setCode, threshold, scheduledFor, originGuildName, originGuildId, guildIds } = pending
+    const applicationId = discordRest.botUserId
+    const interactionToken = interaction.token
 
-    // §7.5 steps 1-2: backend creates the PodRound + PodRoundTarget rows and
-    // returns each target's resolved channel; this posts the actual RSVP
-    // message into each one and records the resulting message ID so a
-    // later signup's fan-out (step 3) knows what to edit.
-    const { podRoundId, targets } = await backend.startPod({
-      organizerDiscordId,
-      setCode,
-      threshold,
-      guildIds,
-      scheduledFor,
-      originGuildName,
-      originGuildId,
-    })
-
-    const postOutcomes = await Promise.allSettled(
-      targets.map(async (target) => {
-        const body = buildPodRoundMessage({
-          podRoundId,
+    // The real work — backend.startPod plus a per-target postMessage/
+    // recordMessagePosted fan-out (§7.5 steps 1-2) — used to happen here,
+    // awaited in full before the interaction response went out. That's a
+    // backend round-trip plus one REST call per target guild, all inside
+    // Discord's 3-second interaction-response budget (issue #1). Instead,
+    // this is detached (not awaited by this branch) and reports back via
+    // editOriginalInteractionResponse once done, using the deferred ack
+    // returned below to buy the full 15-minute interaction-token window.
+    const backgroundWork = (async () => {
+      try {
+        const { podRoundId, targets } = await backend.startPod({
+          organizerDiscordId,
           setCode,
           threshold,
-          count: 0,
+          guildIds,
           scheduledFor,
           originGuildName,
-          signupDiscordIds: [],
+          originGuildId,
         })
-        const message = await discordRest.postMessage(target.channelId, {
-          embeds: body.embeds,
-          components: body.components,
-        })
-        const recorded = await backend.recordMessagePosted(podRoundId, target.guildId, message.id)
-        if (!recorded.ok) {
-          // Not exception-based control flow — recordMessagePosted itself
-          // never throws. This re-synthesizes a rejection purely so the
-          // per-target counting/logging below (already built around
-          // Promise.allSettled's rejection-based aggregation) keeps
-          // working uniformly for both this and a genuine postMessage
-          // failure, since neither this loop nor its caller distinguishes
-          // *why* a given target failed, only whether it did.
-          throw new Error(`recordMessagePosted failed: ${recorded.error.message}`)
-        }
-      })
-    )
-    // Promise.allSettled only exposes each rejection's reason on the
-    // outcome object itself — swallowing it here (as this used to) meant
-    // "N server(s) failed to post" was the only signal available,
-    // regardless of whether the real cause was a permissions issue, the
-    // bot not actually being in that guild, a deleted channel, or
-    // anything else. Logging each one gives that back without changing
-    // the user-facing message.
-    for (const [i, outcome] of postOutcomes.entries()) {
-      if (outcome.status === 'rejected') {
-        console.error(`start-pod post failed for guild ${targets[i].guildId}:`, outcome.reason)
-      }
-    }
-    const failureCount = postOutcomes.filter((outcome) => outcome.status === 'rejected').length
 
-    return {
-      type: InteractionResponseType.UpdateMessage,
-      data: {
-        content:
-          `Round started for ${setCode} (min ${threshold}) across ${targets.length} server(s).` +
-          (failureCount > 0
-            ? ` ${failureCount} server(s) failed to post — check the bot has permission in their channel.`
-            : ''),
-        components: [],
-      },
-    }
+        const postOutcomes = await Promise.allSettled(
+          targets.map(async (target) => {
+            const body = buildPodRoundMessage({
+              podRoundId,
+              setCode,
+              threshold,
+              count: 0,
+              scheduledFor,
+              originGuildName,
+              signupDiscordIds: [],
+            })
+            const message = await discordRest.postMessage(target.channelId, {
+              embeds: body.embeds,
+              components: body.components,
+            })
+            const recorded = await backend.recordMessagePosted(podRoundId, target.guildId, message.id)
+            if (!recorded.ok) {
+              // Not exception-based control flow — recordMessagePosted itself
+              // never throws. This re-synthesizes a rejection purely so the
+              // per-target counting/logging below (already built around
+              // Promise.allSettled's rejection-based aggregation) keeps
+              // working uniformly for both this and a genuine postMessage
+              // failure, since neither this loop nor its caller distinguishes
+              // *why* a given target failed, only whether it did.
+              throw new Error(`recordMessagePosted failed: ${recorded.error.message}`)
+            }
+          })
+        )
+        // Promise.allSettled only exposes each rejection's reason on the
+        // outcome object itself — swallowing it here (as this used to) meant
+        // "N server(s) failed to post" was the only signal available,
+        // regardless of whether the real cause was a permissions issue, the
+        // bot not actually being in that guild, a deleted channel, or
+        // anything else. Logging each one gives that back without changing
+        // the user-facing message.
+        for (const [i, outcome] of postOutcomes.entries()) {
+          if (outcome.status === 'rejected') {
+            console.error(`start-pod post failed for guild ${targets[i].guildId}:`, outcome.reason)
+          }
+        }
+        const failureCount = postOutcomes.filter((outcome) => outcome.status === 'rejected').length
+
+        await discordRest.editOriginalInteractionResponse(applicationId, interactionToken, {
+          content:
+            `Round started for ${setCode} (min ${threshold}) across ${targets.length} server(s).` +
+            (failureCount > 0
+              ? ` ${failureCount} server(s) failed to post — check the bot has permission in their channel.`
+              : ''),
+          components: [],
+        })
+      } catch (err) {
+        // Never let a real error vanish silently — the ack has already
+        // gone out, so this is the only remaining way to surface either an
+        // unexpected throw or a Discord API failure to the organizer.
+        console.error('start-pod:confirm: background work failed:', err)
+        try {
+          await discordRest.editOriginalInteractionResponse(applicationId, interactionToken, {
+            content: 'Something went wrong starting this round, please try again.',
+            components: [],
+          })
+        } catch (followupErr) {
+          console.error('start-pod:confirm: followup edit itself failed:', followupErr)
+        }
+      }
+    })()
+    onBackgroundWork?.(backgroundWork)
+    void backgroundWork
+
+    return { type: InteractionResponseType.DeferredMessageUpdate }
   }
 
   if (customId.startsWith('start-pod:cancel:')) {
@@ -239,97 +277,140 @@ export async function handleMessageComponent(
     const username = interaction.member?.user?.username ?? interaction.user?.username
 
     if (!discordId || !username) {
+      // Fast, no-Discord-API-calls check — resolved synchronously, no need
+      // to defer just to then immediately fail.
       return ephemeral('Could not determine your Discord identity.')
     }
 
-    // Creates the round's temporary chat channel (in its origin guild) and
-    // invites everyone signed up so far, before the PTP pod itself gets
-    // created (see services/pods.ts's fireRound) — best-effort, never
-    // throws, so a permissions problem in that guild can't block firing.
-    // Adapts createPodChatSpace's { channelId, inviteUrl } into the hook's
-    // { channelId, chatUrl } shape.
-    const onFiring: OnFiringHook = async (ctx) => {
-      if (!ctx.originGuildId) return undefined
-      const chatSpace = await createPodChatSpace(
-        discordRest,
-        { ...ctx, originGuildId: ctx.originGuildId },
-        (err, msg) => console.error(msg, err)
-      )
-      return chatSpace ? { channelId: chatSpace.channelId, chatUrl: chatSpace.inviteUrl } : undefined
-    }
+    const sourceGuildId = interaction.guild_id
+    const applicationId = discordRest.botUserId
+    const interactionToken = interaction.token
 
-    const signupResult = await backend.recordSignup(
-      podRoundId,
-      discordId,
-      username,
-      interaction.guild_id ?? '',
-      action,
-      onFiring
-    )
-    if (!signupResult.ok) {
-      // Today's only case is "round not found" (e.g. a click on a very
-      // old/stale message) — worth a specific message here rather than
-      // letting it propagate uncaught to server.ts's generic top-level
-      // fallback.
-      return ephemeral(signupResult.error.message)
-    }
-    const result = signupResult.value
-
-    const body = buildPodRoundMessage({
-      podRoundId,
-      setCode: result.setCode,
-      threshold: result.threshold,
-      count: result.count,
-      shareUrl: result.shareUrl,
-      originGuildName: result.originGuildName,
-      chatUrl: result.chatUrl,
-      scheduledFor: result.scheduledFor ?? undefined,
-      signupDiscordIds: result.signupDiscordIds,
-    })
-
-    // Fan the same update out to every OTHER target guild's message — the
-    // interaction response below already updates the one this click came
-    // from. §7.5 step 3's shared counter only feels shared if every server
-    // sees it move. Skips targets with no recorded messageId (either the
-    // initial post to that guild failed, or it just hasn't landed yet).
-    // Awaited inline (not backgrounded) to keep this simple, which trades
-    // away some headroom against Discord's 3-second interaction-response
-    // budget as the guild count grows — fine at the scale this is designed
-    // for (a handful of sister communities), worth revisiting if rounds
-    // start fanning out to dozens of guilds. Runs alongside a best-effort
-    // DM to every signed-up player (a supplement, not a replacement — see
-    // discord/dmSignups.ts) and a best-effort welcome message into the chat
-    // channel onFiring created above (now that the real PTP share URL is
-    // known — see services/pods.ts's fireRound for why that message can't
-    // be posted any earlier), both only once the round has actually fired.
-    await Promise.all([
-      Promise.allSettled(
-        result.targets
-          .filter((target) => target.guildId !== interaction.guild_id && target.messageId)
-          .map((target) =>
-            discordRest.editMessage(target.channelId, target.messageId as string, {
-              embeds: body.embeds,
-              components: body.components,
-            })
-          )
-      ),
-      result.podCreated
-        ? notifyPlayersByDm(discordRest, result.signupDiscordIds ?? [], body, (err, msg) => console.error(msg, err))
-        : Promise.resolve(),
-      result.podCreated && result.chatChannelId && result.shareUrl
-        ? postPodChatWelcomeMessage(
+    // The real work — backend.recordSignup, then fanning the resulting
+    // message body out to every target guild (§7.5 step 3) — used to
+    // happen here, awaited in full before the interaction response went
+    // out. That's a backend round-trip plus one REST call per target guild,
+    // all inside Discord's 3-second interaction-response budget (issue #1).
+    // Instead, this is detached (not awaited by this branch) and reports
+    // back via editOriginalInteractionResponse once done, using the
+    // deferred ack returned below to buy the full 15-minute interaction-
+    // token window.
+    const backgroundWork = (async () => {
+      try {
+        // Creates the round's temporary chat channel (in its origin guild)
+        // and invites everyone signed up so far, before the PTP pod itself
+        // gets created (see services/pods.ts's fireRound) — best-effort,
+        // never throws, so a permissions problem in that guild can't block
+        // firing. Adapts createPodChatSpace's { channelId, inviteUrl } into
+        // the hook's { channelId, chatUrl } shape.
+        const onFiring: OnFiringHook = async (ctx) => {
+          if (!ctx.originGuildId) return undefined
+          const chatSpace = await createPodChatSpace(
             discordRest,
-            result.chatChannelId,
-            { shareUrl: result.shareUrl, signupDiscordIds: result.signupDiscordIds ?? [] },
+            { ...ctx, originGuildId: ctx.originGuildId },
             (err, msg) => console.error(msg, err)
           )
-        : Promise.resolve(),
-    ])
+          return chatSpace ? { channelId: chatSpace.channelId, chatUrl: chatSpace.inviteUrl } : undefined
+        }
 
-    return {
-      type: InteractionResponseType.UpdateMessage,
-      data: { embeds: body.embeds, components: body.components },
-    }
+        const signupResult = await backend.recordSignup(
+          podRoundId,
+          discordId,
+          username,
+          sourceGuildId ?? '',
+          action,
+          onFiring
+        )
+        if (!signupResult.ok) {
+          // Today's only case is "round not found" (e.g. a click on a very
+          // old/stale message) — worth a specific message here rather than
+          // a generic failure.
+          await discordRest.editOriginalInteractionResponse(applicationId, interactionToken, {
+            content: signupResult.error.message,
+            embeds: [],
+            components: [],
+          })
+          return
+        }
+        const result = signupResult.value
+
+        const body = buildPodRoundMessage({
+          podRoundId,
+          setCode: result.setCode,
+          threshold: result.threshold,
+          count: result.count,
+          shareUrl: result.shareUrl,
+          originGuildName: result.originGuildName,
+          chatUrl: result.chatUrl,
+          scheduledFor: result.scheduledFor ?? undefined,
+          signupDiscordIds: result.signupDiscordIds,
+        })
+
+        // Fan the same update out to every target guild's message,
+        // including the one this click came from — with a deferred
+        // response, that guild's message no longer gets updated "for free"
+        // via the interaction response itself, so it needs the same
+        // explicit followup-edit treatment as every other target now.
+        // Skips targets with no recorded messageId (either the initial
+        // post to that guild failed, or it just hasn't landed yet). Runs
+        // alongside a best-effort DM to every signed-up player (a
+        // supplement, not a replacement — see discord/dmSignups.ts) and a
+        // best-effort welcome message into the chat channel onFiring
+        // created above (now that the real PTP share URL is known — see
+        // services/pods.ts's fireRound for why that message can't be
+        // posted any earlier), both only once the round has actually
+        // fired.
+        await Promise.all([
+          discordRest.editOriginalInteractionResponse(applicationId, interactionToken, {
+            embeds: body.embeds,
+            components: body.components,
+          }),
+          Promise.allSettled(
+            result.targets
+              .filter((target) => target.guildId !== sourceGuildId && target.messageId)
+              .map((target) =>
+                discordRest.editMessage(target.channelId, target.messageId as string, {
+                  embeds: body.embeds,
+                  components: body.components,
+                })
+              )
+          ),
+          result.podCreated
+            ? notifyPlayersByDm(discordRest, result.signupDiscordIds ?? [], body, (err, msg) => console.error(msg, err))
+            : Promise.resolve(),
+          result.podCreated && result.chatChannelId && result.shareUrl
+            ? postPodChatWelcomeMessage(
+                discordRest,
+                result.chatChannelId,
+                { shareUrl: result.shareUrl, signupDiscordIds: result.signupDiscordIds ?? [] },
+                (err, msg) => console.error(msg, err)
+              )
+            : Promise.resolve(),
+        ])
+      } catch (err) {
+        // Never let a real error vanish silently — the ack has already
+        // gone out, so this is the only remaining way to surface either an
+        // unexpected throw or a Discord API failure to the clicking player.
+        // A DeferredMessageUpdate followup can't itself be flagged
+        // ephemeral after the fact (the original message wasn't ephemeral
+        // to begin with) — editing it to a clear error state is the best
+        // available signal.
+        console.error('pod-signup: background work failed:', err)
+        try {
+          await discordRest.editOriginalInteractionResponse(applicationId, interactionToken, {
+            content: 'Something went wrong, please try again.',
+            embeds: [],
+            components: [],
+          })
+        } catch (followupErr) {
+          console.error('pod-signup: followup edit itself failed:', followupErr)
+        }
+      }
+    })()
+    onBackgroundWork?.(backgroundWork)
+    void backgroundWork
+
+    return { type: InteractionResponseType.DeferredMessageUpdate }
   }
 
   return ephemeral('Unrecognized interaction.')
