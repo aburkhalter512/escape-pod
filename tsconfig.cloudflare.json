@@ -6,6 +6,7 @@
   "include": [
     "src/worker.ts",
     "src/durableObject.ts",
+    "src/honoApp.ts",
     "src/storage/**/*.ts",
     "src/routes/*.hono.ts",
     "src/discord/restWorkers*.ts",

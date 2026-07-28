@@ -96,13 +96,6 @@ export interface BackendClient {
   listActiveRounds(organizerDiscordId: string, kind: 'cancellable' | 'concludable'): Promise<ActiveRoundSummary[]>
 }
 
-export interface LocalBackendClientDeps {
-  prisma: AppPrismaClient
-  ptp: PtpClient
-  tokenEncryptionKey: string
-  logger: Logger
-}
-
 interface ServiceDeps {
   storage: AppStorage
   ptp: PtpClient
@@ -110,18 +103,24 @@ interface ServiceDeps {
   logger: Logger
 }
 
+// Two accepted shapes, kept as a union rather than one canonical type, so
+// each platform passes exactly what it already naturally has on hand:
+// app.ts/server.ts (AWS) construct a real Prisma client and never need to
+// change what they pass in, while honoApp.ts (Worker/DO) already has a
+// real AppStorage — this.appStorage, built once in durableObject.ts's
+// constructor — with no Prisma client to adapt from in the first place.
+// See storage/appStorage.ts for the shared AppStorage contract both
+// platforms' services/*.ts calls depend on.
+export type LocalBackendClientDeps =
+  | { prisma: AppPrismaClient; ptp: PtpClient; tokenEncryptionKey: string; logger: Logger }
+  | { storage: AppStorage; ptp: PtpClient; tokenEncryptionKey: string; logger: Logger }
+
 export class LocalBackendClient implements BackendClient {
-  // Kept as a real AppPrismaClient field (not renamed to `storage`) so
-  // app.ts/server.ts never need to change what they construct/pass in —
-  // services/*.ts depends on the shared AppStorage contract (see
-  // storage/appStorage.ts), so the adaptation from a real Prisma client
-  // happens once here via createPrismaAppStorage, not at every call site
-  // below or in app.ts itself.
   private readonly serviceDeps: ServiceDeps
 
-  constructor(private readonly deps: LocalBackendClientDeps) {
+  constructor(deps: LocalBackendClientDeps) {
     this.serviceDeps = {
-      storage: createPrismaAppStorage(deps.prisma),
+      storage: 'prisma' in deps ? createPrismaAppStorage(deps.prisma) : deps.storage,
       ptp: deps.ptp,
       tokenEncryptionKey: deps.tokenEncryptionKey,
       logger: deps.logger,
