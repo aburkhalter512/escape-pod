@@ -19,8 +19,11 @@ export default {
   fetch(request: Request, env: Env, _ctx: ExecutionContext): Response | Promise<Response> {
     return getGlobalStub(env).fetch(request)
   },
-  async scheduled(_event: ScheduledController, _env: Env, _ctx: ExecutionContext): Promise<void> {
-    // Phase 7 dispatches the three background jobs here based on
-    // event.cron.
+  // Reaches the same singleton DO a real request would, via a Durable
+  // Object RPC call (stub.runScheduledJob(...), not stub.fetch(...)) —
+  // see durableObject.ts's runScheduledJob for the actual job dispatch
+  // and why this needs to run inside the DO rather than here.
+  async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(getGlobalStub(env).runScheduledJob(event.cron))
   },
 } satisfies ExportedHandler<Env>

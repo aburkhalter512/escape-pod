@@ -3,7 +3,21 @@ import { runMigrations } from './storage/migrate.js'
 import { createAppSqlStorage, type AppStorage } from './storage/appSqlStorage.js'
 import { buildHonoApp } from './honoApp.js'
 import { createFetchDiscordRest } from './discord/restWorkers.js'
+import type { DiscordRestClient } from './discord/rest.js'
 import { HttpPtpClient } from './ptp/client.js'
+import type { PtpClient } from './ptp/client.js'
+import type { Logger } from './services/errors.js'
+import { expireOverduePodRounds } from './jobs/expirePodRounds.js'
+import { retryOverdueFailedFires } from './jobs/retryFailedFires.js'
+import { refreshExpiringTokensForStorage } from './jobs/refreshTokens.js'
+
+// The two cron expressions wrangler.toml's [triggers] declares — matched
+// literally against event.cron in scheduled() below. One-minute covers
+// both expirePodRounds and retryFailedFires (they already share a 60s
+// interval on the AWS side, see server.ts's SWEEP_INTERVAL_MS); daily
+// covers refreshTokens (see server.ts's TOKEN_REFRESH_INTERVAL_MS).
+export const POD_SWEEP_CRON = '*/1 * * * *'
+export const TOKEN_REFRESH_CRON = '0 0 * * *'
 
 // Single source of truth for this Worker's bindings — worker.ts imports
 // this rather than declaring its own copy. Same env vars server.ts's
@@ -34,6 +48,10 @@ export interface Env {
 export class EscapePodDurableObject extends DurableObject<Env> {
   readonly appStorage: AppStorage
   private readonly honoApp: ReturnType<typeof buildHonoApp>
+  private readonly ptp: PtpClient
+  private readonly discordRest: DiscordRestClient
+  private readonly tokenEncryptionKey: string
+  private readonly logger: Logger
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
@@ -43,13 +61,17 @@ export class EscapePodDurableObject extends DurableObject<Env> {
       runMigrations(ctx.storage)
     })
     this.appStorage = createAppSqlStorage(ctx.storage.sql)
+    this.ptp = new HttpPtpClient({ baseUrl: env.PTP_BASE_URL })
+    this.discordRest = createFetchDiscordRest({ botToken: env.DISCORD_BOT_TOKEN, botUserId: env.DISCORD_APPLICATION_ID })
+    this.tokenEncryptionKey = env.TOKEN_ENCRYPTION_KEY
+    this.logger = { error: (obj, msg) => console.error(msg, obj) }
     this.honoApp = buildHonoApp({
       storage: this.appStorage,
-      ptp: new HttpPtpClient({ baseUrl: env.PTP_BASE_URL }),
-      discordRest: createFetchDiscordRest({ botToken: env.DISCORD_BOT_TOKEN, botUserId: env.DISCORD_APPLICATION_ID }),
+      ptp: this.ptp,
+      discordRest: this.discordRest,
       discordPublicKey: env.DISCORD_PUBLIC_KEY,
-      tokenEncryptionKey: env.TOKEN_ENCRYPTION_KEY,
-      logger: { error: (obj, msg) => console.error(msg, obj) },
+      tokenEncryptionKey: this.tokenEncryptionKey,
+      logger: this.logger,
     })
   }
 
@@ -63,5 +85,37 @@ export class EscapePodDurableObject extends DurableObject<Env> {
   // concurrent requests (re-proven for real in Phase 4).
   fetch(request: Request): Response | Promise<Response> {
     return this.honoApp.fetch(request)
+  }
+
+  // worker.ts's scheduled() handler forwards each Cron Trigger firing
+  // here via stub.runScheduledJob(event.cron) — a Durable Object RPC call
+  // (stub methods beyond .fetch() are callable directly, same mechanism
+  // that already makes appStorage accessible in appSqlStorage.workers.
+  // test.ts's runInDurableObject-based tests). Reaching the jobs this way
+  // means a scheduled run is serialized through this one DO instance
+  // exactly like a real HTTP request is — no separate always-on process,
+  // no shutdown-drain machinery to port (see the migration plan's Phase 7
+  // notes on why shutdown.ts's setInterval/SIGTERM handling has no
+  // Workers equivalent and isn't needed here).
+  async runScheduledJob(cron: string): Promise<void> {
+    const jobDeps = { storage: this.appStorage, ptp: this.ptp, tokenEncryptionKey: this.tokenEncryptionKey, logger: this.logger }
+    if (cron === POD_SWEEP_CRON) {
+      // Run concurrently, not sequentially — server.ts registers these as
+      // two fully independent setInterval sweeps on the AWS side (see
+      // shutdown.ts's ScheduledSweep — "a slow token-refresh run in
+      // progress doesn't block the pod-round sweep's own ticks, or vice
+      // versa"), and retryOverdueFailedFires shouldn't need to wait on
+      // expireOverduePodRounds's own PTP/Discord REST calls to start
+      // (they touch disjoint PodRound rows — COLLECTING vs
+      // THRESHOLD_REACHED — so there's no ordering dependency between
+      // them).
+      await Promise.all([expireOverduePodRounds(jobDeps, this.discordRest), retryOverdueFailedFires(jobDeps, this.discordRest)])
+      return
+    }
+    if (cron === TOKEN_REFRESH_CRON) {
+      await refreshExpiringTokensForStorage(this.appStorage, this.ptp, this.tokenEncryptionKey)
+      return
+    }
+    this.logger.error({ cron }, 'runScheduledJob: unrecognized cron expression')
   }
 }

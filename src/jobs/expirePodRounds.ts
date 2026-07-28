@@ -3,22 +3,21 @@ import { createPodChatSpace, postPodChatWelcomeMessage } from '../discord/podCha
 import { notifyPlayersByDm } from '../discord/dmSignups.js'
 import type { DiscordRestClient } from '../discord/rest.js'
 import type { AppPrismaClient } from '../prismaClient.js'
+import type { AppStorage } from '../storage/appStorage.js'
 import { createPrismaAppStorage } from '../storage/prismaAppStorage.js'
 import type { PtpClient } from '../ptp/client.js'
 import type { Logger } from '../services/errors.js'
 import * as podsService from '../services/pods.js'
 import type { OnFiringHook } from '../services/pods.js'
 
-// Kept as a real AppPrismaClient shape (not services/pods.js's
-// PodServiceDeps directly) so server.ts never needs to change what it
-// constructs/passes in — see routes/pods.ts's PodRouteDeps for the same
-// pattern and its fuller rationale.
-export interface ExpirePodRoundsDeps {
-  prisma: AppPrismaClient
-  ptp: PtpClient
-  tokenEncryptionKey: string
-  logger: Logger
-}
+// Two accepted shapes, same union pattern as backendClient.ts's
+// LocalBackendClientDeps — server.ts (AWS) passes a real AppPrismaClient
+// and never needs to change what it constructs; worker.ts's scheduled()
+// handler (Cron Triggers, Phase 7) already has a real AppStorage on hand
+// (the DO's own this.appStorage) with no Prisma client to adapt from.
+export type ExpirePodRoundsDeps =
+  | { prisma: AppPrismaClient; ptp: PtpClient; tokenEncryptionKey: string; logger: Logger }
+  | { storage: AppStorage; ptp: PtpClient; tokenEncryptionKey: string; logger: Logger }
 
 // Intended to run on a periodic schedule (see server.ts's setInterval) —
 // unlike jobs/refreshTokens.ts's job body, this one needs Discord access
@@ -30,7 +29,7 @@ export async function expireOverduePodRounds(
   discordRest: DiscordRestClient
 ): Promise<{ expired: number; fired: number }> {
   const serviceDeps = {
-    storage: createPrismaAppStorage(deps.prisma),
+    storage: 'prisma' in deps ? createPrismaAppStorage(deps.prisma) : deps.storage,
     ptp: deps.ptp,
     tokenEncryptionKey: deps.tokenEncryptionKey,
     logger: deps.logger,

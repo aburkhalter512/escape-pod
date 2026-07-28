@@ -19,6 +19,14 @@ compatibility_flags = ["nodejs_compat"]
 name = "ESCAPE_POD_DO"
 class_name = "EscapePodDurableObject"
 
+# Matches durableObject.ts's POD_SWEEP_CRON/TOKEN_REFRESH_CRON literals
+# exactly — worker.ts's scheduled() handler dispatches on event.cron, so
+# these two strings have to stay in sync with those constants. One-minute
+# covers expirePodRounds+retryFailedFires (they already share a 60s
+# interval on the AWS side); daily covers refreshTokens.
+[triggers]
+crons = ["*/1 * * * *", "0 0 * * *"]
+
 # Declares EscapePodDurableObject as SQLite-storage-backed. Cloudflare's
 # docs mark this classic `[[migrations]]` form as legacy in favor of a
 # newer `[exports.ClassName]` declarative form — but @cloudflare/
