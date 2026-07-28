@@ -16,10 +16,16 @@ compatibility_flags = ["nodejs_compat"]
 name = "ESCAPE_POD_DO"
 class_name = "EscapePodDurableObject"
 
-# Declares EscapePodDurableObject as SQLite-storage-backed. This is the
-# current recommended form (the older `[[migrations]] new_sqlite_classes`
-# array is documented as legacy as of this writing) — a Worker can only
-# use one form or the other, not both.
-[exports.EscapePodDurableObject]
-type = "durable-object"
-storage = "sqlite"
+# Declares EscapePodDurableObject as SQLite-storage-backed. Cloudflare's
+# docs mark this classic `[[migrations]]` form as legacy in favor of a
+# newer `[exports.ClassName]` declarative form — but @cloudflare/
+# vitest-pool-workers' local Miniflare/workerd simulation (confirmed
+# empirically, not just from docs) does not yet recognize the `exports`
+# form and fails every real-DO test with "SQL is not enabled for this
+# Durable Object class." This classic form works correctly for both a
+# real `wrangler deploy` and local `vitest-pool-workers` testing, so it's
+# the one actually used here — revisit once local testing support for
+# `exports` catches up.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["EscapePodDurableObject"]

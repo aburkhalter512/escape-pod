@@ -30,9 +30,11 @@ jobs:
 
       - run: npm test
 
-      # Phase 8 adds test:workers / test:workers:integration here once
-      # the storage layer (Phase 1) and DO-hosted Hono app (Phase 3)
-      # exist to test against.
+      # Real DO SQLite via @cloudflare/vitest-pool-workers — added as
+      # soon as Phase 1's storage layer existed to test against, rather
+      # than waiting for Phase 8 as originally planned; no reason to
+      # leave CI blind to this for 7 more phases once it's meaningful.
+      - run: npm run test:workers
 
       # Validates the Worker bundles and every binding resolves, without
       # needing real Cloudflare credentials — safe to run on every push.

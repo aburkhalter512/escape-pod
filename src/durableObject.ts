@@ -1,4 +1,6 @@
 import { DurableObject } from 'cloudflare:workers'
+import { runMigrations } from './storage/migrate.js'
+import { createAppSqlStorage, type AppStorage } from './storage/appSqlStorage.js'
 
 // Single source of truth for this Worker's bindings — worker.ts imports
 // this rather than declaring its own copy. Phase 9 adds the 2 public
@@ -12,12 +14,18 @@ export interface Env {
 // migration plan's "singleton DO design" section. This is a deliberate,
 // scale-appropriate choice (a handful of guilds, low request volume),
 // not an oversight; revisit only if traffic grows by orders of
-// magnitude. Phase 1 adds real schema migrations (run inside
-// blockConcurrencyWhile, before any request is served); Phase 3 adds the
-// Hono app hosted inside this class, so every request is serialized
-// through this one instance.
+// magnitude. Phase 3 adds the Hono app hosted inside this class, so
+// every request is serialized through this one instance.
 export class EscapePodDurableObject extends DurableObject<Env> {
+  readonly appStorage: AppStorage
+
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
+    // Blocks the DO from serving any request until migrations finish —
+    // see storage/migrate.ts.
+    ctx.blockConcurrencyWhile(async () => {
+      runMigrations(ctx.storage)
+    })
+    this.appStorage = createAppSqlStorage(ctx.storage.sql)
   }
 }
