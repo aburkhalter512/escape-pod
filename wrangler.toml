@@ -15,6 +15,23 @@ compatibility_date = "2026-07-28"
 # turn out to be unnecessary as a result — revisit before starting it.
 compatibility_flags = ["nodejs_compat"]
 
+# Phase 9: the SAME Discord Application the AWS deployment already uses
+# (not a second, throwaway one — see the migration plan's Phase 9 section
+# and the plan's own open question about this) — these two values are
+# meant to be public (DISCORD_PUBLIC_KEY verifies webhook signatures;
+# DISCORD_APPLICATION_ID just identifies the app), safe to commit here.
+# The real secrets (DISCORD_BOT_TOKEN, TOKEN_ENCRYPTION_KEY) are set via
+# `wrangler secret put`, never written to this file. Reusing the existing
+# app means this Worker can only receive real Discord traffic while the
+# app's Interactions Endpoint URL actually points at it — Discord allows
+# only one URL per application, so testing this deployment means
+# temporarily pointing that URL here, away from the AWS ALB, then
+# pointing it back once done.
+[vars]
+DISCORD_APPLICATION_ID = "1524918902373744650"
+DISCORD_PUBLIC_KEY = "a886a9e18825b14110039efc4b33ce4a7e959a9fb320f45315dae461dc2da01c"
+PTP_BASE_URL = "https://www.protectthepod.com"
+
 [[durable_objects.bindings]]
 name = "ESCAPE_POD_DO"
 class_name = "EscapePodDurableObject"
