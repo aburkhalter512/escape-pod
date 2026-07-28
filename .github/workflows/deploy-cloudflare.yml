@@ -4,6 +4,17 @@ name: Deploy Cloudflare (migration branch)
 # competes with ci.yml/deploy-app.yml's AWS pipeline. Node 22 here (not
 # 20, like ci.yml) since wrangler requires it; this has no bearing on
 # the AWS side's Node 20 runtime/Dockerfile.
+#
+# ci.yml only triggers on pushes to main and on pull requests — pushes
+# directly to this branch (how every phase of this migration has been
+# landing) never trigger it, so nothing was otherwise verifying the
+# AWS/Postgres side of this branch in CI at all, despite "keep both
+# platforms independently buildable" being a governing requirement for
+# the whole migration. Phase 8 folds ci.yml's AWS-side verification steps
+# in here too (Postgres service, build, migration-apply check, real
+# integration tests, Docker build) alongside the Cloudflare-specific
+# ones, so a single workflow run actually proves both platforms still
+# build and pass their tests from this one branch.
 on:
   push:
     branches: [cloudflare-migration]
@@ -11,6 +22,25 @@ on:
 jobs:
   verify-and-deploy:
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: draft_pod
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/draft_pod
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/draft_pod
 
     steps:
       - uses: actions/checkout@v4
@@ -30,11 +60,33 @@ jobs:
 
       - run: npm test
 
+      # AWS-side build — this branch's whole premise is that app.ts/
+      # server.ts and the rest of the AWS-reachable compile graph stay
+      # buildable unmodified alongside the Cloudflare-specific additions;
+      # this is what actually proves that, the same way ci.yml's own
+      # build step does for main.
+      - run: npm run build
+
+      # Catches a schema change that was never turned into a migration —
+      # same check ci.yml runs, against the Postgres service above.
+      - name: Verify Prisma migrations apply cleanly
+        run: npm run prisma:deploy
+
+      # Real Postgres + a real Fastify app (src/app.ts's buildApp) — the
+      # AWS code path's own proof, same as ci.yml's equivalent step.
+      - name: Run integration tests
+        run: npm run test:integration:run
+
       # Real DO SQLite via @cloudflare/vitest-pool-workers — added as
       # soon as Phase 1's storage layer existed to test against, rather
       # than waiting for Phase 8 as originally planned; no reason to
       # leave CI blind to this for 7 more phases once it's meaningful.
       - run: npm run test:workers
+
+      # Build-only, same as ci.yml's equivalent step — catches a broken
+      # Dockerfile before merge, doesn't push anywhere.
+      - name: Build container image
+        run: docker build -t escape-pod:ci .
 
       # Validates the Worker bundles and every binding resolves, without
       # needing real Cloudflare credentials — safe to run on every push.
