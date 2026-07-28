@@ -13,6 +13,25 @@ export default defineWorkersConfig({
     poolOptions: {
       workers: {
         wrangler: { configPath: './wrangler.toml' },
+        // Test-only fixture values for durableObject.ts's Env, layered on
+        // top of wrangler.toml (which has none of these yet — Phase 9 is
+        // what populates real values via `wrangler secret put` for an
+        // actual deployment). DISCORD_PUBLIC_KEY is paired with a fixed
+        // Ed25519 keypair (private half lives inline in
+        // podConcurrency.workers.test.ts, generated once and hardcoded —
+        // not regenerated per test run, since the public half here has to
+        // stay in sync with whatever signs a test request). The others
+        // are arbitrary — nothing in these tests makes a real network call
+        // to Discord or PTP; every outbound fetch() is stubbed.
+        miniflare: {
+          bindings: {
+            DISCORD_PUBLIC_KEY: '3ba1cd757f0342d8c64d37587ae4ead000d086cedcdf799dc81b29c26914737a',
+            DISCORD_BOT_TOKEN: 'test-bot-token',
+            DISCORD_APPLICATION_ID: 'test-application-id',
+            TOKEN_ENCRYPTION_KEY: '00'.repeat(32),
+            PTP_BASE_URL: 'https://ptp.test',
+          },
+        },
       },
     },
     // discord-api-types' ESM build (v10.mjs) internally re-exports from

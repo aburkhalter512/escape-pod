@@ -6,10 +6,13 @@ name = "escape-pod-cf"
 main = "src/worker.ts"
 compatibility_date = "2026-07-28"
 # Needed for src/util/jwt.ts's Buffer usage (reused unchanged from the
-# AWS side, per the migration plan) — Workers doesn't have Buffer as a
-# true global without this flag. node:crypto's stream-cipher APIs
-# (createCipheriv/createDecipheriv) are NOT covered by this flag, which
-# is why tokenCryptoWorkers.ts (Phase 6) uses Web Crypto instead.
+# AWS side, per the migration plan). Also covers node:crypto's
+# createCipheriv/createDecipheriv (crypto/tokenCrypto.ts) — confirmed
+# empirically under real local workerd during Phase 4 (a Phase 0-era
+# comment here previously claimed these were NOT covered by this flag;
+# that was wrong, or at least stale — Cloudflare has since expanded
+# nodejs_compat's node:crypto coverage). Phase 6 (Web Crypto rewrite) may
+# turn out to be unnecessary as a result — revisit before starting it.
 compatibility_flags = ["nodejs_compat"]
 
 [[durable_objects.bindings]]
