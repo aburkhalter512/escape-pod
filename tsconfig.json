@@ -14,5 +14,15 @@
     "declaration": false,
     "sourceMap": true
   },
-  "include": ["src/**/*.ts", "scripts/**/*.ts"]
+  "include": ["src/**/*.ts", "scripts/**/*.ts"],
+  "exclude": [
+    "src/worker.ts",
+    "src/durableObject.ts",
+    "src/storage/**/*.ts",
+    "src/routes/*.hono.ts",
+    "src/discord/restWorkers*.ts",
+    "src/crypto/tokenCryptoWorkers*.ts",
+    "src/testUtils/fakeAppSqlStorage.ts",
+    "src/**/*.workers.test.ts"
+  ]
 }

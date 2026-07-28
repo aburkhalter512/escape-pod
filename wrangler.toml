@@ -1,0 +1,25 @@
+# Cloudflare Workers + Durable Objects deployment config for the
+# cloudflare-migration branch (see the migration plan). This coexists
+# with, and is entirely unrelated to, the AWS-side Dockerfile/infra/*.tf
+# — nothing here is read by the AWS deploy pipeline.
+name = "escape-pod-cf"
+main = "src/worker.ts"
+compatibility_date = "2026-07-28"
+# Needed for src/util/jwt.ts's Buffer usage (reused unchanged from the
+# AWS side, per the migration plan) — Workers doesn't have Buffer as a
+# true global without this flag. node:crypto's stream-cipher APIs
+# (createCipheriv/createDecipheriv) are NOT covered by this flag, which
+# is why tokenCryptoWorkers.ts (Phase 6) uses Web Crypto instead.
+compatibility_flags = ["nodejs_compat"]
+
+[[durable_objects.bindings]]
+name = "ESCAPE_POD_DO"
+class_name = "EscapePodDurableObject"
+
+# Declares EscapePodDurableObject as SQLite-storage-backed. This is the
+# current recommended form (the older `[[migrations]] new_sqlite_classes`
+# array is documented as legacy as of this writing) — a Worker can only
+# use one form or the other, not both.
+[exports.EscapePodDurableObject]
+type = "durable-object"
+storage = "sqlite"
