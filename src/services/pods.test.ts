@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { Prisma } from '@prisma/client'
-import type { AppPrismaClient } from '../prismaClient.js'
+import type { Prisma, PodRoundStatus } from '@prisma/client'
+import type { AppStorage } from '../storage/appStorage.js'
 import type { CreatePodParams } from '../ptp/client.js'
 import { encryptToken } from '../crypto/tokenCrypto.js'
-import { createFakePrismaClient, type FakePrismaOverrides } from '../testUtils/fakePrismaClient.js'
+import { createFakeAppSqlStorage, type FakeAppStorageOverrides } from '../testUtils/fakeAppSqlStorage.js'
 import { createFakePtpClient } from '../testUtils/fakePtpClient.js'
 import { stub } from '../testUtils/stub.js'
 import { deepEqual } from '../testUtils/deepEqual.js'
@@ -25,14 +25,22 @@ import {
 
 const TOKEN_KEY = '00'.repeat(32)
 
-type PodRoundRow = Awaited<ReturnType<AppPrismaClient['podRound']['create']>>
-type PodRoundCreateArgs = Parameters<AppPrismaClient['podRound']['create']>[0]
-type PodRoundUpdateArgs = Parameters<AppPrismaClient['podRound']['update']>[0]
-type PodRoundUpdateManyArgs = Parameters<AppPrismaClient['podRound']['updateMany']>[0]
-type PodRoundFindManyArgs = Parameters<AppPrismaClient['podRound']['findMany']>[0]
+type PodRoundRow = Awaited<ReturnType<AppStorage['podRound']['create']>>
+type PodRoundCreateArgs = Parameters<AppStorage['podRound']['create']>[0]
+type PodRoundUpdateArgs = Parameters<AppStorage['podRound']['update']>[0]
+type PodRoundUpdateManyArgs = Parameters<AppStorage['podRound']['updateMany']>[0]
+// Written explicitly rather than via Parameters<...> extraction —
+// podRound.findMany is overloaded (see storage/appStorage.ts), and
+// Parameters<T> on an overloaded type only ever resolves to the LAST
+// signature (the {where, include} one), not this {organizerDiscordId,
+// status, orderBy} shape listActiveRoundsForOrganizer's tests need.
+type PodRoundFindManyArgs = {
+  where: { organizerDiscordId: string; status: { in: PodRoundStatus[] } }
+  orderBy: { organizerRoundNumber: 'asc' }
+}
 type PodRoundWithOrganizer = Prisma.PodRoundGetPayload<{ include: { organizer: true } }>
-type PodRoundSignupUpsertArgs = Parameters<AppPrismaClient['podRoundSignup']['upsert']>[0]
-type PodRoundSignupRow = Awaited<ReturnType<AppPrismaClient['podRoundSignup']['upsert']>>
+type PodRoundSignupUpsertArgs = Parameters<AppStorage['podRoundSignup']['upsert']>[0]
+type PodRoundSignupRow = Awaited<ReturnType<AppStorage['podRoundSignup']['upsert']>>
 
 function fakePodRoundRow(overrides: Partial<PodRoundRow> = {}): PodRoundRow {
   return {
@@ -81,40 +89,33 @@ function fakePodRoundSignupRow(overrides: Partial<PodRoundSignupRow> = {}): PodR
   }
 }
 
-function stubPodRoundFindUnique<Result>(impl: () => Promise<Result>) {
-  function findUnique<T extends Prisma.PodRoundFindUniqueArgs>(
-    _args: Prisma.SelectSubset<T, Prisma.PodRoundFindUniqueArgs>
-  ): Promise<Prisma.PodRoundGetPayload<T> | null> {
-    return impl() as unknown as Promise<Prisma.PodRoundGetPayload<T> | null>
-  }
-  return findUnique
+// AppStorage.podRound.findUnique/findMany are concrete overloads (see
+// storage/appStorage.ts), not Prisma's old fully-generic signature, so
+// the generic-satisfying trick this used to need is gone — but a plain
+// stub still can't satisfy an overloaded target on its own (same issue
+// testUtils/fakeAppSqlStorage.ts's unimplementedOverloaded solves), so
+// these still return a manually-cast function rather than a bare stub().
+function stubPodRoundFindUnique<Result>(impl: () => Promise<Result>): AppStorage['podRound']['findUnique'] {
+  return (async (_args: unknown) => impl()) as unknown as AppStorage['podRound']['findUnique']
 }
 
-function stubPodRoundFindMany<Result>(impl: () => Promise<Result[]>) {
-  function findMany<T extends Prisma.PodRoundFindManyArgs>(
-    _args: Prisma.SelectSubset<T, Prisma.PodRoundFindManyArgs>
-  ): Promise<Prisma.PodRoundGetPayload<T>[]> {
-    return impl() as unknown as Promise<Prisma.PodRoundGetPayload<T>[]>
-  }
-  return findMany
+function stubPodRoundFindMany<Result>(impl: () => Promise<Result[]>): AppStorage['podRound']['findMany'] {
+  return (async (_args: unknown) => impl()) as unknown as AppStorage['podRound']['findMany']
 }
 
-// Same generic-satisfying trick as stubPodRoundFindMany above, but
-// forwards the real args through to impl — needed when a test wants to
-// assert on the exact where/orderBy shape a call site builds (see
+// Same cast-based trick as stubPodRoundFindMany above, but forwards the
+// real args through to impl — needed when a test wants to assert on the
+// exact where/orderBy shape a call site builds (see
 // listActiveRoundsForOrganizer's tests), not just control the return value.
-function stubPodRoundFindManyWithArgs<Result>(impl: (args: PodRoundFindManyArgs) => Promise<Result[]>) {
-  function findMany<T extends Prisma.PodRoundFindManyArgs>(
-    args: Prisma.SelectSubset<T, Prisma.PodRoundFindManyArgs>
-  ): Promise<Prisma.PodRoundGetPayload<T>[]> {
-    return impl(args as PodRoundFindManyArgs) as unknown as Promise<Prisma.PodRoundGetPayload<T>[]>
-  }
-  return findMany
+function stubPodRoundFindManyWithArgs<Result>(
+  impl: (args: PodRoundFindManyArgs) => Promise<Result[]>
+): AppStorage['podRound']['findMany'] {
+  return (async (args: unknown) => impl(args as PodRoundFindManyArgs)) as unknown as AppStorage['podRound']['findMany']
 }
 
-function buildDeps(overrides: FakePrismaOverrides = {}): PodServiceDeps {
+function buildDeps(overrides: FakeAppStorageOverrides = {}): PodServiceDeps {
   return {
-    prisma: createFakePrismaClient(overrides),
+    storage: createFakeAppSqlStorage(overrides),
     ptp: createFakePtpClient(),
     tokenEncryptionKey: TOKEN_KEY,
     logger: { error: () => {} },
@@ -241,7 +242,7 @@ describe('recordSignup', () => {
       createdAt: '2026-01-01T00:00:00Z',
     }))
     const deps: PodServiceDeps = {
-      prisma: createFakePrismaClient({
+      storage: createFakeAppSqlStorage({
         podRound: { findUnique, update, updateMany },
         podRoundSignup: { upsert, findMany: findManySignups },
         podRoundTarget: { findMany: stub(async () => []) },
@@ -285,7 +286,7 @@ describe('recordSignup', () => {
     })
     const errors: unknown[] = []
     const deps: PodServiceDeps = {
-      prisma: createFakePrismaClient({
+      storage: createFakeAppSqlStorage({
         podRound: { findUnique, updateMany },
         podRoundSignup: { upsert, findMany: findManySignups },
         podRoundTarget: { findMany: stub(async () => []) },
@@ -329,7 +330,7 @@ describe('recordSignup', () => {
       throw new Error('createPod should not have been called below POD_CAPACITY')
     })
     const deps: PodServiceDeps = {
-      prisma: createFakePrismaClient({
+      storage: createFakeAppSqlStorage({
         podRound: { findUnique, updateMany },
         podRoundSignup: { upsert, findMany },
         podRoundTarget: { findMany: stub(async () => []) },
@@ -367,7 +368,7 @@ describe('recordSignup', () => {
       fakePodRoundSignupRow({ discordId: 'bob-id', usernameSnapshot: 'bob' }),
     ])
     const deps: PodServiceDeps = {
-      prisma: createFakePrismaClient({
+      storage: createFakeAppSqlStorage({
         podRound: { findUnique },
         podRoundSignup: { upsert, findMany },
         podRoundTarget: { findMany: stub(async () => []) },
@@ -479,7 +480,7 @@ describe('recordSignup', () => {
       }
     })
     const deps: PodServiceDeps = {
-      prisma: createFakePrismaClient({
+      storage: createFakeAppSqlStorage({
         podRound: { findUnique, update, updateMany },
         podRoundSignup: { upsert, findMany: findManySignups },
         podRoundTarget: { findMany: stub(async () => []) },
@@ -539,7 +540,7 @@ describe('recordSignup', () => {
     })
     const errors: unknown[] = []
     const deps: PodServiceDeps = {
-      prisma: createFakePrismaClient({
+      storage: createFakeAppSqlStorage({
         podRound: { findUnique, updateMany },
         podRoundSignup: { upsert, findMany: findManySignups },
         podRoundTarget: { findMany: stub(async () => []) },
@@ -598,7 +599,7 @@ describe('recordSignup', () => {
       createdAt: '2026-01-01T00:00:00Z',
     }))
     const deps: PodServiceDeps = {
-      prisma: createFakePrismaClient({
+      storage: createFakeAppSqlStorage({
         podRound: { findUnique, update, updateMany },
         podRoundSignup: { upsert, findMany: findManySignups },
         podRoundTarget: { findMany: stub(async () => []) },
@@ -652,7 +653,7 @@ describe('recordSignup', () => {
       createdAt: '2026-01-01T00:00:00Z',
     }))
     const deps: PodServiceDeps = {
-      prisma: createFakePrismaClient({
+      storage: createFakeAppSqlStorage({
         podRound: { findUnique, update, updateMany },
         podRoundSignup: { upsert, findMany: findManySignups },
         podRoundTarget: { findMany: stub(async () => []) },
@@ -1136,13 +1137,20 @@ describe('startPod', () => {
 describe('expireOverdueRounds', () => {
   it('queries for COLLECTING rounds past their deadline', async () => {
     const now = new Date('2026-01-01T12:00:00Z')
-    const findManyRounds = stub(async (args: PodRoundFindManyArgs) => {
-      const where = args?.where as { status?: unknown; scheduledFor?: { lte?: Date } } | undefined
+    // This call site actually uses the {where: {status, scheduledFor},
+    // include} overload, not PodRoundFindManyArgs's {organizerDiscordId,
+    // status, orderBy} shape (that one's for listActiveRoundsForOrganizer
+    // below) — typed as unknown and cast, then narrowed internally, same
+    // reasoning as the overload-cast helpers above.
+    const findManyRounds = stub(async (args: unknown) => {
+      const where = (args as { where?: { status?: unknown; scheduledFor?: { lte?: Date } } })?.where
       expect(where?.status).toBe('COLLECTING')
       expect(where?.scheduledFor?.lte?.getTime()).toBeGreaterThanOrEqual(now.getTime())
       return []
     })
-    const deps = buildDeps({ podRound: { findMany: findManyRounds } })
+    const deps = buildDeps({
+      podRound: { findMany: findManyRounds as unknown as AppStorage['podRound']['findMany'] },
+    })
 
     await expireOverdueRounds(deps)
 
@@ -1233,7 +1241,7 @@ describe('expireOverdueRounds', () => {
       { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
     ])
     const deps: PodServiceDeps = {
-      prisma: createFakePrismaClient({
+      storage: createFakeAppSqlStorage({
         podRound: { findMany: findManyRounds, updateMany, update },
         podRoundSignup: { findMany: findManySignups },
         podRoundTarget: { findMany: findManyTargets },
@@ -1279,7 +1287,7 @@ describe('expireOverdueRounds', () => {
     })
     const errors: unknown[] = []
     const deps: PodServiceDeps = {
-      prisma: createFakePrismaClient({
+      storage: createFakeAppSqlStorage({
         podRound: { findMany: findManyRounds, updateMany },
         podRoundSignup: { findMany },
       }),
@@ -1333,7 +1341,7 @@ describe('expireOverdueRounds', () => {
       { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
     ])
     const deps: PodServiceDeps = {
-      prisma: createFakePrismaClient({
+      storage: createFakeAppSqlStorage({
         podRound: { findMany: findManyRounds, updateMany, update },
         podRoundSignup: { findMany: findManySignups },
         podRoundTarget: { findMany: findManyTargets },
@@ -1389,7 +1397,7 @@ describe('expireOverdueRounds', () => {
       { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
     ])
     const deps: PodServiceDeps = {
-      prisma: createFakePrismaClient({
+      storage: createFakeAppSqlStorage({
         podRound: { findMany: findManyRounds, updateMany, update },
         podRoundSignup: { findMany: findManySignups },
         podRoundTarget: { findMany: findManyTargets },
@@ -1459,11 +1467,16 @@ describe('retryFailedFires', () => {
   const PAST_WINDOW = new Date(NOW.getTime() - 31 * 60 * 1000) // 31 min ago, > 30 min window
 
   it('queries for THRESHOLD_REACHED rounds that have not yet been notified', async () => {
-    const findManyRounds = stub(async (args: PodRoundFindManyArgs) => {
-      expect(args?.where).toEqual({ status: 'THRESHOLD_REACHED', fireFailureNotified: false })
+    // Real call site (retryFailedFires) uses the {where, include}
+    // overload, not PodRoundFindManyArgs — same reasoning as
+    // expireOverdueRounds's test above.
+    const findManyRounds = stub(async (args: unknown) => {
+      expect((args as { where?: unknown })?.where).toEqual({ status: 'THRESHOLD_REACHED', fireFailureNotified: false })
       return []
     })
-    const deps = buildDeps({ podRound: { findMany: findManyRounds } })
+    const deps = buildDeps({
+      podRound: { findMany: findManyRounds as unknown as AppStorage['podRound']['findMany'] },
+    })
 
     await retryFailedFires(deps)
 
@@ -1525,7 +1538,7 @@ describe('retryFailedFires', () => {
         return 'https://discord.com/invite/fresh123'
       })
       const deps: PodServiceDeps = {
-        prisma: createFakePrismaClient({
+        storage: createFakeAppSqlStorage({
           podRound: { findMany: findManyRounds, update },
           podRoundSignup: { findMany: findManySignups },
           podRoundTarget: { findMany: findManyTargets },
@@ -1583,7 +1596,7 @@ describe('retryFailedFires', () => {
         throw new Error('onRetrySuccess should not have been called when chatChannelId is null')
       })
       const deps: PodServiceDeps = {
-        prisma: createFakePrismaClient({
+        storage: createFakeAppSqlStorage({
           podRound: { findMany: findManyRounds, update },
           podRoundSignup: { findMany: findManySignups },
           podRoundTarget: { findMany: findManyTargets },
@@ -1622,7 +1635,7 @@ describe('retryFailedFires', () => {
       })
       const errors: unknown[] = []
       const deps: PodServiceDeps = {
-        prisma: createFakePrismaClient({
+        storage: createFakeAppSqlStorage({
           podRound: { findMany: findManyRounds, update },
           podRoundSignup: { findMany: findManySignups },
         }),
@@ -1664,7 +1677,7 @@ describe('retryFailedFires', () => {
         throw new Error('createPod should not have been called past the retry window')
       })
       const deps: PodServiceDeps = {
-        prisma: createFakePrismaClient({
+        storage: createFakeAppSqlStorage({
           podRound: { findMany: findManyRounds, update },
           podRoundTarget: { findMany: findManyTargets },
         }),
@@ -1710,7 +1723,7 @@ describe('retryFailedFires', () => {
       throw new Error('createPod should not have been called for a null thresholdReachedAt')
     })
     const deps: PodServiceDeps = {
-      prisma: createFakePrismaClient({
+      storage: createFakeAppSqlStorage({
         podRound: { findMany: findManyRounds, update },
         podRoundTarget: { findMany: findManyTargets },
       }),

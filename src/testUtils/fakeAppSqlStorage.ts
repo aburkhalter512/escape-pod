@@ -1,10 +1,10 @@
 import { unimplemented } from './stub.js'
-import type { AppStorage } from '../storage/appSqlStorage.js'
+import type { AppStorage } from '../storage/appStorage.js'
 
 // unimplemented()'s generic Args/Result inference can only pick one
 // concrete signature when the target property is a real TS overload
 // (guildSubscription.findMany, podRound.findMany both have two distinct
-// call shapes — see appSqlStorage.ts) — the single inferred stub then
+// call shapes — see appStorage.ts) — the single inferred stub then
 // fails to structurally satisfy the *other* overload branch. This never
 // needs .calls tracking (its whole point is to throw if ever called; a
 // real test override replacing it via `Partial<...>` gets full stub()

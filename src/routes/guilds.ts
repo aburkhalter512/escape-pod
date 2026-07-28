@@ -1,11 +1,18 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import * as guildsService from '../services/guilds.js'
-import type { GuildServiceDeps } from '../services/guilds.js'
 import * as organizersService from '../services/organizers.js'
+import type { AppPrismaClient } from '../prismaClient.js'
+import { createPrismaAppStorage } from '../storage/prismaAppStorage.js'
 import { httpStatusForError } from '../services/errors.js'
 
-export type GuildRouteDeps = GuildServiceDeps
+// Kept as a real AppPrismaClient shape (not services/guilds.js's
+// GuildServiceDeps directly) so app.ts never needs to change what it
+// constructs/passes in — see routes/organizers.ts's OrganizerRouteDeps
+// for the same pattern and its fuller rationale.
+export interface GuildRouteDeps {
+  prisma: AppPrismaClient
+}
 
 const subscribeGuildBodySchema = z.object({
   guildId: z.string().min(1),
@@ -46,11 +53,13 @@ const eligibleGuildsParamsSchema = z.object({
 type EligibleGuildsParams = z.infer<typeof eligibleGuildsParamsSchema>
 
 export function registerGuildRoutes(app: FastifyInstance, deps: GuildRouteDeps): void {
+  const serviceDeps = { storage: createPrismaAppStorage(deps.prisma) }
+
   app.post<{ Body: SubscribeGuildBody }>(
     '/guilds/subscribe',
     { schema: { body: subscribeGuildBodySchema } },
     async (request, reply) => {
-      const result = await guildsService.subscribeGuild(deps, request.body)
+      const result = await guildsService.subscribeGuild(serviceDeps, request.body)
       if (!result.ok) {
         return reply.code(httpStatusForError(result.error)).send({ error: result.error.message })
       }
@@ -62,7 +71,7 @@ export function registerGuildRoutes(app: FastifyInstance, deps: GuildRouteDeps):
     '/guilds/unsubscribe',
     { schema: { body: unsubscribeGuildBodySchema } },
     async (request, reply) => {
-      const result = await guildsService.unsubscribeGuild(deps, request.body.guildId)
+      const result = await guildsService.unsubscribeGuild(serviceDeps, request.body.guildId)
       return reply.send(result)
     }
   )
@@ -71,7 +80,7 @@ export function registerGuildRoutes(app: FastifyInstance, deps: GuildRouteDeps):
     '/guilds/allow-organizer',
     { schema: { body: allowOrganizerBodySchema } },
     async (request, reply) => {
-      await guildsService.allowOrganizer(deps, request.body)
+      await guildsService.allowOrganizer(serviceDeps, request.body)
       return reply.send({ ok: true })
     }
   )
@@ -80,7 +89,7 @@ export function registerGuildRoutes(app: FastifyInstance, deps: GuildRouteDeps):
     '/guilds/allow-guild',
     { schema: { body: allowGuildBodySchema } },
     async (request, reply) => {
-      await guildsService.allowGuild(deps, request.body)
+      await guildsService.allowGuild(serviceDeps, request.body)
       return reply.send({ ok: true })
     }
   )
@@ -89,7 +98,7 @@ export function registerGuildRoutes(app: FastifyInstance, deps: GuildRouteDeps):
     '/guilds/:originGuildId/eligible-guilds',
     { schema: { params: eligibleGuildsParamsSchema } },
     async (request) => {
-      return organizersService.listEligibleGuilds(deps, request.params.originGuildId)
+      return organizersService.listEligibleGuilds(serviceDeps, request.params.originGuildId)
     }
   )
 }

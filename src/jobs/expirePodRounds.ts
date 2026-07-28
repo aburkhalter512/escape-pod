@@ -2,8 +2,23 @@ import { buildExpiredPodMessage, buildPodRoundMessage } from '../discord/podMess
 import { createPodChatSpace, postPodChatWelcomeMessage } from '../discord/podChat.js'
 import { notifyPlayersByDm } from '../discord/dmSignups.js'
 import type { DiscordRestClient } from '../discord/rest.js'
+import type { AppPrismaClient } from '../prismaClient.js'
+import { createPrismaAppStorage } from '../storage/prismaAppStorage.js'
+import type { PtpClient } from '../ptp/client.js'
+import type { Logger } from '../services/errors.js'
 import * as podsService from '../services/pods.js'
-import type { PodServiceDeps, OnFiringHook } from '../services/pods.js'
+import type { OnFiringHook } from '../services/pods.js'
+
+// Kept as a real AppPrismaClient shape (not services/pods.js's
+// PodServiceDeps directly) so server.ts never needs to change what it
+// constructs/passes in — see routes/pods.ts's PodRouteDeps for the same
+// pattern and its fuller rationale.
+export interface ExpirePodRoundsDeps {
+  prisma: AppPrismaClient
+  ptp: PtpClient
+  tokenEncryptionKey: string
+  logger: Logger
+}
 
 // Intended to run on a periodic schedule (see server.ts's setInterval) —
 // unlike jobs/refreshTokens.ts's job body, this one needs Discord access
@@ -11,9 +26,16 @@ import type { PodServiceDeps, OnFiringHook } from '../services/pods.js'
 // fires at the deadline), so it also mirrors commands/cancelPod.ts's
 // service-call-then-edit-messages shape rather than being a pure DB job.
 export async function expireOverduePodRounds(
-  deps: PodServiceDeps,
+  deps: ExpirePodRoundsDeps,
   discordRest: DiscordRestClient
 ): Promise<{ expired: number; fired: number }> {
+  const serviceDeps = {
+    storage: createPrismaAppStorage(deps.prisma),
+    ptp: deps.ptp,
+    tokenEncryptionKey: deps.tokenEncryptionKey,
+    logger: deps.logger,
+  }
+
   // Same "create the chat channel and invite everyone before the PTP pod"
   // sequencing as interactions/components.ts's pod-signup: handler — see
   // services/pods.ts's fireRound for where this actually runs. Adapts
@@ -27,7 +49,7 @@ export async function expireOverduePodRounds(
     return chatSpace ? { channelId: chatSpace.channelId, chatUrl: chatSpace.inviteUrl } : undefined
   }
 
-  const results = await podsService.expireOverdueRounds(deps, onFiring)
+  const results = await podsService.expireOverdueRounds(serviceDeps, onFiring)
 
   let expired = 0
   let fired = 0

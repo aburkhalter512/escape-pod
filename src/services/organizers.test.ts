@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { createFakePrismaClient } from '../testUtils/fakePrismaClient.js'
+import type { AppStorage } from '../storage/appStorage.js'
+import { createFakeAppSqlStorage } from '../testUtils/fakeAppSqlStorage.js'
 import { createFakePtpClient } from '../testUtils/fakePtpClient.js'
 import { stub } from '../testUtils/stub.js'
 import { deepEqual } from '../testUtils/deepEqual.js'
 import { linkOrganizer, listEligibleGuilds, type OrganizerServiceDeps } from './organizers.js'
-import type { AppPrismaClient } from '../prismaClient.js'
 
-type GuildSubscriptionFindManyArgs = Parameters<AppPrismaClient['guildSubscription']['findMany']>[0]
+type EligibleGuildsFindManyArgs = {
+  where: {
+    unsubscribedAt: null
+    OR: [{ postingPolicy: 'OPEN' }, { originAllowlist: { some: { allowedOriginGuildId: string } } }]
+  }
+}
 
 const TOKEN_KEY = '00'.repeat(32)
 
@@ -24,7 +29,7 @@ describe('linkOrganizer', () => {
       throw new Error('organizer.upsert should not have been called')
     })
     const deps: OrganizerServiceDeps = {
-      prisma: createFakePrismaClient({ organizer: { upsert } }),
+      storage: createFakeAppSqlStorage({ organizer: { upsert } }),
       ptp: createFakePtpClient({ validateToken: stub(async () => false) }),
       tokenEncryptionKey: TOKEN_KEY,
     }
@@ -39,7 +44,7 @@ describe('linkOrganizer', () => {
       throw new Error('organizer.upsert should not have been called')
     })
     const deps: OrganizerServiceDeps = {
-      prisma: createFakePrismaClient({ organizer: { upsert } }),
+      storage: createFakeAppSqlStorage({ organizer: { upsert } }),
       ptp: createFakePtpClient({ validateToken: stub(async () => true) }),
       tokenEncryptionKey: TOKEN_KEY,
     }
@@ -59,7 +64,7 @@ describe('listEligibleGuilds', () => {
       throw new Error('count should not have been called when eligible guilds were already found')
     })
     const deps: OrganizerServiceDeps = {
-      prisma: createFakePrismaClient({ guildSubscription: { findMany, count } }),
+      storage: createFakeAppSqlStorage({ guildSubscription: { findMany, count } }),
       ptp: createFakePtpClient(),
       tokenEncryptionKey: TOKEN_KEY,
     }
@@ -73,7 +78,7 @@ describe('listEligibleGuilds', () => {
     const findMany = stub(async () => [])
     const count = stub(async () => 0)
     const deps: OrganizerServiceDeps = {
-      prisma: createFakePrismaClient({ guildSubscription: { findMany, count } }),
+      storage: createFakeAppSqlStorage({ guildSubscription: { findMany, count } }),
       ptp: createFakePtpClient(),
       tokenEncryptionKey: TOKEN_KEY,
     }
@@ -87,7 +92,7 @@ describe('listEligibleGuilds', () => {
     const findMany = stub(async () => [])
     const count = stub(async () => 3)
     const deps: OrganizerServiceDeps = {
-      prisma: createFakePrismaClient({ guildSubscription: { findMany, count } }),
+      storage: createFakeAppSqlStorage({ guildSubscription: { findMany, count } }),
       ptp: createFakePtpClient(),
       tokenEncryptionKey: TOKEN_KEY,
     }
@@ -102,18 +107,27 @@ describe('listEligibleGuilds', () => {
   // GuildOriginAllowlist.allowedOriginGuildId (the guild /start-pod was
   // invoked FROM), not any organizer identity.
   it('queries for OPEN-policy guilds plus guilds that trust this origin guild specifically', async () => {
-    const expectedArgs: GuildSubscriptionFindManyArgs = {
+    const expectedArgs: EligibleGuildsFindManyArgs = {
       where: {
         unsubscribedAt: null,
         OR: [{ postingPolicy: 'OPEN' }, { originAllowlist: { some: { allowedOriginGuildId: 'origin-guild-1' } } }],
       },
     }
-    const findMany = stub(async (args: GuildSubscriptionFindManyArgs) => {
+    const findMany = stub(async (args: EligibleGuildsFindManyArgs) => {
       if (!deepEqual(args, expectedArgs)) throw new Error(`unexpected findMany args: ${JSON.stringify(args)}`)
       return []
     })
+    // findMany is overloaded (see storage/appStorage.ts) — a stub typed
+    // to just the one shape under test doesn't structurally satisfy the
+    // other overload branch, so it needs a cast here, same reasoning as
+    // testUtils/fakeAppSqlStorage.ts's unimplementedOverloaded.
     const deps: OrganizerServiceDeps = {
-      prisma: createFakePrismaClient({ guildSubscription: { findMany, count: stub(async () => 0) } }),
+      storage: createFakeAppSqlStorage({
+        guildSubscription: {
+          findMany: findMany as unknown as AppStorage['guildSubscription']['findMany'],
+          count: stub(async () => 0),
+        },
+      }),
       ptp: createFakePtpClient(),
       tokenEncryptionKey: TOKEN_KEY,
     }

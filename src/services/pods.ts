@@ -1,4 +1,4 @@
-import type { AppPrismaClient } from '../prismaClient.js'
+import type { AppStorage } from '../storage/appStorage.js'
 import type { Prisma, PodRoundStatus } from '@prisma/client'
 import type { PtpClient } from '../ptp/client.js'
 import { decryptToken } from '../crypto/tokenCrypto.js'
@@ -6,7 +6,7 @@ import { POD_CAPACITY } from '../podConfig.js'
 import { ok, err, notFound, forbidden, validationError, type Logger, type Result } from './errors.js'
 
 export interface PodServiceDeps {
-  prisma: AppPrismaClient
+  storage: AppStorage
   ptp: PtpClient
   tokenEncryptionKey: string
   logger: Logger
@@ -52,7 +52,7 @@ export interface StartPodResult {
 export async function startPod(deps: PodServiceDeps, params: StartPodParams): Promise<StartPodResult> {
   const { organizerDiscordId, setCode, threshold, guildIds, scheduledFor, originGuildName, originGuildId } = params
 
-  const subscriptions = await deps.prisma.guildSubscription.findMany({
+  const subscriptions = await deps.storage.guildSubscription.findMany({
     where: { guildId: { in: guildIds }, unsubscribedAt: null },
   })
   // A guild could genuinely have unsubscribed between /start-pod's
@@ -71,19 +71,19 @@ export async function startPod(deps: PodServiceDeps, params: StartPodParams): Pr
   // number — the increment itself is what guarantees uniqueness, the same
   // trust level already placed in fireRound's updateMany compare-and-swap
   // claim (tasks/001). Deliberately not wrapped in a transaction with the
-  // podRound.create below: AppPrismaClient's narrow interface
-  // (prismaClient.ts) doesn't expose $transaction, and the only thing a
-  // transaction would additionally buy here is avoiding a *gap* in the
+  // podRound.create below: AppStorage's narrow interface doesn't expose a
+  // transaction primitive, and the only thing a transaction would
+  // additionally buy here is avoiding a *gap* in the
   // sequence if the process crashes between these two calls — gaps are
   // harmless (PodRound's unique constraint only requires distinctness, not
   // contiguity), so that trade-off isn't worth widening this interface.
-  const organizer = await deps.prisma.organizer.update({
+  const organizer = await deps.storage.organizer.update({
     where: { discordId: organizerDiscordId },
     data: { nextRoundNumber: { increment: 1 } },
   })
   const organizerRoundNumber = organizer.nextRoundNumber - 1
 
-  const round = await deps.prisma.podRound.create({
+  const round = await deps.storage.podRound.create({
     data: {
       organizerDiscordId,
       organizerRoundNumber,
@@ -117,14 +117,14 @@ export async function recordTargetMessage(
 ): Promise<Result<void>> {
   const { podRoundId, guildId, messageId } = params
 
-  const target = await deps.prisma.podRoundTarget.findUnique({
+  const target = await deps.storage.podRoundTarget.findUnique({
     where: { podRoundId_guildId: { podRoundId, guildId } },
   })
   if (!target) {
     return err(notFound('Pod round target not found'))
   }
 
-  await deps.prisma.podRoundTarget.update({
+  await deps.storage.podRoundTarget.update({
     where: { podRoundId_guildId: { podRoundId, guildId } },
     data: { messageId },
   })
@@ -217,7 +217,7 @@ async function attemptPodCreation(
       setCode: round.setCode,
       maxPlayers: POD_CAPACITY,
     })
-    await deps.prisma.podRound.update({
+    await deps.storage.podRound.update({
       where: { id: round.id },
       data: {
         status: 'POD_CREATED',
@@ -268,7 +268,7 @@ async function fireRound(
   // unambiguous "this round got claimed" moment, and the retry sweep
   // (retryFailedFires below) needs it to know how long a stuck round has
   // been waiting.
-  const claim = await deps.prisma.podRound.updateMany({
+  const claim = await deps.storage.podRound.updateMany({
     where: { id: round.id, status: 'COLLECTING' },
     data: { status: 'THRESHOLD_REACHED', thresholdReachedAt: new Date() },
   })
@@ -280,7 +280,7 @@ async function fireRound(
   // overwrites below *and* for the caller to DM these same players once
   // this returns, so both consumers share the one query regardless of
   // whether onFiring was even passed.
-  const signups = await deps.prisma.podRoundSignup.findMany({
+  const signups = await deps.storage.podRoundSignup.findMany({
     where: { podRoundId: round.id, status: 'IN' },
   })
   const signupDiscordIds = signups.map((s) => s.discordId)
@@ -321,7 +321,7 @@ export async function recordSignup(
   const { podRoundId, discordId, username, sourceGuildId, action, onFiring } = params
   const status = action === 'leave' ? 'LEFT' : 'IN'
 
-  const round = await deps.prisma.podRound.findUnique({
+  const round = await deps.storage.podRound.findUnique({
     where: { id: podRoundId },
     include: { organizer: true },
   })
@@ -354,7 +354,7 @@ export async function recordSignup(
     return err(validationError('This round has already concluded.'))
   }
 
-  await deps.prisma.podRoundSignup.upsert({
+  await deps.storage.podRoundSignup.upsert({
     where: { podRoundId_discordId: { podRoundId, discordId } },
     create: { podRoundId, discordId, usernameSnapshot: username, sourceGuildId, status },
     update: { status },
@@ -365,7 +365,7 @@ export async function recordSignup(
   // row set anyway for the "Players:" line (discord/podMessage.ts). One
   // query instead of two also closes a tiny theoretical race between a
   // separate count and list read landing on different underlying data.
-  const signups = await deps.prisma.podRoundSignup.findMany({
+  const signups = await deps.storage.podRoundSignup.findMany({
     where: { podRoundId, status: 'IN' },
   })
   const count = signups.length
@@ -403,7 +403,7 @@ export async function recordSignup(
   // needs the full list to fan the updated count out to every guild's
   // message (§7.5 step 3). Only targets with a recorded messageId are
   // actually editable; the caller filters those out itself.
-  const targetRows = await deps.prisma.podRoundTarget.findMany({ where: { podRoundId } })
+  const targetRows = await deps.storage.podRoundTarget.findMany({ where: { podRoundId } })
   const targets = targetRows.map((t) => ({
     guildId: t.guildId,
     channelId: t.channelId,
@@ -436,7 +436,7 @@ export interface CancelPodParams {
 export async function cancelPod(deps: PodServiceDeps, params: CancelPodParams): Promise<Result<void>> {
   const { podRoundId, requestedBy } = params
 
-  const round = await deps.prisma.podRound.findUnique({ where: { id: podRoundId } })
+  const round = await deps.storage.podRound.findUnique({ where: { id: podRoundId } })
   if (!round) {
     return err(notFound('Pod round not found'))
   }
@@ -444,7 +444,7 @@ export async function cancelPod(deps: PodServiceDeps, params: CancelPodParams): 
     return err(forbidden('Only the organizer who started this round can cancel it'))
   }
 
-  await deps.prisma.podRound.update({
+  await deps.storage.podRound.update({
     where: { id: podRoundId },
     data: { status: 'CANCELLED' },
   })
@@ -492,7 +492,7 @@ export async function cancelActiveRound(
   organizerDiscordId: string,
   organizerRoundNumber?: number
 ): Promise<CancelActiveRoundResult | null> {
-  const round = await deps.prisma.podRound.findFirst(
+  const round = await deps.storage.podRound.findFirst(
     organizerRoundNumber !== undefined
       ? { where: { organizerDiscordId, organizerRoundNumber } }
       : { where: { organizerDiscordId }, orderBy: { createdAt: 'desc' } }
@@ -511,7 +511,7 @@ export async function cancelActiveRound(
     throw new Error(`cancelPod unexpectedly failed for a round just found by the same organizer: ${cancelResult.error.kind}`)
   }
 
-  const targetRows = await deps.prisma.podRoundTarget.findMany({ where: { podRoundId: round.id } })
+  const targetRows = await deps.storage.podRoundTarget.findMany({ where: { podRoundId: round.id } })
   return {
     podRoundId: round.id,
     setCode: round.setCode,
@@ -537,7 +537,7 @@ export interface ConcludePodParams {
 export async function concludePod(deps: PodServiceDeps, params: ConcludePodParams): Promise<Result<void>> {
   const { podRoundId, requestedBy } = params
 
-  const round = await deps.prisma.podRound.findUnique({ where: { id: podRoundId } })
+  const round = await deps.storage.podRound.findUnique({ where: { id: podRoundId } })
   if (!round) {
     return err(notFound('Pod round not found'))
   }
@@ -558,7 +558,7 @@ export async function concludePod(deps: PodServiceDeps, params: ConcludePodParam
     return err(validationError('This round has already been concluded.'))
   }
 
-  await deps.prisma.podRound.update({
+  await deps.storage.podRound.update({
     where: { id: podRoundId },
     data: { status: 'CONCLUDED' },
   })
@@ -604,7 +604,7 @@ export async function concludeActiveRound(
   organizerDiscordId: string,
   organizerRoundNumber?: number
 ): Promise<Result<ConcludeActiveRoundResult>> {
-  const round = await deps.prisma.podRound.findFirst(
+  const round = await deps.storage.podRound.findFirst(
     organizerRoundNumber !== undefined
       ? { where: { organizerDiscordId, organizerRoundNumber } }
       : { where: { organizerDiscordId }, orderBy: { createdAt: 'desc' } }
@@ -618,7 +618,7 @@ export async function concludeActiveRound(
     return err(concludeResult.error)
   }
 
-  const targetRows = await deps.prisma.podRoundTarget.findMany({ where: { podRoundId: round.id } })
+  const targetRows = await deps.storage.podRoundTarget.findMany({ where: { podRoundId: round.id } })
   return ok({
     podRoundId: round.id,
     setCode: round.setCode,
@@ -655,7 +655,7 @@ export async function listActiveRoundsForOrganizer(
   kind: 'cancellable' | 'concludable'
 ): Promise<ActiveRoundSummary[]> {
   const statuses: PodRoundStatus[] = kind === 'cancellable' ? ['COLLECTING', 'THRESHOLD_REACHED'] : ['POD_CREATED']
-  const rounds = await deps.prisma.podRound.findMany({
+  const rounds = await deps.storage.podRound.findMany({
     where: { organizerDiscordId, status: { in: statuses } },
     orderBy: { organizerRoundNumber: 'asc' },
   })
@@ -705,7 +705,7 @@ export type ExpiredRoundInfo =
 // THRESHOLD_REACHED at the same moment — whichever conditional update
 // lands first wins, the other sees count: 0 and no-ops.
 export async function expireOverdueRounds(deps: PodServiceDeps, onFiring?: OnFiringHook): Promise<ExpiredRoundInfo[]> {
-  const candidates = await deps.prisma.podRound.findMany({
+  const candidates = await deps.storage.podRound.findMany({
     where: { status: 'COLLECTING', scheduledFor: { lte: new Date() } },
     include: { organizer: true },
   })
@@ -720,7 +720,7 @@ export async function expireOverdueRounds(deps: PodServiceDeps, onFiring?: OnFir
     // signed up" — used for both outcomes below rather than mixing in
     // fireRound's own separate internal fetch (which exists for the
     // chat-channel/DM feature, a different purpose).
-    const signups = await deps.prisma.podRoundSignup.findMany({
+    const signups = await deps.storage.podRoundSignup.findMany({
       where: { podRoundId: round.id, status: 'IN' },
     })
     const count = signups.length
@@ -735,7 +735,7 @@ export async function expireOverdueRounds(deps: PodServiceDeps, onFiring?: OnFir
       const fireResult = await fireRound(deps, round, onFiring)
       if (!fireResult.podCreated) continue
 
-      const targetRows = await deps.prisma.podRoundTarget.findMany({ where: { podRoundId: round.id } })
+      const targetRows = await deps.storage.podRoundTarget.findMany({ where: { podRoundId: round.id } })
       results.push({
         podRoundId: round.id,
         setCode: round.setCode,
@@ -753,13 +753,13 @@ export async function expireOverdueRounds(deps: PodServiceDeps, onFiring?: OnFir
       continue
     }
 
-    const claim = await deps.prisma.podRound.updateMany({
+    const claim = await deps.storage.podRound.updateMany({
       where: { id: round.id, status: 'COLLECTING' },
       data: { status: 'EXPIRED' },
     })
     if (claim.count !== 1) continue
 
-    const targetRows = await deps.prisma.podRoundTarget.findMany({ where: { podRoundId: round.id } })
+    const targetRows = await deps.storage.podRoundTarget.findMany({ where: { podRoundId: round.id } })
     results.push({
       podRoundId: round.id,
       signupDiscordIds,
@@ -838,7 +838,7 @@ export async function retryFailedFires(
   deps: PodServiceDeps,
   onRetrySuccess?: OnRetrySuccessHook
 ): Promise<RetryFireResult[]> {
-  const candidates = await deps.prisma.podRound.findMany({
+  const candidates = await deps.storage.podRound.findMany({
     where: { status: 'THRESHOLD_REACHED', fireFailureNotified: false },
     include: { organizer: true },
   })
@@ -855,7 +855,7 @@ export async function retryFailedFires(
       // restructuring as recordSignup/expireOverdueRounds above — count is
       // just the result's length, and signupDiscordIds is needed either way
       // for the succeeded result's "Players:" line (discord/podMessage.ts).
-      const signups = await deps.prisma.podRoundSignup.findMany({
+      const signups = await deps.storage.podRoundSignup.findMany({
         where: { podRoundId: round.id, status: 'IN' },
       })
       const count = signups.length
@@ -874,7 +874,7 @@ export async function retryFailedFires(
       const chatUrl =
         round.chatChannelId && onRetrySuccess ? await onRetrySuccess({ chatChannelId: round.chatChannelId }) : undefined
 
-      const targetRows = await deps.prisma.podRoundTarget.findMany({ where: { podRoundId: round.id } })
+      const targetRows = await deps.storage.podRoundTarget.findMany({ where: { podRoundId: round.id } })
       results.push({
         podRoundId: round.id,
         setCode: round.setCode,
@@ -896,12 +896,12 @@ export async function retryFailedFires(
     // updateMany like fireRound's claim: there's no concurrent writer racing
     // to give up on the same round (this sweep is the only place
     // fireFailureNotified is ever set), so a plain update is sufficient.
-    await deps.prisma.podRound.update({
+    await deps.storage.podRound.update({
       where: { id: round.id },
       data: { fireFailureNotified: true },
     })
 
-    const targetRows = await deps.prisma.podRoundTarget.findMany({ where: { podRoundId: round.id } })
+    const targetRows = await deps.storage.podRoundTarget.findMany({ where: { podRoundId: round.id } })
     results.push({
       podRoundId: round.id,
       setCode: round.setCode,

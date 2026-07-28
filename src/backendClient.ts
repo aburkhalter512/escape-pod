@@ -8,6 +8,8 @@
 
 import type { PostingPolicy } from '@prisma/client'
 import type { AppPrismaClient } from './prismaClient.js'
+import type { AppStorage } from './storage/appStorage.js'
+import { createPrismaAppStorage } from './storage/prismaAppStorage.js'
 import type { PtpClient } from './ptp/client.js'
 import type { Logger, Result } from './services/errors.js'
 import type { ActiveRoundSummary, ConcludeActiveRoundResult, OnFiringHook } from './services/pods.js'
@@ -101,12 +103,34 @@ export interface LocalBackendClientDeps {
   logger: Logger
 }
 
+interface ServiceDeps {
+  storage: AppStorage
+  ptp: PtpClient
+  tokenEncryptionKey: string
+  logger: Logger
+}
+
 export class LocalBackendClient implements BackendClient {
-  constructor(private readonly deps: LocalBackendClientDeps) {}
+  // Kept as a real AppPrismaClient field (not renamed to `storage`) so
+  // app.ts/server.ts never need to change what they construct/pass in —
+  // services/*.ts depends on the shared AppStorage contract (see
+  // storage/appStorage.ts), so the adaptation from a real Prisma client
+  // happens once here via createPrismaAppStorage, not at every call site
+  // below or in app.ts itself.
+  private readonly serviceDeps: ServiceDeps
+
+  constructor(private readonly deps: LocalBackendClientDeps) {
+    this.serviceDeps = {
+      storage: createPrismaAppStorage(deps.prisma),
+      ptp: deps.ptp,
+      tokenEncryptionKey: deps.tokenEncryptionKey,
+      logger: deps.logger,
+    }
+  }
 
   // §8.2: submit a pasted PTP token for validation + storage.
   linkOrganizer(discordId: string, token: string): Promise<Result<{ username: string }>> {
-    return organizersService.linkOrganizer(this.deps, { discordId, token })
+    return organizersService.linkOrganizer(this.serviceDeps, { discordId, token })
   }
 
   // §7.2: register a guild's broadcast subscription, or reconfigure an
@@ -117,24 +141,24 @@ export class LocalBackendClient implements BackendClient {
     installedBy: string,
     params: { channelId?: string; policy?: PostingPolicy }
   ): Promise<Result<{ subscribed: boolean; broadcastChannelId: string; postingPolicy: PostingPolicy }>> {
-    return guildsService.subscribeGuild(this.deps, { guildId, installedBy, ...params })
+    return guildsService.subscribeGuild(this.serviceDeps, { guildId, installedBy, ...params })
   }
 
   // §7.2 inverse: soft-deletes the subscription (see services/guilds.ts's
   // unsubscribeGuild for why this can never be a real row delete).
   unsubscribeGuild(guildId: string): Promise<{ wasSubscribed: boolean }> {
-    return guildsService.unsubscribeGuild(this.deps, guildId)
+    return guildsService.unsubscribeGuild(this.serviceDeps, guildId)
   }
 
   // Deprecated — see services/guilds.ts's allowOrganizer.
   allowOrganizer(guildId: string, organizerDiscordId: string, approvedBy: string): Promise<void> {
-    return guildsService.allowOrganizer(this.deps, { guildId, organizerDiscordId, approvedBy })
+    return guildsService.allowOrganizer(this.serviceDeps, { guildId, organizerDiscordId, approvedBy })
   }
 
   // §7.2: trust an entire origin guild for a guild with `allowlist`
   // policy — replaces allowOrganizer above.
   allowGuild(guildId: string, allowedOriginGuildId: string, approvedBy: string): Promise<void> {
-    return guildsService.allowGuild(this.deps, { guildId, allowedOriginGuildId, approvedBy })
+    return guildsService.allowGuild(this.serviceDeps, { guildId, allowedOriginGuildId, approvedBy })
   }
 
   // §7.5: guilds a round starting from originGuildId may target; returns
@@ -144,7 +168,7 @@ export class LocalBackendClient implements BackendClient {
   // guild anywhere is subscribed" from "guilds are subscribed but none
   // trust this origin guild."
   listEligibleGuilds(originGuildId: string): Promise<{ guilds: Array<{ guildId: string }>; anySubscribed: boolean }> {
-    return organizersService.listEligibleGuilds(this.deps, originGuildId)
+    return organizersService.listEligibleGuilds(this.serviceDeps, originGuildId)
   }
 
   // §7.5 steps 1-2: creates the round + PodRoundTarget rows. Returns each
@@ -158,13 +182,13 @@ export class LocalBackendClient implements BackendClient {
     originGuildName?: string
     originGuildId?: string
   }): Promise<{ podRoundId: string; organizerRoundNumber: number; targets: Array<{ guildId: string; channelId: string }> }> {
-    return podsService.startPod(this.deps, params)
+    return podsService.startPod(this.serviceDeps, params)
   }
 
   // §7.5 step 2: persists the Discord message ID for one target guild once
   // it's been posted, so a later signup's fan-out (step 3) knows what to edit.
   recordMessagePosted(podRoundId: string, guildId: string, messageId: string): Promise<Result<void>> {
-    return podsService.recordTargetMessage(this.deps, { podRoundId, guildId, messageId })
+    return podsService.recordTargetMessage(this.serviceDeps, { podRoundId, guildId, messageId })
   }
 
   // §7.5 step 4: record a signup; returns the updated shared count, whether
@@ -194,12 +218,12 @@ export class LocalBackendClient implements BackendClient {
       targets: Array<{ guildId: string; channelId: string; messageId: string | null }>
     }>
   > {
-    return podsService.recordSignup(this.deps, { podRoundId, discordId, username, sourceGuildId, action, onFiring })
+    return podsService.recordSignup(this.serviceDeps, { podRoundId, discordId, username, sourceGuildId, action, onFiring })
   }
 
   // §7.5 step 5: cancel a round.
   cancelPod(podRoundId: string, requestedBy: string): Promise<Result<void>> {
-    return podsService.cancelPod(this.deps, { podRoundId, requestedBy })
+    return podsService.cancelPod(this.serviceDeps, { podRoundId, requestedBy })
   }
 
   // §7.5 step 5, /cancel-pod's actual entry point: finds and cancels the
@@ -213,7 +237,7 @@ export class LocalBackendClient implements BackendClient {
     originGuildName: string | null
     targets: Array<{ channelId: string; messageId: string | null }>
   } | null> {
-    return podsService.cancelActiveRound(this.deps, organizerDiscordId, organizerRoundNumber)
+    return podsService.cancelActiveRound(this.serviceDeps, organizerDiscordId, organizerRoundNumber)
   }
 
   // tasks/010, /conclude-pod's actual entry point: finds and concludes
@@ -221,13 +245,13 @@ export class LocalBackendClient implements BackendClient {
   // when organizerRoundNumber is given, otherwise the same
   // most-recent-round fallback as cancelActiveRound above.
   concludeActiveRound(organizerDiscordId: string, organizerRoundNumber?: number): Promise<Result<ConcludeActiveRoundResult>> {
-    return podsService.concludeActiveRound(this.deps, organizerDiscordId, organizerRoundNumber)
+    return podsService.concludeActiveRound(this.serviceDeps, organizerDiscordId, organizerRoundNumber)
   }
 
   // Read-side counterpart used by /cancel-pod's and /conclude-pod's
   // ambiguity handling and by the `round` option's autocomplete handler
   // — see services/pods.ts's listActiveRoundsForOrganizer.
   listActiveRounds(organizerDiscordId: string, kind: 'cancellable' | 'concludable'): Promise<ActiveRoundSummary[]> {
-    return podsService.listActiveRoundsForOrganizer(this.deps, organizerDiscordId, kind)
+    return podsService.listActiveRoundsForOrganizer(this.serviceDeps, organizerDiscordId, kind)
   }
 }

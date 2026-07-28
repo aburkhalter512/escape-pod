@@ -1,11 +1,11 @@
-import type { AppPrismaClient } from '../prismaClient.js'
+import type { AppStorage } from '../storage/appStorage.js'
 import type { PtpClient } from '../ptp/client.js'
 import { encryptToken } from '../crypto/tokenCrypto.js'
 import { decodeJwtPayloadUnverified } from '../util/jwt.js'
 import { ok, err, validationError, type Result } from './errors.js'
 
 export interface OrganizerServiceDeps {
-  prisma: AppPrismaClient
+  storage: AppStorage
   ptp: PtpClient
   tokenEncryptionKey: string
 }
@@ -38,7 +38,7 @@ export async function linkOrganizer(
     return err(validationError('Could not read token payload'))
   }
 
-  await deps.prisma.organizer.upsert({
+  await deps.storage.organizer.upsert({
     where: { discordId },
     create: {
       discordId,
@@ -80,10 +80,10 @@ export interface ListEligibleGuildsResult {
 // The caller (startPod.ts) resolves real, current names live via
 // discordRest.getGuild() instead.
 export async function listEligibleGuilds(
-  deps: Pick<OrganizerServiceDeps, 'prisma'>,
+  deps: Pick<OrganizerServiceDeps, 'storage'>,
   originGuildId: string
 ): Promise<ListEligibleGuildsResult> {
-  const eligible = await deps.prisma.guildSubscription.findMany({
+  const eligible = await deps.storage.guildSubscription.findMany({
     where: {
       unsubscribedAt: null,
       OR: [{ postingPolicy: 'OPEN' }, { originAllowlist: { some: { allowedOriginGuildId: originGuildId } } }],
@@ -96,6 +96,6 @@ export async function listEligibleGuilds(
 
   // Only queried when the first result is empty — avoids a second
   // round-trip in the common (eligible-guilds-exist) case.
-  const subscribedCount = await deps.prisma.guildSubscription.count({ where: { unsubscribedAt: null } })
+  const subscribedCount = await deps.storage.guildSubscription.count({ where: { unsubscribedAt: null } })
   return { guilds, anySubscribed: subscribedCount > 0 }
 }

@@ -1,10 +1,22 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import * as podsService from '../services/pods.js'
-import type { PodServiceDeps } from '../services/pods.js'
+import type { AppPrismaClient } from '../prismaClient.js'
+import { createPrismaAppStorage } from '../storage/prismaAppStorage.js'
+import type { PtpClient } from '../ptp/client.js'
+import type { Logger } from '../services/errors.js'
 import { httpStatusForError } from '../services/errors.js'
 
-export type PodRouteDeps = PodServiceDeps
+// Kept as a real AppPrismaClient shape (not services/pods.js's
+// PodServiceDeps directly) so app.ts never needs to change what it
+// constructs/passes in — see routes/organizers.ts's OrganizerRouteDeps
+// for the same pattern and its fuller rationale.
+export interface PodRouteDeps {
+  prisma: AppPrismaClient
+  ptp: PtpClient
+  tokenEncryptionKey: string
+  logger: Logger
+}
 
 const startPodBodySchema = z.object({
   organizerDiscordId: z.string().min(1),
@@ -54,11 +66,18 @@ const cancelBodySchema = z.object({ requestedBy: z.string().min(1) })
 type CancelBody = z.infer<typeof cancelBodySchema>
 
 export function registerPodRoutes(app: FastifyInstance, deps: PodRouteDeps): void {
+  const serviceDeps = {
+    storage: createPrismaAppStorage(deps.prisma),
+    ptp: deps.ptp,
+    tokenEncryptionKey: deps.tokenEncryptionKey,
+    logger: deps.logger,
+  }
+
   app.post<{ Body: StartPodBody }>(
     '/pods/start',
     { schema: { body: startPodBodySchema } },
     async (request, reply) => {
-      const result = await podsService.startPod(deps, request.body)
+      const result = await podsService.startPod(serviceDeps, request.body)
       return reply.send(result)
     }
   )
@@ -67,7 +86,7 @@ export function registerPodRoutes(app: FastifyInstance, deps: PodRouteDeps): voi
     '/pods/:id/targets/:guildId/message',
     { schema: { params: targetMessageParamsSchema, body: targetMessageBodySchema } },
     async (request, reply) => {
-      const result = await podsService.recordTargetMessage(deps, {
+      const result = await podsService.recordTargetMessage(serviceDeps, {
         podRoundId: request.params.id,
         guildId: request.params.guildId,
         messageId: request.body.messageId,
@@ -83,7 +102,7 @@ export function registerPodRoutes(app: FastifyInstance, deps: PodRouteDeps): voi
     '/pods/:id/signup',
     { schema: { params: signupParamsSchema, body: signupBodySchema } },
     async (request, reply) => {
-      const result = await podsService.recordSignup(deps, {
+      const result = await podsService.recordSignup(serviceDeps, {
         podRoundId: request.params.id,
         ...request.body,
       })
@@ -98,7 +117,7 @@ export function registerPodRoutes(app: FastifyInstance, deps: PodRouteDeps): voi
     '/pods/:id/cancel',
     { schema: { params: cancelParamsSchema, body: cancelBodySchema } },
     async (request, reply) => {
-      const result = await podsService.cancelPod(deps, {
+      const result = await podsService.cancelPod(serviceDeps, {
         podRoundId: request.params.id,
         requestedBy: request.body.requestedBy,
       })

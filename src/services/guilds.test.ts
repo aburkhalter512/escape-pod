@@ -1,15 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import type { AppPrismaClient } from '../prismaClient.js'
-import { createFakePrismaClient } from '../testUtils/fakePrismaClient.js'
+import type { AppStorage } from '../storage/appStorage.js'
+import { createFakeAppSqlStorage } from '../testUtils/fakeAppSqlStorage.js'
 import { stub } from '../testUtils/stub.js'
 import { deepEqual } from '../testUtils/deepEqual.js'
 import { allowGuild, subscribeGuild, unsubscribeGuild, type GuildServiceDeps } from './guilds.js'
 
-type GuildSubscriptionRow = Awaited<ReturnType<AppPrismaClient['guildSubscription']['create']>>
-type GuildSubscriptionCreateArgs = Parameters<AppPrismaClient['guildSubscription']['create']>[0]
-type GuildSubscriptionUpdateArgs = Parameters<AppPrismaClient['guildSubscription']['update']>[0]
-type OriginAllowlistUpsertArgs = Parameters<AppPrismaClient['guildOriginAllowlist']['upsert']>[0]
-type OriginAllowlistRow = Awaited<ReturnType<AppPrismaClient['guildOriginAllowlist']['upsert']>>
+type GuildSubscriptionRow = Awaited<ReturnType<AppStorage['guildSubscription']['create']>>
+type GuildSubscriptionCreateArgs = Parameters<AppStorage['guildSubscription']['create']>[0]
+type GuildSubscriptionUpdateArgs = Parameters<AppStorage['guildSubscription']['update']>[0]
+type OriginAllowlistUpsertArgs = Parameters<AppStorage['guildOriginAllowlist']['upsert']>[0]
+type OriginAllowlistRow = Awaited<ReturnType<AppStorage['guildOriginAllowlist']['upsert']>>
 
 function fakeOriginAllowlistRow(overrides: Partial<OriginAllowlistRow> = {}): OriginAllowlistRow {
   return {
@@ -33,8 +33,8 @@ function fakeGuildSubscriptionRow(overrides: Partial<GuildSubscriptionRow> = {})
   }
 }
 
-function buildDeps(overrides: Parameters<typeof createFakePrismaClient>[0] = {}): GuildServiceDeps {
-  return { prisma: createFakePrismaClient(overrides) }
+function buildDeps(overrides: Parameters<typeof createFakeAppSqlStorage>[0] = {}): GuildServiceDeps {
+  return { storage: createFakeAppSqlStorage(overrides) }
 }
 
 describe('subscribeGuild', () => {

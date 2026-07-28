@@ -5,7 +5,7 @@ import { createFakePtpClient } from '../testUtils/fakePtpClient.js'
 import { createFakeDiscordRest } from '../testUtils/fakeDiscordRest.js'
 import { stub } from '../testUtils/stub.js'
 import { encryptToken } from '../crypto/tokenCrypto.js'
-import type { PodServiceDeps } from '../services/pods.js'
+import type { RetryFailedFiresDeps } from './retryFailedFires.js'
 import { retryOverdueFailedFires } from './retryFailedFires.js'
 
 const TOKEN_KEY = '00'.repeat(32)
@@ -78,7 +78,7 @@ describe('retryOverdueFailedFires', () => {
     const editMessage = stub(async () => {
       throw new Error('editMessage should not have been called')
     })
-    const deps: PodServiceDeps = {
+    const deps: RetryFailedFiresDeps = {
       prisma: createFakePrismaClient({ podRound: { findMany: stub(async () => []) } }),
       ptp: createFakePtpClient(),
       tokenEncryptionKey: TOKEN_KEY,
@@ -101,7 +101,7 @@ describe('retryOverdueFailedFires', () => {
       })
       const createDmChannel = stub(async (userId: string) => ({ id: `dm-${userId}` }) as never)
       const postMessage = stub(async (_channelId: string, _body: unknown) => ({}) as never)
-      const deps: PodServiceDeps = {
+      const deps: RetryFailedFiresDeps = {
         prisma: createFakePrismaClient({
           podRound: {
             findMany: stubPodRoundFindMany(async () => [fakePodRoundRow({ chatChannelId: 'chat-channel-1' })]),
@@ -171,7 +171,7 @@ describe('retryOverdueFailedFires', () => {
       const postMessage = stub(async () => {
         throw new Error('postMessage should not have been called for a round with no chat channel')
       })
-      const deps: PodServiceDeps = {
+      const deps: RetryFailedFiresDeps = {
         prisma: createFakePrismaClient({
           podRound: {
             findMany: stubPodRoundFindMany(async () => [fakePodRoundRow({ chatChannelId: null })]),
@@ -217,7 +217,7 @@ describe('retryOverdueFailedFires', () => {
       const createDmChannel = stub(async () => {
         throw new Error('createDmChannel should not have been called for a gave-up round')
       })
-      const deps: PodServiceDeps = {
+      const deps: RetryFailedFiresDeps = {
         prisma: createFakePrismaClient({
           podRound: {
             findMany: stubPodRoundFindMany(async () => [fakePodRoundRow({ thresholdReachedAt: PAST_WINDOW })]),
@@ -263,7 +263,7 @@ describe('retryOverdueFailedFires', () => {
         return {} as never
       })
       const errors: unknown[] = []
-      const deps: PodServiceDeps = {
+      const deps: RetryFailedFiresDeps = {
         prisma: createFakePrismaClient({
           podRound: {
             findMany: stubPodRoundFindMany(async () => [fakePodRoundRow({ thresholdReachedAt: PAST_WINDOW })]),

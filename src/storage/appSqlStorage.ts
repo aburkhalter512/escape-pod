@@ -1,15 +1,5 @@
-import type {
-  Prisma,
-  Organizer,
-  GuildSubscription,
-  GuildOrganizerAllowlist,
-  GuildOriginAllowlist,
-  PodRound,
-  PodRoundTarget,
-  PodRoundSignup,
-  PodRoundStatus,
-  PostingPolicy,
-} from '@prisma/client'
+import type { Prisma, PodRound, PodRoundStatus } from '@prisma/client'
+import type { AppStorage } from './appStorage.js'
 import {
   toIso,
   mapOrganizerRow,
@@ -21,126 +11,12 @@ import {
   mapPodRoundSignupRow,
 } from './rowMappers.js'
 
-// The Durable Object SQLite replacement for prismaClient.ts's
-// AppPrismaClient — same table-namespaced method shape (so the Phase 2
-// diff against services/*.ts is mechanical: swap `deps.prisma` for
-// `deps.storage`, each call site's right-hand side changes, signatures
-// don't), same reuse of Prisma's generated model types for return shapes
-// (imported type-only — nothing Prisma-runtime ships in the Worker
-// bundle), hand-written parameterized SQL instead of a generated client
-// or query-builder dialect (no Prisma driver adapter exists for DO's
-// synchronous, non-network SqlStorage object, and a 7-table schema with
-// this bounded a query surface doesn't need one).
-export interface AppStorage {
-  organizer: {
-    findMany(args: { where: { expiresAt: { lt: Date } } }): Promise<Organizer[]>
-    update(args: {
-      where: { discordId: string }
-      data: { nextRoundNumber: { increment: number } } | { encryptedToken: string; expiresAt: Date }
-    }): Promise<Organizer>
-    upsert(args: {
-      where: { discordId: string }
-      create: { discordId: string; username: string; encryptedToken: string; expiresAt: Date }
-      update: { username: string; encryptedToken: string; expiresAt: Date }
-    }): Promise<Organizer>
-  }
-  guildSubscription: {
-    // Two distinct call shapes exist (startPod's guildId-in-list filter,
-    // listEligibleGuilds's OPEN/trust OR-clause) — overloaded rather than
-    // one loosely-typed signature, so each is exact instead of needing an
-    // unsafe cast in the implementation below.
-    findMany(args: { where: { guildId: { in: string[] }; unsubscribedAt: null } }): Promise<GuildSubscription[]>
-    findMany(args: {
-      where: {
-        unsubscribedAt: null
-        OR: [{ postingPolicy: 'OPEN' }, { originAllowlist: { some: { allowedOriginGuildId: string } } }]
-      }
-    }): Promise<GuildSubscription[]>
-    findUnique(args: { where: { guildId: string } }): Promise<GuildSubscription | null>
-    create(args: {
-      data: { guildId: string; broadcastChannelId: string; installedByDiscordId: string; postingPolicy?: PostingPolicy }
-    }): Promise<GuildSubscription>
-    update(args: {
-      where: { guildId: string }
-      data: Partial<{ broadcastChannelId: string; postingPolicy: PostingPolicy; unsubscribedAt: Date | null }>
-    }): Promise<GuildSubscription>
-    count(args: { where: { unsubscribedAt: null } }): Promise<number>
-  }
-  guildOrganizerAllowlist: {
-    upsert(args: {
-      where: { guildId_organizerDiscordId: { guildId: string; organizerDiscordId: string } }
-      create: { guildId: string; organizerDiscordId: string; approvedBy: string }
-      update: { approvedBy: string }
-    }): Promise<GuildOrganizerAllowlist>
-  }
-  guildOriginAllowlist: {
-    upsert(args: {
-      where: { guildId_allowedOriginGuildId: { guildId: string; allowedOriginGuildId: string } }
-      create: { guildId: string; allowedOriginGuildId: string; approvedBy: string }
-      update: { approvedBy: string }
-    }): Promise<GuildOriginAllowlist>
-  }
-  podRound: {
-    create(args: {
-      data: {
-        organizerDiscordId: string
-        organizerRoundNumber: number
-        setCode: string
-        threshold: number
-        scheduledFor?: Date
-        originGuildName?: string
-        originGuildId?: string
-        targets: { create: Array<{ guildId: string; channelId: string }> }
-      }
-    }): Promise<PodRound>
-    findUnique(args: { where: { id: string } }): Promise<PodRound | null>
-    findUnique(
-      args: { where: { id: string }; include: { organizer: true } }
-    ): Promise<Prisma.PodRoundGetPayload<{ include: { organizer: true } }> | null>
-    findFirst(
-      args:
-        | { where: { organizerDiscordId: string; organizerRoundNumber: number } }
-        | { where: { organizerDiscordId: string }; orderBy: { createdAt: 'desc' } }
-    ): Promise<PodRound | null>
-    findMany(args: {
-      where: { organizerDiscordId: string; status: { in: PodRoundStatus[] } }
-      orderBy: { organizerRoundNumber: 'asc' }
-    }): Promise<PodRound[]>
-    findMany(
-      args: { where: Record<string, unknown>; include: { organizer: true } }
-    ): Promise<Array<Prisma.PodRoundGetPayload<{ include: { organizer: true } }>>>
-    update(args: {
-      where: { id: string }
-      data: Partial<{
-        status: PodRoundStatus
-        ptpPodShareId: string
-        chatChannelId: string
-        fireFailureNotified: boolean
-      }>
-    }): Promise<PodRound>
-    updateMany(args: {
-      where: { id: string; status: PodRoundStatus }
-      data: Partial<{ status: PodRoundStatus; thresholdReachedAt: Date }>
-    }): Promise<{ count: number }>
-  }
-  podRoundTarget: {
-    findMany(args: { where: { podRoundId: string } }): Promise<PodRoundTarget[]>
-    findUnique(args: { where: { podRoundId_guildId: { podRoundId: string; guildId: string } } }): Promise<PodRoundTarget | null>
-    update(args: {
-      where: { podRoundId_guildId: { podRoundId: string; guildId: string } }
-      data: { messageId: string }
-    }): Promise<PodRoundTarget>
-  }
-  podRoundSignup: {
-    count(args: { where: { podRoundId: string; status: 'IN' } }): Promise<number>
-    upsert(args: {
-      where: { podRoundId_discordId: { podRoundId: string; discordId: string } }
-      create: { podRoundId: string; discordId: string; usernameSnapshot: string; sourceGuildId: string; status: 'IN' | 'LEFT' }
-      update: { status: 'IN' | 'LEFT' }
-    }): Promise<PodRoundSignup>
-    findMany(args: { where: { podRoundId: string; status: 'IN' } }): Promise<PodRoundSignup[]>
-  }
-}
+// The Durable Object SQLite implementation of appStorage.ts's AppStorage
+// contract — hand-written parameterized SQL instead of a generated
+// client or query-builder dialect (no Prisma driver adapter exists for
+// DO's synchronous, non-network SqlStorage object, and a 7-table schema
+// with this bounded a query surface doesn't need one).
+export type { AppStorage }
 
 // Default type param returns the raw row shape row-mapper functions
 // accept directly (see rowMappers.ts's RawRow) — most call sites below

@@ -5,7 +5,7 @@ import { createFakePtpClient } from '../testUtils/fakePtpClient.js'
 import { createFakeDiscordRest } from '../testUtils/fakeDiscordRest.js'
 import { stub } from '../testUtils/stub.js'
 import { encryptToken } from '../crypto/tokenCrypto.js'
-import type { PodServiceDeps } from '../services/pods.js'
+import type { ExpirePodRoundsDeps } from './expirePodRounds.js'
 import { expireOverduePodRounds } from './expirePodRounds.js'
 
 const TOKEN_KEY = '00'.repeat(32)
@@ -75,7 +75,7 @@ describe('expireOverduePodRounds', () => {
     const editMessage = stub(async () => {
       throw new Error('editMessage should not have been called')
     })
-    const deps: PodServiceDeps = {
+    const deps: ExpirePodRoundsDeps = {
       prisma: createFakePrismaClient({ podRound: { findMany: stub(async () => []) } }),
       ptp: createFakePtpClient(),
       tokenEncryptionKey: TOKEN_KEY,
@@ -89,7 +89,7 @@ describe('expireOverduePodRounds', () => {
 
   it('expires an overdue round (below its own threshold) and edits every target with a recorded message id', async () => {
     const editMessage = stub(async (_channelId: string, _messageId: string, _body: unknown) => ({}) as never)
-    const deps: PodServiceDeps = {
+    const deps: ExpirePodRoundsDeps = {
       prisma: createFakePrismaClient({
         podRound: {
           findMany: stubPodRoundFindMany(async () => [fakePodRoundRow({ threshold: 6 })]),
@@ -125,7 +125,7 @@ describe('expireOverduePodRounds', () => {
 
   it('fires (does not expire) an overdue round that reached its own threshold, short of a full table', async () => {
     const editMessage = stub(async (_channelId: string, _messageId: string, _body: unknown) => ({}) as never)
-    const deps: PodServiceDeps = {
+    const deps: ExpirePodRoundsDeps = {
       prisma: createFakePrismaClient({
         podRound: {
           findMany: stubPodRoundFindMany(async () => [fakePodRoundRow({ threshold: 2 })]),
@@ -172,7 +172,7 @@ describe('expireOverduePodRounds', () => {
       expect(body.embeds[0].description).toContain('Organizer: Expired-From Guild')
       return {} as never
     })
-    const expiredDeps: PodServiceDeps = {
+    const expiredDeps: ExpirePodRoundsDeps = {
       prisma: createFakePrismaClient({
         podRound: {
           findMany: stubPodRoundFindMany(async () => [fakePodRoundRow({ threshold: 6, originGuildName: 'Expired-From Guild' })]),
@@ -203,7 +203,7 @@ describe('expireOverduePodRounds', () => {
       expect(body.embeds[0].description).toContain('Organizer: Fired-From Guild')
       return {} as never
     })
-    const firedDeps: PodServiceDeps = {
+    const firedDeps: ExpirePodRoundsDeps = {
       prisma: createFakePrismaClient({
         podRound: {
           findMany: stubPodRoundFindMany(async () => [fakePodRoundRow({ threshold: 2, originGuildName: 'Fired-From Guild' })]),
@@ -247,7 +247,7 @@ describe('expireOverduePodRounds', () => {
       expect(body.embeds[0].description).toContain('Players:\n- <@p1>\n- <@p2>\n- <@p3>\n- <@p4>\n- <@p5>')
       return {} as never
     })
-    const deps: PodServiceDeps = {
+    const deps: ExpirePodRoundsDeps = {
       prisma: createFakePrismaClient({
         podRound: {
           findMany: stubPodRoundFindMany(async () => [fakePodRoundRow({ threshold: 2 })]),
@@ -293,7 +293,7 @@ describe('expireOverduePodRounds', () => {
     const createInvite = stub(async () => ({ code: 'abc123' }) as never)
     const createDmChannel = stub(async (userId: string) => ({ id: `dm-${userId}` }) as never)
     const postMessage = stub(async (_channelId: string, _body: unknown) => ({}) as never)
-    const deps: PodServiceDeps = {
+    const deps: ExpirePodRoundsDeps = {
       prisma: createFakePrismaClient({
         podRound: {
           findMany: stubPodRoundFindMany(async () => [fakePodRoundRow({ threshold: 2, originGuildId: 'origin-guild-1' })]),
@@ -363,7 +363,7 @@ describe('expireOverduePodRounds', () => {
     // — a round with no origin guild still notifies every signed-up player.
     const createDmChannel = stub(async (userId: string) => ({ id: `dm-${userId}` }) as never)
     const postMessage = stub(async (_channelId: string, _body: unknown) => ({}) as never)
-    const deps: PodServiceDeps = {
+    const deps: ExpirePodRoundsDeps = {
       prisma: createFakePrismaClient({
         podRound: {
           findMany: stubPodRoundFindMany(async () => [fakePodRoundRow({ threshold: 2, originGuildId: null })]),
@@ -413,7 +413,7 @@ describe('expireOverduePodRounds', () => {
       throw new Error('Missing Access')
     })
     const errors: unknown[] = []
-    const deps: PodServiceDeps = {
+    const deps: ExpirePodRoundsDeps = {
       prisma: createFakePrismaClient({
         podRound: {
           findMany: stubPodRoundFindMany(async () => [fakePodRoundRow({ threshold: 6 })]),
