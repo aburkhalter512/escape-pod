@@ -93,18 +93,24 @@ jobs:
       - name: Dry-run deploy
         run: npx wrangler deploy --dry-run
 
-      # TODO(Phase 9): once a second Discord Application exists and
-      # CLOUDFLARE_API_TOKEN is set as a repo/environment secret, add:
-      #   - name: Deploy
-      #     uses: cloudflare/wrangler-action@v3
-      #     with:
-      #       apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      #       secrets: |
-      #         DISCORD_BOT_TOKEN
-      #         BOT_API_KEY
-      #         TOKEN_ENCRYPTION_KEY
-      #     env:
-      #       DISCORD_BOT_TOKEN: ${{ secrets.CF_DISCORD_BOT_TOKEN }}
-      #       BOT_API_KEY: ${{ secrets.CF_BOT_API_KEY }}
-      #       TOKEN_ENCRYPTION_KEY: ${{ secrets.CF_TOKEN_ENCRYPTION_KEY }}
-      # Until then, real deploys are done locally via `npm run deploy:cloudflare`.
+      # Real deploy — reuses the existing (AWS production) Discord
+      # Application (user decision, see wrangler.toml's [vars] comment),
+      # not a second throwaway one as Phase 9 originally planned, so only
+      # the two real secrets durableObject.ts's Env actually declares are
+      # needed here: DISCORD_BOT_TOKEN, TOKEN_ENCRYPTION_KEY. No
+      # BOT_API_KEY — that's an AWS-only bearer-auth concept for the
+      # /organizers, /guilds, /pods admin REST surface, which honoApp.ts
+      # deliberately never ports to Hono (see its own comment on why).
+      # wrangler-action's `secrets:` input runs `wrangler secret put` for
+      # each listed name using the identically-named env var below —
+      # idempotent (just re-syncs the same value) if nothing's changed.
+      - name: Deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          secrets: |
+            DISCORD_BOT_TOKEN
+            TOKEN_ENCRYPTION_KEY
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.CF_DISCORD_BOT_TOKEN }}
+          TOKEN_ENCRYPTION_KEY: ${{ secrets.CF_TOKEN_ENCRYPTION_KEY }}
