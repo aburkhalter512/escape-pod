@@ -52,8 +52,14 @@ crons = ["*/1 * * * *", "0 0 * * *"]
 # form and fails every real-DO test with "SQL is not enabled for this
 # Durable Object class." This classic form works correctly for both a
 # real `wrangler deploy` and local `vitest-pool-workers` testing, so it's
-# the one actually used here — revisit once local testing support for
-# `exports` catches up.
+# the one used here — one single config, no separate test-only twin
+# needed. (Briefly switched to `exports` during Phase 9's first real
+# deploy attempt, since a live Worker can't revert from `exports` back to
+# `migrations` once adopted — Cloudflare's API rejects it outright. That
+# Worker hadn't served any real traffic yet, so it was deleted and
+# recreated fresh instead, letting this single classic-form config work
+# for both real deploys and local testing again.) Revisit once local
+# testing support for `exports` catches up.
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["EscapePodDurableObject"]
