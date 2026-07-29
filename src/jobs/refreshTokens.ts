@@ -65,7 +65,7 @@ async function runRefresh(storage: AppStorage, ptp: PtpClient, tokenEncryptionKe
       continue
     }
 
-    await storage.organizer.update({
+    await storage.organizer.updateToken({
       where: { discordId: organizer.discordId },
       data: {
         encryptedToken: encryptToken(newToken, tokenEncryptionKey),

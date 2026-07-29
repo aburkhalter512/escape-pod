@@ -25,7 +25,17 @@ import type { AppStorage } from './appStorage.js'
 // that just forward to the same generic Prisma call.
 export function createPrismaAppStorage(prisma: AppPrismaClient): AppStorage {
   return {
-    organizer: prisma.organizer,
+    // Prisma itself has no separate methods for these two — both are
+    // thin wrappers over the same prisma.organizer.update, just shaped
+    // to match AppStorage's two concretely-named methods (split from one
+    // overloaded `update` per PR review; see appStorage.ts's comment).
+    organizer: {
+      findMany: prisma.organizer.findMany,
+      incrementNextRoundNumber: (args) =>
+        prisma.organizer.update({ where: args.where, data: { nextRoundNumber: { increment: args.data.increment } } }),
+      updateToken: (args) => prisma.organizer.update({ where: args.where, data: args.data }),
+      upsert: prisma.organizer.upsert,
+    },
     guildSubscription: prisma.guildSubscription,
     guildOrganizerAllowlist: prisma.guildOrganizerAllowlist,
     guildOriginAllowlist: prisma.guildOriginAllowlist,

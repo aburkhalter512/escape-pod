@@ -1,26 +1,13 @@
-import {
-  Routes,
-  type RESTPostAPIChannelMessageJSONBody,
-  type RESTPostAPIChannelMessageResult,
-  type RESTPatchAPIChannelMessageJSONBody,
-  type RESTPatchAPIChannelMessageResult,
-  type RESTGetAPIGuildResult,
-  type RESTPostAPIGuildChannelJSONBody,
-  type RESTPostAPIGuildChannelResult,
-  type RESTPostAPIChannelInviteResult,
-  type RESTPostAPICurrentUserCreateDMChannelResult,
-  type RESTPatchAPIWebhookWithTokenMessageJSONBody,
-  type RESTPatchAPIWebhookWithTokenMessageResult,
-} from 'discord-api-types/v10'
+import { HttpDiscordRest, type RawRestClient } from './httpDiscordRest.js'
 import type { DiscordRestClient } from './rest.js'
 
-// The Worker-side counterpart to rest.ts's HttpDiscordRest — same
-// DiscordRestClient contract, hand-rolled plain fetch() instead of
-// @discordjs/rest, which isn't clean on Workers (undici/Node-compat
-// friction; Discord's own Workers tutorial hand-rolls fetch() for the
-// same reason, see the migration plan's Phase 5 research). Routes.* is a
-// pure, framework-agnostic path-string builder from discord-api-types —
-// reused as-is from rest.ts, no Workers-specific replacement needed.
+// The Worker-side counterpart to rest.ts's createDiscordRest — same
+// HttpDiscordRest class (route/body shapes, response typing, shared via
+// httpDiscordRest.ts), just a different RawRestClient transport
+// underneath: hand-rolled plain fetch() instead of @discordjs/rest,
+// which isn't clean on Workers (undici/Node-compat friction; Discord's
+// own Workers tutorial hand-rolls fetch() for the same reason, see the
+// migration plan's Phase 5 research).
 //
 // Known, accepted gap (flagged in the migration plan, not a silent
 // omission): no automatic rate-limit backoff/retry, unlike
@@ -36,84 +23,37 @@ interface FetchDiscordRestOptions {
 }
 
 export function createFetchDiscordRest(options: FetchDiscordRestOptions): DiscordRestClient {
-  return new FetchDiscordRest(options.botToken, options.botUserId)
+  return new HttpDiscordRest(createFetchRawRestClient(options.botToken), options.botUserId)
 }
 
-class FetchDiscordRest implements DiscordRestClient {
-  readonly botUserId: string
-  #botToken: string
-
-  constructor(botToken: string, botUserId: string) {
-    this.#botToken = botToken
-    this.botUserId = botUserId
-  }
-
-  async #request<T>(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', route: string, body?: unknown): Promise<T> {
-    const response = await fetch(`${DISCORD_API_BASE}${route}`, {
+function createFetchRawRestClient(botToken: string): RawRestClient {
+  async function request(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', fullRoute: string, options?: { body?: unknown }) {
+    const response = await fetch(`${DISCORD_API_BASE}${fullRoute}`, {
       method,
       headers: {
-        Authorization: `Bot ${this.#botToken}`,
+        Authorization: `Bot ${botToken}`,
         'Content-Type': 'application/json',
       },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
+      body: options?.body !== undefined ? JSON.stringify(options.body) : undefined,
     })
 
     if (!response.ok) {
       const detail = await response.text()
-      throw new Error(`Discord API ${method} ${route} failed: ${response.status} ${detail}`)
+      throw new Error(`Discord API ${method} ${fullRoute} failed: ${response.status} ${detail}`)
     }
 
-    // DELETE responses have no body (204 No Content) — every other method
-    // here always returns a real JSON payload.
+    // DELETE responses have no body (204 No Content) — every other route
+    // HttpDiscordRest calls always returns a real JSON payload.
     if (response.status === 204) {
-      return undefined as T
+      return undefined
     }
-    return (await response.json()) as T
+    return response.json()
   }
 
-  async postMessage(
-    channelId: string,
-    body: RESTPostAPIChannelMessageJSONBody
-  ): Promise<RESTPostAPIChannelMessageResult> {
-    return this.#request('POST', Routes.channelMessages(channelId), body)
-  }
-
-  async editMessage(
-    channelId: string,
-    messageId: string,
-    body: RESTPatchAPIChannelMessageJSONBody
-  ): Promise<RESTPatchAPIChannelMessageResult> {
-    return this.#request('PATCH', Routes.channelMessage(channelId, messageId), body)
-  }
-
-  async getGuild(guildId: string): Promise<RESTGetAPIGuildResult> {
-    return this.#request('GET', Routes.guild(guildId))
-  }
-
-  async createChannel(
-    guildId: string,
-    body: RESTPostAPIGuildChannelJSONBody
-  ): Promise<RESTPostAPIGuildChannelResult> {
-    return this.#request('POST', Routes.guildChannels(guildId), body)
-  }
-
-  async createInvite(channelId: string): Promise<RESTPostAPIChannelInviteResult> {
-    return this.#request('POST', Routes.channelInvites(channelId), { max_age: 21600 })
-  }
-
-  async createDmChannel(userId: string): Promise<RESTPostAPICurrentUserCreateDMChannelResult> {
-    return this.#request('POST', Routes.userChannels(), { recipient_id: userId })
-  }
-
-  async deleteChannel(channelId: string): Promise<void> {
-    await this.#request('DELETE', Routes.channel(channelId))
-  }
-
-  async editOriginalInteractionResponse(
-    applicationId: string,
-    interactionToken: string,
-    body: RESTPatchAPIWebhookWithTokenMessageJSONBody
-  ): Promise<RESTPatchAPIWebhookWithTokenMessageResult> {
-    return this.#request('PATCH', Routes.webhookMessage(applicationId, interactionToken, '@original'), body)
+  return {
+    get: (fullRoute, options) => request('GET', fullRoute, options),
+    post: (fullRoute, options) => request('POST', fullRoute, options),
+    patch: (fullRoute, options) => request('PATCH', fullRoute, options),
+    delete: (fullRoute, options) => request('DELETE', fullRoute, options),
   }
 }

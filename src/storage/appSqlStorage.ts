@@ -1,6 +1,9 @@
-import type { Prisma, PodRound, PodRoundStatus } from '@prisma/client'
+import type { Prisma, Organizer, PodRound, PodRoundStatus } from '@prisma/client'
 import type { AppStorage } from './appStorage.js'
 import {
+  one,
+  maybeOne,
+  all,
   toIso,
   mapOrganizerRow,
   mapGuildSubscriptionRow,
@@ -18,22 +21,48 @@ import {
 // with this bounded a query surface doesn't need one).
 export type { AppStorage }
 
-// Default type param returns the raw row shape row-mapper functions
-// accept directly (see rowMappers.ts's RawRow) — most call sites below
-// don't specify T explicitly and just pipe the result straight into a
-// mapXRow function. The few that do (count queries) get a typed result
-// without needing their own SqlXRow interface.
-function one<T = Record<string, SqlStorageValue>>(sql: SqlStorage, query: string, ...bindings: unknown[]): T {
-  return sql.exec<Record<string, SqlStorageValue>>(query, ...bindings).one() as T
+// Shared by podRoundFindUnique/podRoundFindMany's include-organizer
+// branches below — was inlined identically in both places before.
+function findOrganizer(sql: SqlStorage, discordId: string): Organizer {
+  return mapOrganizerRow(one(sql, 'SELECT * FROM organizers WHERE discord_id = ?', discordId))
 }
 
-function maybeOne<T = Record<string, SqlStorageValue>>(sql: SqlStorage, query: string, ...bindings: unknown[]): T | null {
-  const rows = sql.exec<Record<string, SqlStorageValue>>(query, ...bindings).toArray()
-  return rows.length > 0 ? (rows[0] as T) : null
+// The three concrete queries AppStorage's podRound.findMany overloads
+// collapse into one generic-where-shape signature — split into their
+// own named functions (one per real caller) instead of one function
+// branching on which fields happen to be present in args.where, per
+// PR review.
+
+// services/organizers.ts's listActiveRoundsForOrganizer — never includes
+// the organizer (the caller already knows who it is).
+function findActiveRoundsForOrganizer(sql: SqlStorage, organizerDiscordId: string, statuses: PodRoundStatus[]): PodRound[] {
+  const placeholders = statuses.map(() => '?').join(', ')
+  const rows = all(
+    sql,
+    `SELECT * FROM pod_rounds WHERE organizer_discord_id = ? AND status IN (${placeholders}) ORDER BY organizer_round_number ASC`,
+    organizerDiscordId,
+    ...statuses
+  )
+  return rows.map(mapPodRoundRow)
 }
 
-function all<T = Record<string, SqlStorageValue>>(sql: SqlStorage, query: string, ...bindings: unknown[]): T[] {
-  return sql.exec<Record<string, SqlStorageValue>>(query, ...bindings).toArray() as T[]
+// services/pods.ts's expireOverdueRounds — always includes the
+// organizer (fireRound needs their encrypted PTP token to fire).
+function findOverduePodRounds(sql: SqlStorage, status: PodRoundStatus, scheduledBefore: Date) {
+  const rows = all(
+    sql,
+    'SELECT * FROM pod_rounds WHERE status = ? AND scheduled_for IS NOT NULL AND scheduled_for <= ?',
+    status,
+    toIso(scheduledBefore)
+  )
+  return rows.map(mapPodRoundRow).map((round) => ({ ...round, organizer: findOrganizer(sql, round.organizerDiscordId) }))
+}
+
+// services/pods.ts's retryFailedFires — always includes the organizer,
+// same reasoning as findOverduePodRounds above.
+function findStuckThresholdReachedRounds(sql: SqlStorage, status: PodRoundStatus) {
+  const rows = all(sql, 'SELECT * FROM pod_rounds WHERE status = ? AND fire_failure_notified = 0', status)
+  return rows.map(mapPodRoundRow).map((round) => ({ ...round, organizer: findOrganizer(sql, round.organizerDiscordId) }))
 }
 
 export function createAppSqlStorage(sql: SqlStorage): AppStorage {
@@ -51,10 +80,12 @@ export function createAppSqlStorage(sql: SqlStorage): AppStorage {
     if (!row) return null
     const round = mapPodRoundRow(row)
     if (!args.include) return round
-    const organizerRow = one(sql, 'SELECT * FROM organizers WHERE discord_id = ?', round.organizerDiscordId)
-    return { ...round, organizer: mapOrganizerRow(organizerRow) }
+    return { ...round, organizer: findOrganizer(sql, round.organizerDiscordId) }
   }
 
+  // The dispatcher itself stays generic (it has to, to satisfy one
+  // overloaded AppStorage method) — but its body is now just "which
+  // dedicated query does this shape mean," not the query logic itself.
   function podRoundFindMany(args: {
     where: { organizerDiscordId: string; status: { in: PodRoundStatus[] } }
     orderBy: { organizerRoundNumber: 'asc' }
@@ -67,34 +98,16 @@ export function createAppSqlStorage(sql: SqlStorage): AppStorage {
     include?: { organizer: true }
     orderBy?: { organizerRoundNumber: 'asc' }
   }) {
-    let rows: Record<string, SqlStorageValue>[]
     if ('organizerDiscordId' in args.where && 'status' in args.where) {
       const statusFilter = args.where.status as { in: PodRoundStatus[] }
-      const placeholders = statusFilter.in.map(() => '?').join(', ')
-      rows = all(
-        sql,
-        `SELECT * FROM pod_rounds WHERE organizer_discord_id = ? AND status IN (${placeholders}) ORDER BY organizer_round_number ASC`,
-        args.where.organizerDiscordId,
-        ...statusFilter.in
-      )
-    } else if ('status' in args.where && 'scheduledFor' in args.where) {
-      const scheduledFilter = args.where.scheduledFor as { lte: Date }
-      rows = all(
-        sql,
-        'SELECT * FROM pod_rounds WHERE status = ? AND scheduled_for IS NOT NULL AND scheduled_for <= ?',
-        args.where.status,
-        toIso(scheduledFilter.lte)
-      )
-    } else {
-      // retryFailedFires: { status: 'THRESHOLD_REACHED', fireFailureNotified: false }
-      rows = all(sql, 'SELECT * FROM pod_rounds WHERE status = ? AND fire_failure_notified = 0', args.where.status)
+      return findActiveRoundsForOrganizer(sql, args.where.organizerDiscordId as string, statusFilter.in)
     }
-    const mapped = rows.map(mapPodRoundRow)
-    if (!args.include) return mapped
-    return mapped.map((round) => {
-      const organizerRow = one(sql, 'SELECT * FROM organizers WHERE discord_id = ?', round.organizerDiscordId)
-      return { ...round, organizer: mapOrganizerRow(organizerRow) }
-    })
+    if ('status' in args.where && 'scheduledFor' in args.where) {
+      const scheduledFilter = args.where.scheduledFor as { lte: Date }
+      return findOverduePodRounds(sql, args.where.status as PodRoundStatus, scheduledFilter.lte)
+    }
+    // retryFailedFires: { status: 'THRESHOLD_REACHED', fireFailureNotified: false }
+    return findStuckThresholdReachedRounds(sql, args.where.status as PodRoundStatus)
   }
 
   return {
@@ -103,16 +116,16 @@ export function createAppSqlStorage(sql: SqlStorage): AppStorage {
         const rows = all(sql, 'SELECT * FROM organizers WHERE expires_at < ?', toIso(args.where.expiresAt.lt))
         return rows.map(mapOrganizerRow)
       },
-      async update(args) {
-        if ('nextRoundNumber' in args.data) {
-          const row = one(
-            sql,
-            'UPDATE organizers SET next_round_number = next_round_number + ? WHERE discord_id = ? RETURNING *',
-            args.data.nextRoundNumber.increment,
-            args.where.discordId
-          )
-          return mapOrganizerRow(row)
-        }
+      async incrementNextRoundNumber(args) {
+        const row = one(
+          sql,
+          'UPDATE organizers SET next_round_number = next_round_number + ? WHERE discord_id = ? RETURNING *',
+          args.data.increment,
+          args.where.discordId
+        )
+        return mapOrganizerRow(row)
+      },
+      async updateToken(args) {
         const row = one(
           sql,
           'UPDATE organizers SET encrypted_token = ?, expires_at = ? WHERE discord_id = ? RETURNING *',

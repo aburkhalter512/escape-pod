@@ -5,6 +5,7 @@ import { buildHonoApp, type HonoAppDeps } from './honoApp.js'
 import { createFakeAppSqlStorage } from './testUtils/fakeAppSqlStorage.js'
 import { createFakePtpClient } from './testUtils/fakePtpClient.js'
 import { createFakeDiscordRest } from './testUtils/fakeDiscordRest.js'
+import { createInMemoryPendingStartPodStore } from './pendingStartPods.js'
 
 // Plain-Node coverage of the Worker/DO-side route registration and
 // dispatch logic (mocked backend deps, no real DO/workerd) — the
@@ -41,6 +42,7 @@ function buildDeps(overrides: Partial<HonoAppDeps> = {}): HonoAppDeps {
     discordPublicKey: publicKeyHex,
     tokenEncryptionKey: '00'.repeat(32),
     logger: { error: () => {} },
+    pendingStartPods: createInMemoryPendingStartPodStore(),
     ...overrides,
   }
 }

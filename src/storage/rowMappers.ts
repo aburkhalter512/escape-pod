@@ -21,6 +21,22 @@ import type {
 
 type RawRow = Record<string, SqlStorageValue>
 
+// Generic SqlStorage query helpers shared by every *SqlStorage.ts file in
+// this directory — one place for "run a query, get a typed row/rows back"
+// so no caller reinvents the same toArray()/indexing dance.
+export function one<T = RawRow>(sql: SqlStorage, query: string, ...bindings: unknown[]): T {
+  return sql.exec<RawRow>(query, ...bindings).one() as T
+}
+
+export function maybeOne<T = RawRow>(sql: SqlStorage, query: string, ...bindings: unknown[]): T | null {
+  const rows = sql.exec<RawRow>(query, ...bindings).toArray()
+  return rows.length > 0 ? (rows[0] as T) : null
+}
+
+export function all<T = RawRow>(sql: SqlStorage, query: string, ...bindings: unknown[]): T[] {
+  return sql.exec<RawRow>(query, ...bindings).toArray() as T[]
+}
+
 export function toIso(date: Date): string {
   return date.toISOString()
 }

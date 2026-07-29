@@ -77,9 +77,9 @@ export async function startPod(deps: PodServiceDeps, params: StartPodParams): Pr
   // sequence if the process crashes between these two calls — gaps are
   // harmless (PodRound's unique constraint only requires distinctness, not
   // contiguity), so that trade-off isn't worth widening this interface.
-  const organizer = await deps.storage.organizer.update({
+  const organizer = await deps.storage.organizer.incrementNextRoundNumber({
     where: { discordId: organizerDiscordId },
-    data: { nextRoundNumber: { increment: 1 } },
+    data: { increment: 1 },
   })
   const organizerRoundNumber = organizer.nextRoundNumber - 1
 

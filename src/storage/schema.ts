@@ -112,4 +112,30 @@ export const MIGRATIONS: Migration[] = [
       )`,
     ],
   },
+  {
+    // Added post-launch (PR review) — a new migration, not a change to
+    // migration 1's own statements, since the real deployed DO already
+    // has migration 1 marked applied in _schema_migrations; modifying it
+    // in place would mean this table silently never gets created there.
+    // Backs pendingStartPods.ts's DO-storage implementation, replacing an
+    // in-memory Map that didn't survive a DO's idle-eviction/restart
+    // cycle between the /start-pod select-guilds and confirm steps (a
+    // real, higher-frequency risk on this platform than the equivalent
+    // AWS in-memory store ever had, since a DO's JS memory — unlike its
+    // storage — is routinely evicted, not just restarted on deploys).
+    id: 2,
+    statements: [
+      `CREATE TABLE IF NOT EXISTS pending_start_pods (
+        token TEXT PRIMARY KEY,
+        organizer_discord_id TEXT NOT NULL,
+        set_code TEXT NOT NULL,
+        threshold INTEGER NOT NULL,
+        scheduled_for TEXT,
+        origin_guild_name TEXT,
+        origin_guild_id TEXT,
+        guild_ids TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      )`,
+    ],
+  },
 ]

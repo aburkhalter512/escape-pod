@@ -4,10 +4,10 @@ import type { AppStorage } from './storage/appStorage.js'
 import type { PtpClient } from './ptp/client.js'
 import type { DiscordRestClient } from './discord/rest.js'
 import type { Logger } from './services/errors.js'
+import type { PendingStartPodStore } from './pendingStartPods.js'
 import { LocalBackendClient } from './backendClient.js'
 import { verifyDiscordSignatureFromRequest } from './interactions/verify.js'
 import { routeInteraction } from './interactions/router.js'
-import { createInMemoryPendingStartPodStore } from './pendingStartPods.js'
 import { ephemeral } from './commands/helpers.js'
 
 // The Worker/DO-side counterpart to app.ts's Fastify buildApp — hosted
@@ -33,6 +33,16 @@ export interface HonoAppDeps {
   discordPublicKey: string
   tokenEncryptionKey: string
   logger: Logger
+  // Constructed by durableObject.ts from the DO's own ctx.storage.sql
+  // (storage/pendingStartPodsSql.ts), not in-memory like app.ts's
+  // equivalent — a DO's in-memory JS state (unlike its storage) gets
+  // evicted on routine idle timeout, which would otherwise silently lose
+  // a pending /start-pod selection between the "select servers" step and
+  // the "Send" confirmation click (see storage/schema.ts's migration 2
+  // comment for the fuller story). Accepted as a dep here (not
+  // constructed inline) so this file stays free of any direct
+  // SqlStorage/Cloudflare-ambient-global reference.
+  pendingStartPods: PendingStartPodStore
 }
 
 export function buildHonoApp(deps: HonoAppDeps) {
@@ -42,12 +52,7 @@ export function buildHonoApp(deps: HonoAppDeps) {
     tokenEncryptionKey: deps.tokenEncryptionKey,
     logger: deps.logger,
   })
-  // In-memory, one instance per DO — same "no new infra for something with
-  // low consequences if lost" reasoning as app.ts's own instance (see
-  // pendingStartPods.ts). A DO eviction/restart loses in-flight
-  // selections exactly like an AWS task restart would; nothing was ever
-  // created or posted, so there's nothing to reconcile.
-  const pendingStartPods = createInMemoryPendingStartPodStore()
+  const pendingStartPods = deps.pendingStartPods
 
   const app = new Hono()
 

@@ -43,7 +43,7 @@ describe('organizer', () => {
     })
   })
 
-  it('update with nextRoundNumber.increment atomically bumps the counter and returns the pre-increment-consistent row', async () => {
+  it('incrementNextRoundNumber atomically bumps the counter and returns the post-increment row', async () => {
     const stub = getStub('organizer-increment')
     await runInDurableObject(stub, async (instance: EscapePodDurableObject) => {
       await instance.appStorage.organizer.upsert({
@@ -52,17 +52,35 @@ describe('organizer', () => {
         update: { username: 'x', encryptedToken: 'enc', expiresAt: new Date('2030-01-01') },
       })
 
-      const first = await instance.appStorage.organizer.update({
+      const first = await instance.appStorage.organizer.incrementNextRoundNumber({
         where: { discordId: 'organizer-1' },
-        data: { nextRoundNumber: { increment: 1 } },
+        data: { increment: 1 },
       })
       expect(first.nextRoundNumber).toBe(2)
 
-      const second = await instance.appStorage.organizer.update({
+      const second = await instance.appStorage.organizer.incrementNextRoundNumber({
         where: { discordId: 'organizer-1' },
-        data: { nextRoundNumber: { increment: 1 } },
+        data: { increment: 1 },
       })
       expect(second.nextRoundNumber).toBe(3)
+    })
+  })
+
+  it('updateToken stores a freshly-rotated token and expiry', async () => {
+    const stub = getStub('organizer-update-token')
+    await runInDurableObject(stub, async (instance: EscapePodDurableObject) => {
+      await instance.appStorage.organizer.upsert({
+        where: { discordId: 'organizer-1' },
+        create: { discordId: 'organizer-1', username: 'x', encryptedToken: 'stale-enc', expiresAt: new Date('2030-01-01') },
+        update: { username: 'x', encryptedToken: 'stale-enc', expiresAt: new Date('2030-01-01') },
+      })
+
+      const updated = await instance.appStorage.organizer.updateToken({
+        where: { discordId: 'organizer-1' },
+        data: { encryptedToken: 'fresh-enc', expiresAt: new Date('2030-02-01') },
+      })
+      expect(updated.encryptedToken).toBe('fresh-enc')
+      expect(updated.expiresAt).toEqual(new Date('2030-02-01'))
     })
   })
 

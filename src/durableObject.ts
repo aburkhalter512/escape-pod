@@ -1,6 +1,7 @@
 import { DurableObject } from 'cloudflare:workers'
 import { runMigrations } from './storage/migrate.js'
 import { createAppSqlStorage, type AppStorage } from './storage/appSqlStorage.js'
+import { createSqlPendingStartPodStore } from './storage/pendingStartPodsSql.js'
 import { buildHonoApp } from './honoApp.js'
 import { createFetchDiscordRest } from './discord/restWorkers.js'
 import type { DiscordRestClient } from './discord/rest.js'
@@ -72,6 +73,7 @@ export class EscapePodDurableObject extends DurableObject<Env> {
       discordPublicKey: env.DISCORD_PUBLIC_KEY,
       tokenEncryptionKey: this.tokenEncryptionKey,
       logger: this.logger,
+      pendingStartPods: createSqlPendingStartPodStore(ctx.storage.sql),
     })
   }
 

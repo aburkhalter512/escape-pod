@@ -34,10 +34,16 @@ import type {
 export interface AppStorage {
   organizer: {
     findMany(args: { where: { expiresAt: { lt: Date } } }): Promise<Organizer[]>
-    update(args: {
-      where: { discordId: string }
-      data: { nextRoundNumber: { increment: number } } | { encryptedToken: string; expiresAt: Date }
-    }): Promise<Organizer>
+    // Split from one overloaded `update` (silently branching on which
+    // data field was present) into two concretely-named methods per PR
+    // review — each is its own real operation, not a generic update.
+    // Atomic increment (see services/pods.ts's startPod doc comment on
+    // why this alone, not a transaction, is what guarantees distinct
+    // round numbers under concurrent callers).
+    incrementNextRoundNumber(args: { where: { discordId: string }; data: { increment: number } }): Promise<Organizer>
+    // jobs/refreshTokens.ts's only use — stores a freshly-rotated PTP
+    // token + its new expiry.
+    updateToken(args: { where: { discordId: string }; data: { encryptedToken: string; expiresAt: Date } }): Promise<Organizer>
     upsert(args: {
       where: { discordId: string }
       create: { discordId: string; username: string; encryptedToken: string; expiresAt: Date }

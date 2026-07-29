@@ -123,8 +123,8 @@ function buildDeps(overrides: FakeAppStorageOverrides = {}): PodServiceDeps {
 }
 
 // startPod's atomic round-numbering claim (see startPod's own doc
-// comment) reads the organizer row back via organizer.update — every
-// startPod test needs this stubbed, since the fake Prisma client's
+// comment) reads the organizer row back via organizer.incrementNextRoundNumber
+// — every startPod test needs this stubbed, since the fake storage's
 // default throws if a method is called without an override.
 function stubOrganizerNextRoundNumber(nextRoundNumber = 2) {
   return stub(async () => ({
@@ -1073,7 +1073,7 @@ describe('startPod', () => {
     const deps = buildDeps({
       podRound: { create },
       guildSubscription: { findMany },
-      organizer: { update: stubOrganizerNextRoundNumber() },
+      organizer: { incrementNextRoundNumber: stubOrganizerNextRoundNumber() },
     })
 
     await startPod(deps, {
@@ -1096,7 +1096,7 @@ describe('startPod', () => {
     const deps = buildDeps({
       podRound: { create },
       guildSubscription: { findMany },
-      organizer: { update: stubOrganizerNextRoundNumber() },
+      organizer: { incrementNextRoundNumber: stubOrganizerNextRoundNumber() },
     })
 
     await startPod(deps, {
@@ -1119,7 +1119,7 @@ describe('startPod', () => {
     const deps = buildDeps({
       podRound: { create },
       guildSubscription: { findMany },
-      organizer: { update: stubOrganizerNextRoundNumber() },
+      organizer: { incrementNextRoundNumber: stubOrganizerNextRoundNumber() },
     })
 
     await startPod(deps, {

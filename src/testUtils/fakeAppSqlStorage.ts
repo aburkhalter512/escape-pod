@@ -37,7 +37,8 @@ export function createFakeAppSqlStorage(overrides: FakeAppStorageOverrides = {})
   return {
     organizer: {
       findMany: unimplemented('organizer.findMany'),
-      update: unimplemented('organizer.update'),
+      incrementNextRoundNumber: unimplemented('organizer.incrementNextRoundNumber'),
+      updateToken: unimplemented('organizer.updateToken'),
       upsert: unimplemented('organizer.upsert'),
       ...overrides.organizer,
     },
