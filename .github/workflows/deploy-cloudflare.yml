@@ -1,23 +1,25 @@
-name: Deploy Cloudflare (migration branch)
+name: Deploy Cloudflare
 
-# Scoped entirely to cloudflare-migration — never touches main, never
-# competes with ci.yml/deploy-app.yml's AWS pipeline. Node 22 here (not
-# 20, like ci.yml) since wrangler requires it; this has no bearing on
-# the AWS side's Node 20 runtime/Dockerfile.
+# Runs on both cloudflare-migration (where this whole migration has
+# landed, phase by phase) and main (once merged there too) — doesn't
+# compete with ci.yml/deploy-app.yml's separate AWS pipeline, which keeps
+# running independently on main pushes. Node 22 here (not 20, like
+# ci.yml) since wrangler requires it; this has no bearing on the AWS
+# side's Node 20 runtime/Dockerfile.
 #
 # ci.yml only triggers on pushes to main and on pull requests — pushes
-# directly to this branch (how every phase of this migration has been
-# landing) never trigger it, so nothing was otherwise verifying the
-# AWS/Postgres side of this branch in CI at all, despite "keep both
-# platforms independently buildable" being a governing requirement for
-# the whole migration. Phase 8 folds ci.yml's AWS-side verification steps
-# in here too (Postgres service, build, migration-apply check, real
-# integration tests, Docker build) alongside the Cloudflare-specific
-# ones, so a single workflow run actually proves both platforms still
-# build and pass their tests from this one branch.
+# directly to cloudflare-migration (how every phase of this migration
+# landed before the eventual merge into main) never triggered it, so
+# nothing was otherwise verifying the AWS/Postgres side of this branch in
+# CI at all, despite "keep both platforms independently buildable" being
+# a governing requirement for the whole migration. Phase 8 folds ci.yml's
+# AWS-side verification steps in here too (Postgres service, build,
+# migration-apply check, real integration tests, Docker build) alongside
+# the Cloudflare-specific ones, so a single workflow run actually proves
+# both platforms still build and pass their tests, on either branch.
 on:
   push:
-    branches: [cloudflare-migration]
+    branches: [cloudflare-migration, main]
 
 jobs:
   verify-and-deploy:
