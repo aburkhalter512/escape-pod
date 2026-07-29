@@ -1,6 +1,12 @@
 import { beforeAll, describe, expect, it } from 'vitest'
 import type { webcrypto } from 'node:crypto'
-import { verifyDiscordSignature, type MinimalFastifyReply, type MinimalFastifyRequest } from './verify.js'
+import {
+  verifyDiscordSignature,
+  verifyDiscordSignatureFromRequest,
+  type MinimalFastifyReply,
+  type MinimalFastifyRequest,
+  type MinimalHonoRequest,
+} from './verify.js'
 
 // Mirrors exactly what discord-interactions' verifyKey does internally
 // (node_modules/discord-interactions/dist/util.js): Ed25519 over
@@ -148,5 +154,64 @@ describe('verifyDiscordSignature', () => {
 
     expect(result).toBe(false)
     expect(calls.code).toBe(401)
+  })
+})
+
+// The Worker/DO-side counterpart to verifyDiscordSignature above — same
+// crypto path, different result shape (a plain returned discriminated
+// union instead of a boolean + mutated reply), since Hono's Context has
+// no Fastify-style reply to call .code()/.send() on. See honoApp.ts's
+// /interactions route for how the two branches get turned into a Response.
+describe('verifyDiscordSignatureFromRequest', () => {
+  function fakeHonoRequest(headers: Record<string, string | undefined>, body?: string): MinimalHonoRequest {
+    return {
+      header: (name) => headers[name],
+      text: async () => body ?? '',
+    }
+  }
+
+  it('accepts a correctly signed request', async () => {
+    const timestamp = '1700000000'
+    const body = JSON.stringify({ type: 1 })
+    const signature = await sign(timestamp, body)
+
+    const result = await verifyDiscordSignatureFromRequest(
+      fakeHonoRequest({ 'x-signature-ed25519': signature, 'x-signature-timestamp': timestamp }, body),
+      publicKeyHex
+    )
+
+    expect(result).toEqual({ valid: true, rawBody: body })
+  })
+
+  it('rejects a request signed with a different key', async () => {
+    const otherKeyPair = (await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify'])) as webcrypto.CryptoKeyPair
+    const timestamp = '1700000000'
+    const body = JSON.stringify({ type: 1 })
+    const message = new TextEncoder().encode(timestamp + body)
+    const wrongSignature = Buffer.from(
+      await crypto.subtle.sign({ name: 'Ed25519' }, otherKeyPair.privateKey, message)
+    ).toString('hex')
+
+    const result = await verifyDiscordSignatureFromRequest(
+      fakeHonoRequest({ 'x-signature-ed25519': wrongSignature, 'x-signature-timestamp': timestamp }, body),
+      publicKeyHex
+    )
+
+    expect(result).toEqual({ valid: false, status: 401, body: { error: 'Invalid request signature' } })
+  })
+
+  it('rejects when headers are missing, without reading a signature at all', async () => {
+    const result = await verifyDiscordSignatureFromRequest(fakeHonoRequest({}, '{}'), publicKeyHex)
+
+    expect(result).toEqual({ valid: false, status: 401, body: { error: 'Missing signature headers' } })
+  })
+
+  it('rejects when the raw body is empty', async () => {
+    const result = await verifyDiscordSignatureFromRequest(
+      fakeHonoRequest({ 'x-signature-ed25519': 'deadbeef', 'x-signature-timestamp': '1700000000' }, ''),
+      publicKeyHex
+    )
+
+    expect(result).toEqual({ valid: false, status: 401, body: { error: 'Missing signature headers' } })
   })
 })

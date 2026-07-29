@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["@cloudflare/workers-types", "@cloudflare/vitest-pool-workers"]
+  },
+  "include": [
+    "src/worker.ts",
+    "src/durableObject.ts",
+    "src/honoApp.ts",
+    "src/storage/**/*.ts",
+    "src/routes/*.hono.ts",
+    "src/discord/restWorkers*.ts",
+    "src/crypto/tokenCryptoWorkers*.ts",
+    "src/testUtils/fakeAppSqlStorage.ts",
+    "src/**/*.workers.test.ts"
+  ],
+  "exclude": []
+}

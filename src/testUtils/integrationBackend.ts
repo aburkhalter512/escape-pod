@@ -1,6 +1,5 @@
 import type { PrismaClient } from '@prisma/client'
 import { LocalBackendClient, type BackendClient } from '../backendClient.js'
-import type { PodServiceDeps } from '../services/pods.js'
 import type { PtpClient } from '../ptp/client.js'
 import type { Logger } from '../services/errors.js'
 import { createFakePtpClient } from './fakePtpClient.js'
@@ -44,7 +43,12 @@ export function createIntegrationBackend(
 // way production does. Pass the same `ptp` instance already given to
 // createIntegrationBackend when a test needs call-count assertions to
 // span both an initial signup-triggered fire and a later sweep call.
-export function createIntegrationPodServiceDeps(prisma: PrismaClient, ptp: PtpClient): PodServiceDeps {
+// No explicit return type annotation — jobs/expirePodRounds.ts's
+// ExpirePodRoundsDeps and jobs/retryFailedFires.ts's RetryFailedFiresDeps
+// are structurally identical ({prisma, ptp, tokenEncryptionKey, logger}),
+// both real-AppPrismaClient-shaped so server.ts never needs to change
+// what it constructs; this plain object satisfies either at the call site.
+export function createIntegrationPodServiceDeps(prisma: PrismaClient, ptp: PtpClient) {
   return { prisma, ptp, tokenEncryptionKey: INTEGRATION_TOKEN_KEY, logger: NO_LOGGER }
 }
 

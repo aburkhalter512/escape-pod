@@ -16,13 +16,17 @@
     "register-commands": "tsx scripts/register-commands.ts",
     "lint": "eslint src scripts",
     "typecheck": "tsc --noEmit",
+    "typecheck:cloudflare": "tsc -p tsconfig.cloudflare.json --noEmit",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "scripts/test-db-setup.sh && npm run test:integration:run",
-    "test:integration:run": "vitest run --config vitest.integration.config.ts"
+    "test:integration:run": "vitest run --config vitest.integration.config.ts",
+    "test:workers": "vitest run --config vitest.workers.config.ts",
+    "deploy:cloudflare": "wrangler deploy",
+    "dev:cloudflare": "wrangler dev"
   },
   "dependencies": {
     "@discordjs/rest": "^2.4.0",
@@ -30,17 +34,22 @@
     "discord-api-types": "^0.38.49",
     "discord-interactions": "^4.1.0",
     "fastify": "^5.1.0",
+    "hono": "^4.12.32",
     "prisma": "^5.22.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.12.0",
+    "@cloudflare/workers-types": "^5.20260728.1",
     "@eslint/js": "^9.39.4",
+    "@hono/zod-validator": "^0.9.0",
     "@types/node": "^22.9.0",
     "eslint": "^9.14.0",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3",
     "typescript-eslint": "^8.63.0",
-    "vitest": "^3.2.7"
+    "vitest": "^3.2.7",
+    "wrangler": "^4.114.0"
   },
   "overrides": {
     "undici": "6.27.0"

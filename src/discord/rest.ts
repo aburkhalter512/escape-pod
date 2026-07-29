@@ -1,22 +1,29 @@
-import { REST, type RequestData, type RouteLike } from '@discordjs/rest'
-import {
-  Routes,
-  type RESTPostAPIChannelMessageJSONBody,
-  type RESTPostAPIChannelMessageResult,
-  type RESTPatchAPIChannelMessageJSONBody,
-  type RESTPatchAPIChannelMessageResult,
-  type RESTGetAPIGuildResult,
-  type RESTPostAPIGuildChannelJSONBody,
-  type RESTPostAPIGuildChannelResult,
-  type RESTPostAPIChannelInviteResult,
-  type RESTPostAPICurrentUserCreateDMChannelResult,
-  type RESTPatchAPIWebhookWithTokenMessageJSONBody,
-  type RESTPatchAPIWebhookWithTokenMessageResult,
+import { REST } from '@discordjs/rest'
+import type {
+  RESTPostAPIChannelMessageJSONBody,
+  RESTPostAPIChannelMessageResult,
+  RESTPatchAPIChannelMessageJSONBody,
+  RESTPatchAPIChannelMessageResult,
+  RESTGetAPIGuildResult,
+  RESTPostAPIGuildChannelJSONBody,
+  RESTPostAPIGuildChannelResult,
+  RESTPostAPIChannelInviteResult,
+  RESTPostAPICurrentUserCreateDMChannelResult,
+  RESTPatchAPIWebhookWithTokenMessageJSONBody,
+  RESTPatchAPIWebhookWithTokenMessageResult,
 } from 'discord-api-types/v10'
+import { HttpDiscordRest } from './httpDiscordRest.js'
 
 // The contract the app depends on for talking to Discord — scoped to the
 // operations we actually perform, with real response types (no
-// `unknown`). See testUtils/fakeDiscordRest.ts.
+// `unknown`). See testUtils/fakeDiscordRest.ts. The actual route/body
+// logic (HttpDiscordRest) lives in httpDiscordRest.ts, shared by both
+// platforms — this file only has the interface plus the AWS-specific
+// factory below, which is the one place that needs a real
+// @discordjs/rest runtime import; discord/restWorkers.ts (Workers) never
+// imports this file's createDiscordRest, only HttpDiscordRest itself
+// from httpDiscordRest.ts, so @discordjs/rest's actual code never ends
+// up in the Workers bundle.
 export interface DiscordRestClient {
   // A bot's user ID is always identical to its application/client ID
   // (standard Discord convention) — exposed here rather than fetched via
@@ -74,81 +81,7 @@ export interface DiscordRestClient {
   ): Promise<RESTPatchAPIWebhookWithTokenMessageResult>
 }
 
-// The raw @discordjs/rest surface HttpDiscordRest wraps. A real REST
-// instance satisfies this structurally; tests can inject a plain stub
-// instead of spinning up a real REST client.
-interface RawRestClient {
-  get(fullRoute: RouteLike, options?: RequestData): Promise<unknown>
-  post(fullRoute: RouteLike, options?: RequestData): Promise<unknown>
-  patch(fullRoute: RouteLike, options?: RequestData): Promise<unknown>
-  delete(fullRoute: RouteLike, options?: RequestData): Promise<unknown>
-}
-
-// The only place `unknown` gets cast away — every other consumer works
-// with DiscordRestClient's real response types directly.
-export class HttpDiscordRest implements DiscordRestClient {
-  #raw: RawRestClient
-  readonly botUserId: string
-
-  constructor(raw: RawRestClient, botUserId: string) {
-    this.#raw = raw
-    this.botUserId = botUserId
-  }
-
-  async postMessage(
-    channelId: string,
-    body: RESTPostAPIChannelMessageJSONBody
-  ): Promise<RESTPostAPIChannelMessageResult> {
-    return this.#raw.post(Routes.channelMessages(channelId), { body }) as Promise<RESTPostAPIChannelMessageResult>
-  }
-
-  async editMessage(
-    channelId: string,
-    messageId: string,
-    body: RESTPatchAPIChannelMessageJSONBody
-  ): Promise<RESTPatchAPIChannelMessageResult> {
-    return this.#raw.patch(Routes.channelMessage(channelId, messageId), {
-      body,
-    }) as Promise<RESTPatchAPIChannelMessageResult>
-  }
-
-  async getGuild(guildId: string): Promise<RESTGetAPIGuildResult> {
-    return this.#raw.get(Routes.guild(guildId)) as Promise<RESTGetAPIGuildResult>
-  }
-
-  async createChannel(
-    guildId: string,
-    body: RESTPostAPIGuildChannelJSONBody
-  ): Promise<RESTPostAPIGuildChannelResult> {
-    return this.#raw.post(Routes.guildChannels(guildId), { body }) as Promise<RESTPostAPIGuildChannelResult>
-  }
-
-  async createInvite(channelId: string): Promise<RESTPostAPIChannelInviteResult> {
-    return this.#raw.post(Routes.channelInvites(channelId), {
-      body: { max_age: 21600 },
-    }) as Promise<RESTPostAPIChannelInviteResult>
-  }
-
-  async createDmChannel(userId: string): Promise<RESTPostAPICurrentUserCreateDMChannelResult> {
-    return this.#raw.post(Routes.userChannels(), {
-      body: { recipient_id: userId },
-    }) as Promise<RESTPostAPICurrentUserCreateDMChannelResult>
-  }
-
-  async deleteChannel(channelId: string): Promise<void> {
-    await this.#raw.delete(Routes.channel(channelId))
-  }
-
-  async editOriginalInteractionResponse(
-    applicationId: string,
-    interactionToken: string,
-    body: RESTPatchAPIWebhookWithTokenMessageJSONBody
-  ): Promise<RESTPatchAPIWebhookWithTokenMessageResult> {
-    return this.#raw.patch(Routes.webhookMessage(applicationId, interactionToken, '@original'), {
-      body,
-    }) as Promise<RESTPatchAPIWebhookWithTokenMessageResult>
-  }
-}
+export { HttpDiscordRest }
 
 // Pure REST client — no gateway connection. Used for anything the
 // interaction response itself can't do inline, e.g. editing a message in a
