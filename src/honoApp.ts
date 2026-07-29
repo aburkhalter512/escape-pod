@@ -82,7 +82,14 @@ export function buildHonoApp(deps: HonoAppDeps) {
       // equivalent of app.ts's request.log.error — no separate structured
       // logger is wired into the Worker runtime) and still returning a
       // well-formed (ephemeral) response keeps this diagnosable.
-      console.error('interaction handling failed', { err })
+      // console.error's default JSON serialization of an Error object
+      // drops message/stack (non-enumerable own properties) — pulling
+      // them out explicitly is what actually makes `wrangler tail`
+      // useful for diagnosing a real failure here, rather than just
+      // {code, name}.
+      const message = err instanceof Error ? err.message : String(err)
+      const stack = err instanceof Error ? err.stack : undefined
+      console.error('interaction handling failed', { message, stack })
       return c.json(ephemeral('Something went wrong handling that. Please try again.'))
     }
   })
