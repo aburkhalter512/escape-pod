@@ -25,22 +25,11 @@ import {
 
 const TOKEN_KEY = '00'.repeat(32)
 
-type PodRoundRow = Awaited<ReturnType<AppStorage['podRound']['create']>>
-type PodRoundCreateArgs = Parameters<AppStorage['podRound']['create']>[0]
-type PodRoundUpdateArgs = Parameters<AppStorage['podRound']['update']>[0]
-type PodRoundUpdateManyArgs = Parameters<AppStorage['podRound']['updateMany']>[0]
-// Written explicitly rather than via Parameters<...> extraction —
-// podRound.findMany is overloaded (see storage/appStorage.ts), and
-// Parameters<T> on an overloaded type only ever resolves to the LAST
-// signature (the {where, include} one), not this {organizerDiscordId,
-// status, orderBy} shape listActiveRoundsForOrganizer's tests need.
-type PodRoundFindManyArgs = {
-  where: { organizerDiscordId: string; status: { in: PodRoundStatus[] } }
-  orderBy: { organizerRoundNumber: 'asc' }
-}
+type PodRoundRow = Awaited<ReturnType<AppStorage['podRound']['createRoundWithTargets']>>
+type PodRoundCreateArgs = Parameters<AppStorage['podRound']['createRoundWithTargets']>[0]
 type PodRoundWithOrganizer = Prisma.PodRoundGetPayload<{ include: { organizer: true } }>
-type PodRoundSignupUpsertArgs = Parameters<AppStorage['podRoundSignup']['upsert']>[0]
-type PodRoundSignupRow = Awaited<ReturnType<AppStorage['podRoundSignup']['upsert']>>
+type PodRoundSignupRecordArgs = Parameters<AppStorage['podRoundSignup']['recordSignup']>[0]
+type PodRoundSignupRow = Awaited<ReturnType<AppStorage['podRoundSignup']['recordSignup']>>
 
 function fakePodRoundRow(overrides: Partial<PodRoundRow> = {}): PodRoundRow {
   return {
@@ -89,30 +78,6 @@ function fakePodRoundSignupRow(overrides: Partial<PodRoundSignupRow> = {}): PodR
   }
 }
 
-// AppStorage.podRound.findUnique/findMany are concrete overloads (see
-// storage/appStorage.ts), not Prisma's old fully-generic signature, so
-// the generic-satisfying trick this used to need is gone — but a plain
-// stub still can't satisfy an overloaded target on its own (same issue
-// testUtils/fakeAppSqlStorage.ts's unimplementedOverloaded solves), so
-// these still return a manually-cast function rather than a bare stub().
-function stubPodRoundFindUnique<Result>(impl: () => Promise<Result>): AppStorage['podRound']['findUnique'] {
-  return (async (_args: unknown) => impl()) as unknown as AppStorage['podRound']['findUnique']
-}
-
-function stubPodRoundFindMany<Result>(impl: () => Promise<Result[]>): AppStorage['podRound']['findMany'] {
-  return (async (_args: unknown) => impl()) as unknown as AppStorage['podRound']['findMany']
-}
-
-// Same cast-based trick as stubPodRoundFindMany above, but forwards the
-// real args through to impl — needed when a test wants to assert on the
-// exact where/orderBy shape a call site builds (see
-// listActiveRoundsForOrganizer's tests), not just control the return value.
-function stubPodRoundFindManyWithArgs<Result>(
-  impl: (args: PodRoundFindManyArgs) => Promise<Result[]>
-): AppStorage['podRound']['findMany'] {
-  return (async (args: unknown) => impl(args as PodRoundFindManyArgs)) as unknown as AppStorage['podRound']['findMany']
-}
-
 function buildDeps(overrides: FakeAppStorageOverrides = {}): PodServiceDeps {
   return {
     storage: createFakeAppSqlStorage(overrides),
@@ -139,8 +104,8 @@ function stubOrganizerNextRoundNumber(nextRoundNumber = 2) {
 
 describe('recordTargetMessage', () => {
   it('returns a not_found error when there is no target for that round/guild pair', async () => {
-    const findUnique = stub(async () => null)
-    const deps = buildDeps({ podRoundTarget: { findUnique } })
+    const findByRoundAndGuild = stub(async () => null)
+    const deps = buildDeps({ podRoundTarget: { findByRoundAndGuild } })
 
     const result = await recordTargetMessage(deps, { podRoundId: 'round-1', guildId: 'unknown-guild', messageId: 'msg-1' })
 
@@ -150,8 +115,8 @@ describe('recordTargetMessage', () => {
 
 describe('recordSignup', () => {
   it('returns a not_found error when the round does not exist', async () => {
-    const findUnique = stubPodRoundFindUnique(async () => null)
-    const deps = buildDeps({ podRound: { findUnique } })
+    const findRoundWithOrganizerById = stub(async () => null)
+    const deps = buildDeps({ podRound: { findRoundWithOrganizerById } })
 
     const result = await recordSignup(deps, { podRoundId: 'round-1', discordId: 'p1', username: 'P1', sourceGuildId: 'g1', action: 'in' })
 
@@ -167,7 +132,7 @@ describe('recordSignup', () => {
   // build a "still collecting" response regardless, which let a late click
   // overwrite that correct terminal-state message with a stale one. Each
   // case below asserts both the status-appropriate error AND that neither
-  // the upsert nor the count query ever runs.
+  // the recordSignup upsert nor the findSignedUp query ever runs.
   const terminalStatusCases: Array<{ status: 'THRESHOLD_REACHED' | 'POD_CREATED' | 'CANCELLED' | 'EXPIRED'; message: string }> = [
     { status: 'THRESHOLD_REACHED', message: 'This round has already started — no need to sign up.' },
     { status: 'POD_CREATED', message: 'This round has already started — no need to sign up.' },
@@ -176,18 +141,18 @@ describe('recordSignup', () => {
   ]
 
   for (const { status, message } of terminalStatusCases) {
-    it(`returns a validation error and does not upsert/list signups when the round is already ${status}`, async () => {
+    it(`returns a validation error and does not record/list signups when the round is already ${status}`, async () => {
       const round = fakeRoundWithOrganizer({ status })
-      const findUnique = stubPodRoundFindUnique(async () => round)
-      const upsert = stub(async () => {
-        throw new Error('podRoundSignup.upsert should not have been called for a non-COLLECTING round')
+      const findRoundWithOrganizerById = stub(async () => round)
+      const recordSignupStub = stub(async () => {
+        throw new Error('podRoundSignup.recordSignup should not have been called for a non-COLLECTING round')
       })
-      const findMany = stub(async () => {
-        throw new Error('podRoundSignup.findMany should not have been called for a non-COLLECTING round')
+      const findSignedUp = stub(async () => {
+        throw new Error('podRoundSignup.findSignedUp should not have been called for a non-COLLECTING round')
       })
       const deps = buildDeps({
-        podRound: { findUnique },
-        podRoundSignup: { upsert, findMany },
+        podRound: { findRoundWithOrganizerById },
+        podRoundSignup: { recordSignup: recordSignupStub, findSignedUp },
       })
 
       const result = await recordSignup(deps, {
@@ -199,33 +164,27 @@ describe('recordSignup', () => {
       })
 
       expect(result).toEqual({ ok: false, error: { kind: 'validation', message } })
-      expect(upsert.calls).toHaveLength(0)
-      expect(findMany.calls).toHaveLength(0)
+      expect(recordSignupStub.calls).toHaveLength(0)
+      expect(findSignedUp.calls).toHaveLength(0)
     })
   }
 
   it('only calls PTP once when two signups race to push the round past threshold (tasks/001)', async () => {
     const round = fakeRoundWithOrganizer()
-    const findUnique = stubPodRoundFindUnique(async () => round)
+    const findRoundWithOrganizerById = stub(async () => round)
     let claimed = false
-    const updateMany = stub(async (args: PodRoundUpdateManyArgs) => {
-      const where = args.where as { id?: string; status?: string } | undefined
-      const data = args.data as { status?: string; thresholdReachedAt?: unknown } | undefined
-      const argsLookRight =
-        where?.id === 'round-1' &&
-        where.status === 'COLLECTING' &&
-        data?.status === 'THRESHOLD_REACHED' &&
-        data.thresholdReachedAt instanceof Date
-      if (!argsLookRight) throw new Error(`unexpected updateMany args: ${JSON.stringify(args)}`)
+    const claimForFiring = stub(async (id: string, thresholdReachedAt: Date) => {
+      const argsLookRight = id === 'round-1' && thresholdReachedAt instanceof Date
+      if (!argsLookRight) throw new Error(`unexpected claimForFiring args: ${id} ${String(thresholdReachedAt)}`)
       if (claimed) return { count: 0 }
       claimed = true
       return { count: 1 }
     })
-    const update = stub(async () => fakePodRoundRow())
-    const upsert = stub(async (_args: PodRoundSignupUpsertArgs) => fakePodRoundSignupRow())
+    const markPodCreated = stub(async () => fakePodRoundRow())
+    const recordSignupStub = stub(async (_args: PodRoundSignupRecordArgs) => fakePodRoundSignupRow())
     // A full table (POD_CAPACITY: 8) — count is now derived from this
-    // findMany's length, not a separate .count() call.
-    const findManySignups = stub(async () => [
+    // findSignedUp's length, not a separate .count() call.
+    const findSignedUp = stub(async () => [
       fakePodRoundSignupRow({ discordId: 'p1' }),
       fakePodRoundSignupRow({ discordId: 'p2' }),
       fakePodRoundSignupRow({ discordId: 'p3' }),
@@ -243,9 +202,9 @@ describe('recordSignup', () => {
     }))
     const deps: PodServiceDeps = {
       storage: createFakeAppSqlStorage({
-        podRound: { findUnique, update, updateMany },
-        podRoundSignup: { upsert, findMany: findManySignups },
-        podRoundTarget: { findMany: stub(async () => []) },
+        podRound: { findRoundWithOrganizerById, markPodCreated, claimForFiring },
+        podRoundSignup: { recordSignup: recordSignupStub, findSignedUp },
+        podRoundTarget: { findByRoundId: stub(async () => []) },
       }),
       ptp: createFakePtpClient({ createPod }),
       tokenEncryptionKey: TOKEN_KEY,
@@ -266,12 +225,12 @@ describe('recordSignup', () => {
 
   it('logs (not throws) when PTP pod creation fails after threshold reached', async () => {
     const round = fakeRoundWithOrganizer()
-    const findUnique = stubPodRoundFindUnique(async () => round)
-    const updateMany = stub(async () => ({ count: 1 }))
-    const upsert = stub(async () => fakePodRoundSignupRow())
+    const findRoundWithOrganizerById = stub(async () => round)
+    const claimForFiring = stub(async () => ({ count: 1 }))
+    const recordSignupStub = stub(async () => fakePodRoundSignupRow())
     // A full table (POD_CAPACITY: 8) — count is derived from this
-    // findMany's length, not a separate .count() call.
-    const findManySignups = stub(async () => [
+    // findSignedUp's length, not a separate .count() call.
+    const findSignedUp = stub(async () => [
       fakePodRoundSignupRow({ discordId: 'p1' }),
       fakePodRoundSignupRow({ discordId: 'p2' }),
       fakePodRoundSignupRow({ discordId: 'p3' }),
@@ -287,9 +246,9 @@ describe('recordSignup', () => {
     const errors: unknown[] = []
     const deps: PodServiceDeps = {
       storage: createFakeAppSqlStorage({
-        podRound: { findUnique, updateMany },
-        podRoundSignup: { upsert, findMany: findManySignups },
-        podRoundTarget: { findMany: stub(async () => []) },
+        podRound: { findRoundWithOrganizerById, claimForFiring },
+        podRoundSignup: { recordSignup: recordSignupStub, findSignedUp },
+        podRoundTarget: { findByRoundId: stub(async () => []) },
       }),
       ptp: createFakePtpClient({ createPod }),
       tokenEncryptionKey: TOKEN_KEY,
@@ -315,13 +274,13 @@ describe('recordSignup', () => {
 
   it('does not fire early just because count reaches the round\'s (lower) threshold — only a full table triggers it', async () => {
     const round = fakeRoundWithOrganizer({ threshold: 2 })
-    const findUnique = stubPodRoundFindUnique(async () => round)
-    const updateMany = stub(async () => {
-      throw new Error('podRound.updateMany should not have been called below POD_CAPACITY')
+    const findRoundWithOrganizerById = stub(async () => round)
+    const claimForFiring = stub(async () => {
+      throw new Error('podRound.claimForFiring should not have been called below POD_CAPACITY')
     })
-    const upsert = stub(async () => fakePodRoundSignupRow())
+    const recordSignupStub = stub(async () => fakePodRoundSignupRow())
     // >= threshold (2), well short of POD_CAPACITY (8)
-    const findMany = stub(async () => [
+    const findSignedUp = stub(async () => [
       fakePodRoundSignupRow({ discordId: 'p1' }),
       fakePodRoundSignupRow({ discordId: 'p2' }),
       fakePodRoundSignupRow({ discordId: 'p3' }),
@@ -331,9 +290,9 @@ describe('recordSignup', () => {
     })
     const deps: PodServiceDeps = {
       storage: createFakeAppSqlStorage({
-        podRound: { findUnique, updateMany },
-        podRoundSignup: { upsert, findMany },
-        podRoundTarget: { findMany: stub(async () => []) },
+        podRound: { findRoundWithOrganizerById, claimForFiring },
+        podRoundSignup: { recordSignup: recordSignupStub, findSignedUp },
+        podRoundTarget: { findByRoundId: stub(async () => []) },
       }),
       ptp: createFakePtpClient({ createPod }),
       tokenEncryptionKey: TOKEN_KEY,
@@ -360,18 +319,18 @@ describe('recordSignup', () => {
 
   it('sorts signupDiscordIds by usernameSnapshot, case-insensitively, not by insertion order', async () => {
     const round = fakeRoundWithOrganizer()
-    const findUnique = stubPodRoundFindUnique(async () => round)
-    const upsert = stub(async () => fakePodRoundSignupRow())
-    const findMany = stub(async () => [
+    const findRoundWithOrganizerById = stub(async () => round)
+    const recordSignupStub = stub(async () => fakePodRoundSignupRow())
+    const findSignedUp = stub(async () => [
       fakePodRoundSignupRow({ discordId: 'charlie-id', usernameSnapshot: 'charlie' }),
       fakePodRoundSignupRow({ discordId: 'alice-id', usernameSnapshot: 'Alice' }),
       fakePodRoundSignupRow({ discordId: 'bob-id', usernameSnapshot: 'bob' }),
     ])
     const deps: PodServiceDeps = {
       storage: createFakeAppSqlStorage({
-        podRound: { findUnique },
-        podRoundSignup: { upsert, findMany },
-        podRoundTarget: { findMany: stub(async () => []) },
+        podRound: { findRoundWithOrganizerById },
+        podRoundSignup: { recordSignup: recordSignupStub, findSignedUp },
+        podRoundTarget: { findByRoundId: stub(async () => []) },
       }),
       ptp: createFakePtpClient(),
       tokenEncryptionKey: TOKEN_KEY,
@@ -393,13 +352,13 @@ describe('recordSignup', () => {
   it("carries the round's scheduledFor through to the result (regression guard — this used to be dropped on every signup rebuild)", async () => {
     const scheduledFor = new Date('2026-01-01T12:00:00Z')
     const round = fakeRoundWithOrganizer({ scheduledFor })
-    const findUnique = stubPodRoundFindUnique(async () => round)
-    const upsert = stub(async () => fakePodRoundSignupRow())
-    const findMany = stub(async () => [fakePodRoundSignupRow({ discordId: 'p3' })])
+    const findRoundWithOrganizerById = stub(async () => round)
+    const recordSignupStub = stub(async () => fakePodRoundSignupRow())
+    const findSignedUp = stub(async () => [fakePodRoundSignupRow({ discordId: 'p3' })])
     const deps = buildDeps({
-      podRound: { findUnique },
-      podRoundSignup: { upsert, findMany },
-      podRoundTarget: { findMany: stub(async () => []) },
+      podRound: { findRoundWithOrganizerById },
+      podRoundSignup: { recordSignup: recordSignupStub, findSignedUp },
+      podRoundTarget: { findByRoundId: stub(async () => []) },
     })
 
     const result = await recordSignup(deps, {
@@ -416,13 +375,13 @@ describe('recordSignup', () => {
 
   it('returns scheduledFor: null when the round has no deadline set', async () => {
     const round = fakeRoundWithOrganizer({ scheduledFor: null })
-    const findUnique = stubPodRoundFindUnique(async () => round)
-    const upsert = stub(async () => fakePodRoundSignupRow())
-    const findMany = stub(async () => [fakePodRoundSignupRow({ discordId: 'p3' })])
+    const findRoundWithOrganizerById = stub(async () => round)
+    const recordSignupStub = stub(async () => fakePodRoundSignupRow())
+    const findSignedUp = stub(async () => [fakePodRoundSignupRow({ discordId: 'p3' })])
     const deps = buildDeps({
-      podRound: { findUnique },
-      podRoundSignup: { upsert, findMany },
-      podRoundTarget: { findMany: stub(async () => []) },
+      podRound: { findRoundWithOrganizerById },
+      podRoundSignup: { recordSignup: recordSignupStub, findSignedUp },
+      podRoundTarget: { findByRoundId: stub(async () => []) },
     })
 
     const result = await recordSignup(deps, {
@@ -439,13 +398,13 @@ describe('recordSignup', () => {
 
   it('invokes onFiring with the right ctx exactly once, before ptp.createPod, and threads its chatUrl through', async () => {
     const round = fakeRoundWithOrganizer({ id: 'round-1', setCode: 'JTL', organizerDiscordId: 'organizer-1' })
-    const findUnique = stubPodRoundFindUnique(async () => round)
-    const updateMany = stub(async () => ({ count: 1 }))
-    const update = stub(async () => fakePodRoundRow())
-    const upsert = stub(async () => fakePodRoundSignupRow())
+    const findRoundWithOrganizerById = stub(async () => round)
+    const claimForFiring = stub(async () => ({ count: 1 }))
+    const markPodCreated = stub(async () => fakePodRoundRow())
+    const recordSignupStub = stub(async () => fakePodRoundSignupRow())
     // A full table (POD_CAPACITY: 8) — count is derived from this
-    // findMany's length, not a separate .count() call. onFiring's own ctx
-    // still gets fireRound's own separate signupDiscordIds fetch (see
+    // findSignedUp's length, not a separate .count() call. onFiring's own
+    // ctx still gets fireRound's own separate signupDiscordIds fetch (see
     // fireRound in services/pods.ts), which happens to read the same rows.
     const eightSignups = [
       fakePodRoundSignupRow({ discordId: 'p1' }),
@@ -457,7 +416,7 @@ describe('recordSignup', () => {
       fakePodRoundSignupRow({ discordId: 'p7' }),
       fakePodRoundSignupRow({ discordId: 'p8' }),
     ]
-    const findManySignups = stub(async () => eightSignups)
+    const findSignedUp = stub(async () => eightSignups)
 
     const callOrder: string[] = []
     const onFiring = stub(async (ctx: Parameters<OnFiringHook>[0]) => {
@@ -481,9 +440,9 @@ describe('recordSignup', () => {
     })
     const deps: PodServiceDeps = {
       storage: createFakeAppSqlStorage({
-        podRound: { findUnique, update, updateMany },
-        podRoundSignup: { upsert, findMany: findManySignups },
-        podRoundTarget: { findMany: stub(async () => []) },
+        podRound: { findRoundWithOrganizerById, markPodCreated, claimForFiring },
+        podRoundSignup: { recordSignup: recordSignupStub, findSignedUp },
+        podRoundTarget: { findByRoundId: stub(async () => []) },
       }),
       ptp: createFakePtpClient({ createPod }),
       tokenEncryptionKey: TOKEN_KEY,
@@ -513,12 +472,12 @@ describe('recordSignup', () => {
 
   it('still runs onFiring before ptp.createPod even when createPod then rejects — the hook already ran and cannot be undone', async () => {
     const round = fakeRoundWithOrganizer()
-    const findUnique = stubPodRoundFindUnique(async () => round)
-    const updateMany = stub(async () => ({ count: 1 }))
-    const upsert = stub(async () => fakePodRoundSignupRow())
+    const findRoundWithOrganizerById = stub(async () => round)
+    const claimForFiring = stub(async () => ({ count: 1 }))
+    const recordSignupStub = stub(async () => fakePodRoundSignupRow())
     // A full table (POD_CAPACITY: 8) — count is derived from this
-    // findMany's length, not a separate .count() call.
-    const findManySignups = stub(async () => [
+    // findSignedUp's length, not a separate .count() call.
+    const findSignedUp = stub(async () => [
       fakePodRoundSignupRow({ discordId: 'p1' }),
       fakePodRoundSignupRow({ discordId: 'p2' }),
       fakePodRoundSignupRow({ discordId: 'p3' }),
@@ -541,9 +500,9 @@ describe('recordSignup', () => {
     const errors: unknown[] = []
     const deps: PodServiceDeps = {
       storage: createFakeAppSqlStorage({
-        podRound: { findUnique, updateMany },
-        podRoundSignup: { upsert, findMany: findManySignups },
-        podRoundTarget: { findMany: stub(async () => []) },
+        podRound: { findRoundWithOrganizerById, claimForFiring },
+        podRoundSignup: { recordSignup: recordSignupStub, findSignedUp },
+        podRoundTarget: { findByRoundId: stub(async () => []) },
       }),
       ptp: createFakePtpClient({ createPod }),
       tokenEncryptionKey: TOKEN_KEY,
@@ -575,12 +534,12 @@ describe('recordSignup', () => {
 
   it('omitting onFiring entirely does not change podCreated/shareUrl outcomes (regression guard)', async () => {
     const round = fakeRoundWithOrganizer()
-    const findUnique = stubPodRoundFindUnique(async () => round)
-    const updateMany = stub(async () => ({ count: 1 }))
-    const update = stub(async () => fakePodRoundRow())
-    const upsert = stub(async () => fakePodRoundSignupRow())
+    const findRoundWithOrganizerById = stub(async () => round)
+    const claimForFiring = stub(async () => ({ count: 1 }))
+    const markPodCreated = stub(async () => fakePodRoundRow())
+    const recordSignupStub = stub(async () => fakePodRoundSignupRow())
     // A full table (POD_CAPACITY: 8) — count is derived from this
-    // findMany's length, not a separate .count() call.
+    // findSignedUp's length, not a separate .count() call.
     const eightSignups = [
       fakePodRoundSignupRow({ discordId: 'p1' }),
       fakePodRoundSignupRow({ discordId: 'p2' }),
@@ -591,7 +550,7 @@ describe('recordSignup', () => {
       fakePodRoundSignupRow({ discordId: 'p7' }),
       fakePodRoundSignupRow({ discordId: 'p8' }),
     ]
-    const findManySignups = stub(async () => eightSignups)
+    const findSignedUp = stub(async () => eightSignups)
     const createPod = stub(async () => ({
       id: 'ptp-pod-1',
       shareId: 'share-1',
@@ -600,9 +559,9 @@ describe('recordSignup', () => {
     }))
     const deps: PodServiceDeps = {
       storage: createFakeAppSqlStorage({
-        podRound: { findUnique, update, updateMany },
-        podRoundSignup: { upsert, findMany: findManySignups },
-        podRoundTarget: { findMany: stub(async () => []) },
+        podRound: { findRoundWithOrganizerById, markPodCreated, claimForFiring },
+        podRoundSignup: { recordSignup: recordSignupStub, findSignedUp },
+        podRoundTarget: { findByRoundId: stub(async () => []) },
       }),
       ptp: createFakePtpClient({ createPod }),
       tokenEncryptionKey: TOKEN_KEY,
@@ -629,13 +588,13 @@ describe('recordSignup', () => {
 
   it('onFiring resolving to undefined leaves chatUrl/chatChannelId undefined without affecting podCreated/shareUrl', async () => {
     const round = fakeRoundWithOrganizer()
-    const findUnique = stubPodRoundFindUnique(async () => round)
-    const updateMany = stub(async () => ({ count: 1 }))
-    const update = stub(async () => fakePodRoundRow())
-    const upsert = stub(async () => fakePodRoundSignupRow())
+    const findRoundWithOrganizerById = stub(async () => round)
+    const claimForFiring = stub(async () => ({ count: 1 }))
+    const markPodCreated = stub(async () => fakePodRoundRow())
+    const recordSignupStub = stub(async () => fakePodRoundSignupRow())
     // A full table (POD_CAPACITY: 8) — count is derived from this
-    // findMany's length, not a separate .count() call.
-    const findManySignups = stub(async () => [
+    // findSignedUp's length, not a separate .count() call.
+    const findSignedUp = stub(async () => [
       fakePodRoundSignupRow({ discordId: 'p1' }),
       fakePodRoundSignupRow({ discordId: 'p2' }),
       fakePodRoundSignupRow({ discordId: 'p3' }),
@@ -654,9 +613,9 @@ describe('recordSignup', () => {
     }))
     const deps: PodServiceDeps = {
       storage: createFakeAppSqlStorage({
-        podRound: { findUnique, update, updateMany },
-        podRoundSignup: { upsert, findMany: findManySignups },
-        podRoundTarget: { findMany: stub(async () => []) },
+        podRound: { findRoundWithOrganizerById, markPodCreated, claimForFiring },
+        podRoundSignup: { recordSignup: recordSignupStub, findSignedUp },
+        podRoundTarget: { findByRoundId: stub(async () => []) },
       }),
       ptp: createFakePtpClient({ createPod }),
       tokenEncryptionKey: TOKEN_KEY,
@@ -684,8 +643,8 @@ describe('recordSignup', () => {
 
 describe('cancelPod', () => {
   it('returns a not_found error when the round does not exist', async () => {
-    const findUnique = stubPodRoundFindUnique(async () => null)
-    const deps = buildDeps({ podRound: { findUnique } })
+    const findRoundById = stub(async () => null)
+    const deps = buildDeps({ podRound: { findRoundById } })
 
     const result = await cancelPod(deps, { podRoundId: 'round-1', requestedBy: 'organizer-1' })
 
@@ -693,8 +652,8 @@ describe('cancelPod', () => {
   })
 
   it("returns a forbidden error when the requester is not the round's organizer", async () => {
-    const findUnique = stubPodRoundFindUnique(async () => fakePodRoundRow())
-    const deps = buildDeps({ podRound: { findUnique } })
+    const findRoundById = stub(async () => fakePodRoundRow())
+    const deps = buildDeps({ podRound: { findRoundById } })
 
     const result = await cancelPod(deps, { podRoundId: 'round-1', requestedBy: 'someone-else' })
 
@@ -707,8 +666,8 @@ describe('cancelPod', () => {
 
 describe('cancelActiveRound', () => {
   it('returns null when the organizer has no active round', async () => {
-    const findFirst = stub(async () => null)
-    const deps = buildDeps({ podRound: { findFirst } })
+    const findLatestRoundForOrganizer = stub(async () => null)
+    const deps = buildDeps({ podRound: { findLatestRoundForOrganizer } })
 
     const result = await cancelActiveRound(deps, 'organizer-1')
 
@@ -716,22 +675,18 @@ describe('cancelActiveRound', () => {
   })
 
   it('queries for the most recent round of any status, scoped to this organizer', async () => {
-    const findFirst = stub(async (args: unknown) => {
-      const expected = {
-        where: { organizerDiscordId: 'organizer-1' },
-        orderBy: { createdAt: 'desc' },
-      }
-      if (!deepEqual(args, expected)) throw new Error(`unexpected findFirst args: ${JSON.stringify(args)}`)
+    const findLatestRoundForOrganizer = stub(async (organizerDiscordId: string) => {
+      if (organizerDiscordId !== 'organizer-1') throw new Error(`unexpected organizerDiscordId: ${organizerDiscordId}`)
       return fakePodRoundRow({ id: 'round-1', organizerDiscordId: 'organizer-1' })
     })
-    const findUnique = stubPodRoundFindUnique(async () => fakePodRoundRow({ id: 'round-1', organizerDiscordId: 'organizer-1' }))
-    const update = stub(async () => fakePodRoundRow())
-    const findMany = stub(async () => [])
-    const deps = buildDeps({ podRound: { findFirst, findUnique, update }, podRoundTarget: { findMany } })
+    const findRoundById = stub(async () => fakePodRoundRow({ id: 'round-1', organizerDiscordId: 'organizer-1' }))
+    const markCancelled = stub(async () => fakePodRoundRow())
+    const findByRoundId = stub(async () => [])
+    const deps = buildDeps({ podRound: { findLatestRoundForOrganizer, findRoundById, markCancelled }, podRoundTarget: { findByRoundId } })
 
     await cancelActiveRound(deps, 'organizer-1')
 
-    expect(findFirst.calls).toHaveLength(1)
+    expect(findLatestRoundForOrganizer.calls).toHaveLength(1)
   })
 
   // GitHub issue #6 — when organizerRoundNumber is given, resolves that
@@ -739,21 +694,22 @@ describe('cancelActiveRound', () => {
   // recent," so an organizer can cancel an older round even while a
   // newer one is also active.
   it('resolves the exact round by organizerRoundNumber when given, instead of most-recent', async () => {
-    const findFirst = stub(async (args: unknown) => {
-      const expected = { where: { organizerDiscordId: 'organizer-1', organizerRoundNumber: 2 } }
-      if (!deepEqual(args, expected)) throw new Error(`unexpected findFirst args: ${JSON.stringify(args)}`)
+    const findRoundByOrganizerAndNumber = stub(async (organizerDiscordId: string, organizerRoundNumber: number) => {
+      const argsLookRight = organizerDiscordId === 'organizer-1' && organizerRoundNumber === 2
+      if (!argsLookRight) throw new Error(`unexpected args: ${organizerDiscordId} ${organizerRoundNumber}`)
       return fakePodRoundRow({ id: 'round-2', organizerDiscordId: 'organizer-1', organizerRoundNumber: 2 })
     })
-    const findUnique = stubPodRoundFindUnique(async () =>
-      fakePodRoundRow({ id: 'round-2', organizerDiscordId: 'organizer-1', organizerRoundNumber: 2 })
-    )
-    const update = stub(async () => fakePodRoundRow())
-    const findMany = stub(async () => [])
-    const deps = buildDeps({ podRound: { findFirst, findUnique, update }, podRoundTarget: { findMany } })
+    const findRoundById = stub(async () => fakePodRoundRow({ id: 'round-2', organizerDiscordId: 'organizer-1', organizerRoundNumber: 2 }))
+    const markCancelled = stub(async () => fakePodRoundRow())
+    const findByRoundId = stub(async () => [])
+    const deps = buildDeps({
+      podRound: { findRoundByOrganizerAndNumber, findRoundById, markCancelled },
+      podRoundTarget: { findByRoundId },
+    })
 
     const result = await cancelActiveRound(deps, 'organizer-1', 2)
 
-    expect(findFirst.calls).toHaveLength(1)
+    expect(findRoundByOrganizerAndNumber.calls).toHaveLength(1)
     expect(result?.podRoundId).toBe('round-2')
   })
 
@@ -762,21 +718,21 @@ describe('cancelActiveRound', () => {
     // first, so it would silently skip a more recent already-fired round
     // and cancel an older still-COLLECTING one instead — cancelling a
     // round the organizer had already moved on from.
-    const findFirst = stub(async () => fakePodRoundRow({ id: 'round-2', status: 'POD_CREATED' }))
-    const update = stub(async () => {
-      throw new Error('podRound.update should not have been called')
+    const findLatestRoundForOrganizer = stub(async () => fakePodRoundRow({ id: 'round-2', status: 'POD_CREATED' }))
+    const markCancelled = stub(async () => {
+      throw new Error('podRound.markCancelled should not have been called')
     })
-    const deps = buildDeps({ podRound: { findFirst, update } })
+    const deps = buildDeps({ podRound: { findLatestRoundForOrganizer, markCancelled } })
 
     const result = await cancelActiveRound(deps, 'organizer-1')
 
     expect(result).toBeNull()
-    expect(update.calls).toHaveLength(0)
+    expect(markCancelled.calls).toHaveLength(0)
   })
 
   it('returns null when the most recent round was already cancelled or expired', async () => {
-    const findFirst = stub(async () => fakePodRoundRow({ id: 'round-2', status: 'EXPIRED' }))
-    const deps = buildDeps({ podRound: { findFirst } })
+    const findLatestRoundForOrganizer = stub(async () => fakePodRoundRow({ id: 'round-2', status: 'EXPIRED' }))
+    const deps = buildDeps({ podRound: { findLatestRoundForOrganizer } })
 
     const result = await cancelActiveRound(deps, 'organizer-1')
 
@@ -784,20 +740,22 @@ describe('cancelActiveRound', () => {
   })
 
   it('cancels the found round and returns its setCode + targets', async () => {
-    const findFirst = stub(async () => fakePodRoundRow({ id: 'round-1', organizerDiscordId: 'organizer-1', setCode: 'JTL' }))
-    const findUnique = stubPodRoundFindUnique(async () =>
+    const findLatestRoundForOrganizer = stub(async () =>
       fakePodRoundRow({ id: 'round-1', organizerDiscordId: 'organizer-1', setCode: 'JTL' })
     )
-    const update = stub(async (args: PodRoundUpdateArgs) => {
-      const expected: PodRoundUpdateArgs = { where: { id: 'round-1' }, data: { status: 'CANCELLED' } }
-      if (!deepEqual(args, expected)) throw new Error(`unexpected update args: ${JSON.stringify(args)}`)
+    const findRoundById = stub(async () => fakePodRoundRow({ id: 'round-1', organizerDiscordId: 'organizer-1', setCode: 'JTL' }))
+    const markCancelled = stub(async (id: string) => {
+      if (id !== 'round-1') throw new Error(`unexpected markCancelled id: ${id}`)
       return fakePodRoundRow()
     })
-    const findMany = stub(async () => [
+    const findByRoundId = stub(async () => [
       { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
       { podRoundId: 'round-1', guildId: 'g2', channelId: 'channel-2', messageId: null, approvalStatus: null, postedAt: new Date() },
     ])
-    const deps = buildDeps({ podRound: { findFirst, findUnique, update }, podRoundTarget: { findMany } })
+    const deps = buildDeps({
+      podRound: { findLatestRoundForOrganizer, findRoundById, markCancelled },
+      podRoundTarget: { findByRoundId },
+    })
 
     const result = await cancelActiveRound(deps, 'organizer-1')
 
@@ -814,11 +772,14 @@ describe('cancelActiveRound', () => {
   })
 
   it('carries the origin guild name through to the result', async () => {
-    const findFirst = stub(async () => fakePodRoundRow({ id: 'round-1', originGuildName: 'Sister Community' }))
-    const findUnique = stubPodRoundFindUnique(async () => fakePodRoundRow({ id: 'round-1' }))
-    const update = stub(async () => fakePodRoundRow())
-    const findMany = stub(async () => [])
-    const deps = buildDeps({ podRound: { findFirst, findUnique, update }, podRoundTarget: { findMany } })
+    const findLatestRoundForOrganizer = stub(async () => fakePodRoundRow({ id: 'round-1', originGuildName: 'Sister Community' }))
+    const findRoundById = stub(async () => fakePodRoundRow({ id: 'round-1' }))
+    const markCancelled = stub(async () => fakePodRoundRow())
+    const findByRoundId = stub(async () => [])
+    const deps = buildDeps({
+      podRound: { findLatestRoundForOrganizer, findRoundById, markCancelled },
+      podRoundTarget: { findByRoundId },
+    })
 
     const result = await cancelActiveRound(deps, 'organizer-1')
 
@@ -828,8 +789,8 @@ describe('cancelActiveRound', () => {
 
 describe('concludePod', () => {
   it('returns a not_found error when the round does not exist', async () => {
-    const findUnique = stubPodRoundFindUnique(async () => null)
-    const deps = buildDeps({ podRound: { findUnique } })
+    const findRoundById = stub(async () => null)
+    const deps = buildDeps({ podRound: { findRoundById } })
 
     const result = await concludePod(deps, { podRoundId: 'round-1', requestedBy: 'organizer-1' })
 
@@ -837,8 +798,8 @@ describe('concludePod', () => {
   })
 
   it("returns a forbidden error when the requester is not the round's organizer", async () => {
-    const findUnique = stubPodRoundFindUnique(async () => fakePodRoundRow({ status: 'POD_CREATED' }))
-    const deps = buildDeps({ podRound: { findUnique } })
+    const findRoundById = stub(async () => fakePodRoundRow({ status: 'POD_CREATED' }))
+    const deps = buildDeps({ podRound: { findRoundById } })
 
     const result = await concludePod(deps, { podRoundId: 'round-1', requestedBy: 'someone-else' })
 
@@ -855,8 +816,8 @@ describe('concludePod', () => {
     ['EXPIRED', 'This round already expired.'],
     ['CONCLUDED', 'This round has already been concluded.'],
   ] as const)('returns a validation error with a distinct message when status is %s', async (status, message) => {
-    const findUnique = stubPodRoundFindUnique(async () => fakePodRoundRow({ status }))
-    const deps = buildDeps({ podRound: { findUnique } })
+    const findRoundById = stub(async () => fakePodRoundRow({ status }))
+    const deps = buildDeps({ podRound: { findRoundById } })
 
     const result = await concludePod(deps, { podRoundId: 'round-1', requestedBy: 'organizer-1' })
 
@@ -864,25 +825,24 @@ describe('concludePod', () => {
   })
 
   it('transitions POD_CREATED to CONCLUDED and returns ok', async () => {
-    const findUnique = stubPodRoundFindUnique(async () => fakePodRoundRow({ status: 'POD_CREATED' }))
-    const update = stub(async (args: PodRoundUpdateArgs) => {
-      const expected: PodRoundUpdateArgs = { where: { id: 'round-1' }, data: { status: 'CONCLUDED' } }
-      if (!deepEqual(args, expected)) throw new Error(`unexpected update args: ${JSON.stringify(args)}`)
+    const findRoundById = stub(async () => fakePodRoundRow({ status: 'POD_CREATED' }))
+    const markConcluded = stub(async (id: string) => {
+      if (id !== 'round-1') throw new Error(`unexpected markConcluded id: ${id}`)
       return fakePodRoundRow({ status: 'CONCLUDED' })
     })
-    const deps = buildDeps({ podRound: { findUnique, update } })
+    const deps = buildDeps({ podRound: { findRoundById, markConcluded } })
 
     const result = await concludePod(deps, { podRoundId: 'round-1', requestedBy: 'organizer-1' })
 
     expect(result).toEqual({ ok: true, value: undefined })
-    expect(update.calls).toHaveLength(1)
+    expect(markConcluded.calls).toHaveLength(1)
   })
 })
 
 describe('concludeActiveRound', () => {
   it('returns a not_found error when the organizer has no round at all', async () => {
-    const findFirst = stub(async () => null)
-    const deps = buildDeps({ podRound: { findFirst } })
+    const findLatestRoundForOrganizer = stub(async () => null)
+    const deps = buildDeps({ podRound: { findLatestRoundForOrganizer } })
 
     const result = await concludeActiveRound(deps, 'organizer-1')
 
@@ -890,42 +850,42 @@ describe('concludeActiveRound', () => {
   })
 
   it('queries for the most recent round of any status, scoped to this organizer', async () => {
-    const findFirst = stub(async (args: unknown) => {
-      const expected = {
-        where: { organizerDiscordId: 'organizer-1' },
-        orderBy: { createdAt: 'desc' },
-      }
-      if (!deepEqual(args, expected)) throw new Error(`unexpected findFirst args: ${JSON.stringify(args)}`)
+    const findLatestRoundForOrganizer = stub(async (organizerDiscordId: string) => {
+      if (organizerDiscordId !== 'organizer-1') throw new Error(`unexpected organizerDiscordId: ${organizerDiscordId}`)
       return fakePodRoundRow({ id: 'round-1', organizerDiscordId: 'organizer-1', status: 'POD_CREATED' })
     })
-    const findUnique = stubPodRoundFindUnique(async () =>
-      fakePodRoundRow({ id: 'round-1', organizerDiscordId: 'organizer-1', status: 'POD_CREATED' })
-    )
-    const update = stub(async () => fakePodRoundRow({ status: 'CONCLUDED' }))
-    const findMany = stub(async () => [])
-    const deps = buildDeps({ podRound: { findFirst, findUnique, update }, podRoundTarget: { findMany } })
+    const findRoundById = stub(async () => fakePodRoundRow({ id: 'round-1', organizerDiscordId: 'organizer-1', status: 'POD_CREATED' }))
+    const markConcluded = stub(async () => fakePodRoundRow({ status: 'CONCLUDED' }))
+    const findByRoundId = stub(async () => [])
+    const deps = buildDeps({
+      podRound: { findLatestRoundForOrganizer, findRoundById, markConcluded },
+      podRoundTarget: { findByRoundId },
+    })
 
     await concludeActiveRound(deps, 'organizer-1')
 
-    expect(findFirst.calls).toHaveLength(1)
+    expect(findLatestRoundForOrganizer.calls).toHaveLength(1)
   })
 
   it('resolves the exact round by organizerRoundNumber when given, instead of most-recent', async () => {
-    const findFirst = stub(async (args: unknown) => {
-      const expected = { where: { organizerDiscordId: 'organizer-1', organizerRoundNumber: 2 } }
-      if (!deepEqual(args, expected)) throw new Error(`unexpected findFirst args: ${JSON.stringify(args)}`)
+    const findRoundByOrganizerAndNumber = stub(async (organizerDiscordId: string, organizerRoundNumber: number) => {
+      const argsLookRight = organizerDiscordId === 'organizer-1' && organizerRoundNumber === 2
+      if (!argsLookRight) throw new Error(`unexpected args: ${organizerDiscordId} ${organizerRoundNumber}`)
       return fakePodRoundRow({ id: 'round-2', organizerDiscordId: 'organizer-1', organizerRoundNumber: 2, status: 'POD_CREATED' })
     })
-    const findUnique = stubPodRoundFindUnique(async () =>
+    const findRoundById = stub(async () =>
       fakePodRoundRow({ id: 'round-2', organizerDiscordId: 'organizer-1', organizerRoundNumber: 2, status: 'POD_CREATED' })
     )
-    const update = stub(async () => fakePodRoundRow({ status: 'CONCLUDED' }))
-    const findMany = stub(async () => [])
-    const deps = buildDeps({ podRound: { findFirst, findUnique, update }, podRoundTarget: { findMany } })
+    const markConcluded = stub(async () => fakePodRoundRow({ status: 'CONCLUDED' }))
+    const findByRoundId = stub(async () => [])
+    const deps = buildDeps({
+      podRound: { findRoundByOrganizerAndNumber, findRoundById, markConcluded },
+      podRoundTarget: { findByRoundId },
+    })
 
     const result = await concludeActiveRound(deps, 'organizer-1', 2)
 
-    expect(findFirst.calls).toHaveLength(1)
+    expect(findRoundByOrganizerAndNumber.calls).toHaveLength(1)
     expect(result.ok && result.value.podRoundId).toBe('round-2')
   })
 
@@ -934,17 +894,17 @@ describe('concludeActiveRound', () => {
     // WHERE clause to concludable statuses would silently skip a more
     // recent non-concludable round and reach back to an older POD_CREATED
     // one instead.
-    const findFirst = stub(async () => fakePodRoundRow({ id: 'round-2', status: 'CANCELLED' }))
-    const findUnique = stubPodRoundFindUnique(async () => fakePodRoundRow({ id: 'round-2', status: 'CANCELLED' }))
-    const update = stub(async () => {
-      throw new Error('podRound.update should not have been called')
+    const findLatestRoundForOrganizer = stub(async () => fakePodRoundRow({ id: 'round-2', status: 'CANCELLED' }))
+    const findRoundById = stub(async () => fakePodRoundRow({ id: 'round-2', status: 'CANCELLED' }))
+    const markConcluded = stub(async () => {
+      throw new Error('podRound.markConcluded should not have been called')
     })
-    const deps = buildDeps({ podRound: { findFirst, findUnique, update } })
+    const deps = buildDeps({ podRound: { findLatestRoundForOrganizer, findRoundById, markConcluded } })
 
     const result = await concludeActiveRound(deps, 'organizer-1')
 
     expect(result).toEqual({ ok: false, error: { kind: 'validation', message: 'This round was already cancelled.' } })
-    expect(update.calls).toHaveLength(0)
+    expect(markConcluded.calls).toHaveLength(0)
   })
 
   it.each([
@@ -954,9 +914,9 @@ describe('concludeActiveRound', () => {
     ['EXPIRED', 'This round already expired.'],
     ['CONCLUDED', 'This round has already been concluded.'],
   ] as const)('surfaces a distinct validation message when the most recent round has status %s', async (status, message) => {
-    const findFirst = stub(async () => fakePodRoundRow({ id: 'round-1', status }))
-    const findUnique = stubPodRoundFindUnique(async () => fakePodRoundRow({ id: 'round-1', status }))
-    const deps = buildDeps({ podRound: { findFirst, findUnique } })
+    const findLatestRoundForOrganizer = stub(async () => fakePodRoundRow({ id: 'round-1', status }))
+    const findRoundById = stub(async () => fakePodRoundRow({ id: 'round-1', status }))
+    const deps = buildDeps({ podRound: { findLatestRoundForOrganizer, findRoundById } })
 
     const result = await concludeActiveRound(deps, 'organizer-1')
 
@@ -964,22 +924,24 @@ describe('concludeActiveRound', () => {
   })
 
   it('concludes the found round and returns its setCode, chatChannelId, and targets', async () => {
-    const findFirst = stub(async () =>
+    const findLatestRoundForOrganizer = stub(async () =>
       fakePodRoundRow({ id: 'round-1', organizerDiscordId: 'organizer-1', setCode: 'JTL', status: 'POD_CREATED', chatChannelId: 'chat-1' })
     )
-    const findUnique = stubPodRoundFindUnique(async () =>
+    const findRoundById = stub(async () =>
       fakePodRoundRow({ id: 'round-1', organizerDiscordId: 'organizer-1', setCode: 'JTL', status: 'POD_CREATED', chatChannelId: 'chat-1' })
     )
-    const update = stub(async (args: PodRoundUpdateArgs) => {
-      const expected: PodRoundUpdateArgs = { where: { id: 'round-1' }, data: { status: 'CONCLUDED' } }
-      if (!deepEqual(args, expected)) throw new Error(`unexpected update args: ${JSON.stringify(args)}`)
+    const markConcluded = stub(async (id: string) => {
+      if (id !== 'round-1') throw new Error(`unexpected markConcluded id: ${id}`)
       return fakePodRoundRow({ status: 'CONCLUDED' })
     })
-    const findMany = stub(async () => [
+    const findByRoundId = stub(async () => [
       { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
       { podRoundId: 'round-1', guildId: 'g2', channelId: 'channel-2', messageId: null, approvalStatus: null, postedAt: new Date() },
     ])
-    const deps = buildDeps({ podRound: { findFirst, findUnique, update }, podRoundTarget: { findMany } })
+    const deps = buildDeps({
+      podRound: { findLatestRoundForOrganizer, findRoundById, markConcluded },
+      podRoundTarget: { findByRoundId },
+    })
 
     const result = await concludeActiveRound(deps, 'organizer-1')
 
@@ -1000,11 +962,14 @@ describe('concludeActiveRound', () => {
   })
 
   it('returns a null chatChannelId when the round never got a chat channel', async () => {
-    const findFirst = stub(async () => fakePodRoundRow({ id: 'round-1', status: 'POD_CREATED', chatChannelId: null }))
-    const findUnique = stubPodRoundFindUnique(async () => fakePodRoundRow({ id: 'round-1', status: 'POD_CREATED', chatChannelId: null }))
-    const update = stub(async () => fakePodRoundRow({ status: 'CONCLUDED' }))
-    const findMany = stub(async () => [])
-    const deps = buildDeps({ podRound: { findFirst, findUnique, update }, podRoundTarget: { findMany } })
+    const findLatestRoundForOrganizer = stub(async () => fakePodRoundRow({ id: 'round-1', status: 'POD_CREATED', chatChannelId: null }))
+    const findRoundById = stub(async () => fakePodRoundRow({ id: 'round-1', status: 'POD_CREATED', chatChannelId: null }))
+    const markConcluded = stub(async () => fakePodRoundRow({ status: 'CONCLUDED' }))
+    const findByRoundId = stub(async () => [])
+    const deps = buildDeps({
+      podRound: { findLatestRoundForOrganizer, findRoundById, markConcluded },
+      podRoundTarget: { findByRoundId },
+    })
 
     const result = await concludeActiveRound(deps, 'organizer-1')
 
@@ -1015,22 +980,19 @@ describe('concludeActiveRound', () => {
 
 describe('listActiveRoundsForOrganizer', () => {
   it("queries for COLLECTING/THRESHOLD_REACHED rounds, scoped to this organizer, when kind is 'cancellable'", async () => {
-    const findMany = stub(async (args: PodRoundFindManyArgs) => {
-      const expected: PodRoundFindManyArgs = {
-        where: { organizerDiscordId: 'organizer-1', status: { in: ['COLLECTING', 'THRESHOLD_REACHED'] } },
-        orderBy: { organizerRoundNumber: 'asc' },
-      }
-      if (!deepEqual(args, expected)) throw new Error(`unexpected findMany args: ${JSON.stringify(args)}`)
+    const findActiveRoundsForOrganizer = stub(async (organizerDiscordId: string, statuses: PodRoundStatus[]) => {
+      const argsLookRight = organizerDiscordId === 'organizer-1' && deepEqual(statuses, ['COLLECTING', 'THRESHOLD_REACHED'])
+      if (!argsLookRight) throw new Error(`unexpected findActiveRoundsForOrganizer args: ${organizerDiscordId} ${JSON.stringify(statuses)}`)
       return [
         fakePodRoundRow({ id: 'round-1', organizerRoundNumber: 1, setCode: 'JTL' }),
         fakePodRoundRow({ id: 'round-3', organizerRoundNumber: 3, setCode: 'SOR' }),
       ]
     })
-    const deps = buildDeps({ podRound: { findMany: stubPodRoundFindManyWithArgs(findMany) } })
+    const deps = buildDeps({ podRound: { findActiveRoundsForOrganizer } })
 
     const result = await listActiveRoundsForOrganizer(deps, 'organizer-1', 'cancellable')
 
-    expect(findMany.calls).toHaveLength(1)
+    expect(findActiveRoundsForOrganizer.calls).toHaveLength(1)
     expect(result).toEqual([
       { podRoundId: 'round-1', setCode: 'JTL', organizerRoundNumber: 1 },
       { podRoundId: 'round-3', setCode: 'SOR', organizerRoundNumber: 3 },
@@ -1038,15 +1000,12 @@ describe('listActiveRoundsForOrganizer', () => {
   })
 
   it("queries for only POD_CREATED rounds when kind is 'concludable'", async () => {
-    const findMany = stub(async (args: PodRoundFindManyArgs) => {
-      const expected: PodRoundFindManyArgs = {
-        where: { organizerDiscordId: 'organizer-1', status: { in: ['POD_CREATED'] } },
-        orderBy: { organizerRoundNumber: 'asc' },
-      }
-      if (!deepEqual(args, expected)) throw new Error(`unexpected findMany args: ${JSON.stringify(args)}`)
+    const findActiveRoundsForOrganizer = stub(async (organizerDiscordId: string, statuses: PodRoundStatus[]) => {
+      const argsLookRight = organizerDiscordId === 'organizer-1' && deepEqual(statuses, ['POD_CREATED'])
+      if (!argsLookRight) throw new Error(`unexpected findActiveRoundsForOrganizer args: ${organizerDiscordId} ${JSON.stringify(statuses)}`)
       return [fakePodRoundRow({ id: 'round-2', organizerRoundNumber: 2, setCode: 'TWI', status: 'POD_CREATED' })]
     })
-    const deps = buildDeps({ podRound: { findMany: stubPodRoundFindManyWithArgs(findMany) } })
+    const deps = buildDeps({ podRound: { findActiveRoundsForOrganizer } })
 
     const result = await listActiveRoundsForOrganizer(deps, 'organizer-1', 'concludable')
 
@@ -1054,8 +1013,8 @@ describe('listActiveRoundsForOrganizer', () => {
   })
 
   it('returns an empty array when the organizer has no matching rounds', async () => {
-    const findMany = stub(async (_args: unknown) => [])
-    const deps = buildDeps({ podRound: { findMany } })
+    const findActiveRoundsForOrganizer = stub(async () => [])
+    const deps = buildDeps({ podRound: { findActiveRoundsForOrganizer } })
 
     const result = await listActiveRoundsForOrganizer(deps, 'organizer-1', 'cancellable')
 
@@ -1065,14 +1024,14 @@ describe('listActiveRoundsForOrganizer', () => {
 
 describe('startPod', () => {
   it('stores scheduledFor on the created round when provided', async () => {
-    const create = stub(async (args: PodRoundCreateArgs) => {
+    const createRoundWithTargets = stub(async (args: PodRoundCreateArgs) => {
       expect(args.data.scheduledFor).toEqual(new Date('2026-01-01T12:00:00Z'))
       return fakePodRoundRow()
     })
-    const findMany = stub(async (_args: unknown) => [])
+    const findActiveByGuildIds = stub(async (_guildIds: string[]) => [])
     const deps = buildDeps({
-      podRound: { create },
-      guildSubscription: { findMany },
+      podRound: { createRoundWithTargets },
+      guildSubscription: { findActiveByGuildIds },
       organizer: { incrementNextRoundNumber: stubOrganizerNextRoundNumber() },
     })
 
@@ -1084,18 +1043,18 @@ describe('startPod', () => {
       scheduledFor: new Date('2026-01-01T12:00:00Z'),
     })
 
-    expect(create.calls).toHaveLength(1)
+    expect(createRoundWithTargets.calls).toHaveLength(1)
   })
 
   it('stores originGuildName on the created round when provided', async () => {
-    const create = stub(async (args: PodRoundCreateArgs) => {
+    const createRoundWithTargets = stub(async (args: PodRoundCreateArgs) => {
       expect(args.data.originGuildName).toBe('Sister Community')
       return fakePodRoundRow()
     })
-    const findMany = stub(async (_args: unknown) => [])
+    const findActiveByGuildIds = stub(async (_guildIds: string[]) => [])
     const deps = buildDeps({
-      podRound: { create },
-      guildSubscription: { findMany },
+      podRound: { createRoundWithTargets },
+      guildSubscription: { findActiveByGuildIds },
       organizer: { incrementNextRoundNumber: stubOrganizerNextRoundNumber() },
     })
 
@@ -1107,18 +1066,18 @@ describe('startPod', () => {
       originGuildName: 'Sister Community',
     })
 
-    expect(create.calls).toHaveLength(1)
+    expect(createRoundWithTargets.calls).toHaveLength(1)
   })
 
   it('stores originGuildId on the created round when provided', async () => {
-    const create = stub(async (args: PodRoundCreateArgs) => {
+    const createRoundWithTargets = stub(async (args: PodRoundCreateArgs) => {
       expect(args.data.originGuildId).toBe('guild-123')
       return fakePodRoundRow()
     })
-    const findMany = stub(async (_args: unknown) => [])
+    const findActiveByGuildIds = stub(async (_guildIds: string[]) => [])
     const deps = buildDeps({
-      podRound: { create },
-      guildSubscription: { findMany },
+      podRound: { createRoundWithTargets },
+      guildSubscription: { findActiveByGuildIds },
       organizer: { incrementNextRoundNumber: stubOrganizerNextRoundNumber() },
     })
 
@@ -1130,54 +1089,44 @@ describe('startPod', () => {
       originGuildId: 'guild-123',
     })
 
-    expect(create.calls).toHaveLength(1)
+    expect(createRoundWithTargets.calls).toHaveLength(1)
   })
 })
 
 describe('expireOverdueRounds', () => {
   it('queries for COLLECTING rounds past their deadline', async () => {
     const now = new Date('2026-01-01T12:00:00Z')
-    // This call site actually uses the {where: {status, scheduledFor},
-    // include} overload, not PodRoundFindManyArgs's {organizerDiscordId,
-    // status, orderBy} shape (that one's for listActiveRoundsForOrganizer
-    // below) — typed as unknown and cast, then narrowed internally, same
-    // reasoning as the overload-cast helpers above.
-    const findManyRounds = stub(async (args: unknown) => {
-      const where = (args as { where?: { status?: unknown; scheduledFor?: { lte?: Date } } })?.where
-      expect(where?.status).toBe('COLLECTING')
-      expect(where?.scheduledFor?.lte?.getTime()).toBeGreaterThanOrEqual(now.getTime())
+    const findOverdueRounds = stub(async (scheduledBefore: Date) => {
+      expect(scheduledBefore.getTime()).toBeGreaterThanOrEqual(now.getTime())
       return []
     })
-    const deps = buildDeps({
-      podRound: { findMany: findManyRounds as unknown as AppStorage['podRound']['findMany'] },
-    })
+    const deps = buildDeps({ podRound: { findOverdueRounds } })
 
     await expireOverdueRounds(deps)
 
-    expect(findManyRounds.calls).toHaveLength(1)
+    expect(findOverdueRounds.calls).toHaveLength(1)
   })
 
   it('expires a round that never reached its own minimum threshold by the deadline', async () => {
-    const findManyRounds = stubPodRoundFindMany(async () => [fakePodRoundRow({ id: 'round-1', setCode: 'JTL', threshold: 6 })])
-    // below threshold: 6 — count is derived from this findMany's length,
-    // not a separate .count() call.
-    const findMany = stub(async () => [
+    const findOverdueRounds = stub(async () => [fakeRoundWithOrganizer({ id: 'round-1', setCode: 'JTL', threshold: 6 })])
+    // below threshold: 6 — count is derived from this findSignedUp's
+    // length, not a separate .count() call.
+    const findSignedUp = stub(async () => [
       fakePodRoundSignupRow({ discordId: 'p1' }),
       fakePodRoundSignupRow({ discordId: 'p2' }),
       fakePodRoundSignupRow({ discordId: 'p3' }),
     ])
-    const updateMany = stub(async (args: PodRoundUpdateManyArgs) => {
-      const expected: PodRoundUpdateManyArgs = { where: { id: 'round-1', status: 'COLLECTING' }, data: { status: 'EXPIRED' } }
-      if (!deepEqual(args, expected)) throw new Error(`unexpected updateMany args: ${JSON.stringify(args)}`)
+    const claimExpired = stub(async (id: string) => {
+      if (id !== 'round-1') throw new Error(`unexpected claimExpired id: ${id}`)
       return { count: 1 }
     })
-    const findManyTargets = stub(async () => [
+    const findByRoundId = stub(async () => [
       { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
     ])
     const deps = buildDeps({
-      podRound: { findMany: findManyRounds, updateMany },
-      podRoundSignup: { findMany },
-      podRoundTarget: { findMany: findManyTargets },
+      podRound: { findOverdueRounds, claimExpired },
+      podRoundSignup: { findSignedUp },
+      podRoundTarget: { findByRoundId },
     })
 
     const result = await expireOverdueRounds(deps)
@@ -1197,23 +1146,17 @@ describe('expireOverdueRounds', () => {
 
   it('fires a round short of a full table if it reached its own minimum threshold by the deadline', async () => {
     const round = fakeRoundWithOrganizer({ id: 'round-1', setCode: 'JTL', threshold: 2 })
-    const findManyRounds = stubPodRoundFindMany(async () => [round])
+    const findOverdueRounds = stub(async () => [round])
     // >= threshold (2), short of POD_CAPACITY (8) — count is derived from
-    // the findMany below's length, not a separate .count() call.
-    const updateMany = stub(async (args: PodRoundUpdateManyArgs) => {
-      const where = args.where as { id?: string; status?: string } | undefined
-      const data = args.data as { status?: string; thresholdReachedAt?: unknown } | undefined
-      const argsLookRight =
-        where?.id === 'round-1' &&
-        where.status === 'COLLECTING' &&
-        data?.status === 'THRESHOLD_REACHED' &&
-        data.thresholdReachedAt instanceof Date
-      if (!argsLookRight) throw new Error(`unexpected updateMany args: ${JSON.stringify(args)}`)
+    // the findSignedUp below's length, not a separate .count() call.
+    const claimForFiring = stub(async (id: string, thresholdReachedAt: Date) => {
+      const argsLookRight = id === 'round-1' && thresholdReachedAt instanceof Date
+      if (!argsLookRight) throw new Error(`unexpected claimForFiring args: ${id} ${String(thresholdReachedAt)}`)
       return { count: 1 }
     })
-    const update = stub(async (args: PodRoundUpdateArgs) => {
-      const expected: PodRoundUpdateArgs = { where: { id: 'round-1' }, data: { status: 'POD_CREATED', ptpPodShareId: 'share-1' } }
-      if (!deepEqual(args, expected)) throw new Error(`unexpected update args: ${JSON.stringify(args)}`)
+    const markPodCreated = stub(async (id: string, data: { ptpPodShareId: string; chatChannelId?: string }) => {
+      const argsLookRight = id === 'round-1' && data.ptpPodShareId === 'share-1' && data.chatChannelId === undefined
+      if (!argsLookRight) throw new Error(`unexpected markPodCreated args: ${id} ${JSON.stringify(data)}`)
       return fakePodRoundRow()
     })
     const createPod = stub(async (token: string, params: CreatePodParams) => {
@@ -1230,21 +1173,21 @@ describe('expireOverdueRounds', () => {
         createdAt: '2026-01-01T00:00:00Z',
       }
     })
-    const findManySignups = stub(async () => [
+    const findSignedUp = stub(async () => [
       fakePodRoundSignupRow({ discordId: 'p1' }),
       fakePodRoundSignupRow({ discordId: 'p2' }),
       fakePodRoundSignupRow({ discordId: 'p3' }),
       fakePodRoundSignupRow({ discordId: 'p4' }),
       fakePodRoundSignupRow({ discordId: 'p5' }),
     ])
-    const findManyTargets = stub(async () => [
+    const findByRoundId = stub(async () => [
       { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
     ])
     const deps: PodServiceDeps = {
       storage: createFakeAppSqlStorage({
-        podRound: { findMany: findManyRounds, updateMany, update },
-        podRoundSignup: { findMany: findManySignups },
-        podRoundTarget: { findMany: findManyTargets },
+        podRound: { findOverdueRounds, claimForFiring, markPodCreated },
+        podRoundSignup: { findSignedUp },
+        podRoundTarget: { findByRoundId },
       }),
       ptp: createFakePtpClient({ createPod }),
       tokenEncryptionKey: TOKEN_KEY,
@@ -1273,23 +1216,23 @@ describe('expireOverdueRounds', () => {
 
   it('does not surface a result when firing at the deadline fails after the claim (logs instead)', async () => {
     const round = fakeRoundWithOrganizer({ id: 'round-1', threshold: 2 })
-    const findManyRounds = stubPodRoundFindMany(async () => [round])
-    const findMany = stub(async () => [
+    const findOverdueRounds = stub(async () => [round])
+    const findSignedUp = stub(async () => [
       fakePodRoundSignupRow({ discordId: 'p1' }),
       fakePodRoundSignupRow({ discordId: 'p2' }),
       fakePodRoundSignupRow({ discordId: 'p3' }),
       fakePodRoundSignupRow({ discordId: 'p4' }),
       fakePodRoundSignupRow({ discordId: 'p5' }),
     ])
-    const updateMany = stub(async () => ({ count: 1 }))
+    const claimForFiring = stub(async () => ({ count: 1 }))
     const createPod = stub(async () => {
       throw new Error('PTP pod creation failed: 401')
     })
     const errors: unknown[] = []
     const deps: PodServiceDeps = {
       storage: createFakeAppSqlStorage({
-        podRound: { findMany: findManyRounds, updateMany },
-        podRoundSignup: { findMany },
+        podRound: { findOverdueRounds, claimForFiring },
+        podRoundSignup: { findSignedUp },
       }),
       ptp: createFakePtpClient({ createPod }),
       tokenEncryptionKey: TOKEN_KEY,
@@ -1304,12 +1247,12 @@ describe('expireOverdueRounds', () => {
 
   it('invokes onFiring with the right ctx before ptp.createPod, and threads chatUrl into the fired result', async () => {
     const round = fakeRoundWithOrganizer({ id: 'round-1', setCode: 'JTL', threshold: 2, organizerDiscordId: 'organizer-1' })
-    const findManyRounds = stubPodRoundFindMany(async () => [round])
-    const updateMany = stub(async () => ({ count: 1 }))
-    const update = stub(async () => fakePodRoundRow())
-    // count is derived from this findMany's length, not a separate
+    const findOverdueRounds = stub(async () => [round])
+    const claimForFiring = stub(async () => ({ count: 1 }))
+    const markPodCreated = stub(async () => fakePodRoundRow())
+    // count is derived from this findSignedUp's length, not a separate
     // .count() call.
-    const findManySignups = stub(async () => [
+    const findSignedUp = stub(async () => [
       fakePodRoundSignupRow({ discordId: 'p1' }),
       fakePodRoundSignupRow({ discordId: 'p2' }),
       fakePodRoundSignupRow({ discordId: 'p3' }),
@@ -1337,14 +1280,14 @@ describe('expireOverdueRounds', () => {
         createdAt: '2026-01-01T00:00:00Z',
       }
     })
-    const findManyTargets = stub(async () => [
+    const findByRoundId = stub(async () => [
       { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
     ])
     const deps: PodServiceDeps = {
       storage: createFakeAppSqlStorage({
-        podRound: { findMany: findManyRounds, updateMany, update },
-        podRoundSignup: { findMany: findManySignups },
-        podRoundTarget: { findMany: findManyTargets },
+        podRound: { findOverdueRounds, claimForFiring, markPodCreated },
+        podRoundSignup: { findSignedUp },
+        podRoundTarget: { findByRoundId },
       }),
       ptp: createFakePtpClient({ createPod }),
       tokenEncryptionKey: TOKEN_KEY,
@@ -1375,12 +1318,12 @@ describe('expireOverdueRounds', () => {
 
   it('omitting onFiring entirely does not change the fired outcome (regression guard)', async () => {
     const round = fakeRoundWithOrganizer({ id: 'round-1', setCode: 'JTL', threshold: 2 })
-    const findManyRounds = stubPodRoundFindMany(async () => [round])
-    const updateMany = stub(async () => ({ count: 1 }))
-    const update = stub(async () => fakePodRoundRow())
-    // count is derived from this findMany's length, not a separate
+    const findOverdueRounds = stub(async () => [round])
+    const claimForFiring = stub(async () => ({ count: 1 }))
+    const markPodCreated = stub(async () => fakePodRoundRow())
+    // count is derived from this findSignedUp's length, not a separate
     // .count() call.
-    const findManySignups = stub(async () => [
+    const findSignedUp = stub(async () => [
       fakePodRoundSignupRow({ discordId: 'p1' }),
       fakePodRoundSignupRow({ discordId: 'p2' }),
       fakePodRoundSignupRow({ discordId: 'p3' }),
@@ -1393,14 +1336,14 @@ describe('expireOverdueRounds', () => {
       shareUrl: 'https://www.protectthepod.com/draft/share-1',
       createdAt: '2026-01-01T00:00:00Z',
     }))
-    const findManyTargets = stub(async () => [
+    const findByRoundId = stub(async () => [
       { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
     ])
     const deps: PodServiceDeps = {
       storage: createFakeAppSqlStorage({
-        podRound: { findMany: findManyRounds, updateMany, update },
-        podRoundSignup: { findMany: findManySignups },
-        podRoundTarget: { findMany: findManyTargets },
+        podRound: { findOverdueRounds, claimForFiring, markPodCreated },
+        podRoundSignup: { findSignedUp },
+        podRoundTarget: { findByRoundId },
       }),
       ptp: createFakePtpClient({ createPod }),
       tokenEncryptionKey: TOKEN_KEY,
@@ -1428,22 +1371,22 @@ describe('expireOverdueRounds', () => {
   })
 
   it('skips a round that another concurrent sweep (or a racing signup) already claimed', async () => {
-    const findManyRounds = stubPodRoundFindMany(async () => [fakePodRoundRow({ id: 'round-1' })])
+    const findOverdueRounds = stub(async () => [fakeRoundWithOrganizer({ id: 'round-1' })])
     // below the default threshold (8) — takes the expire path; count is
-    // derived from this findMany's length, not a separate .count() call.
-    const findMany = stub(async () => [
+    // derived from this findSignedUp's length, not a separate .count() call.
+    const findSignedUp = stub(async () => [
       fakePodRoundSignupRow({ discordId: 'p1' }),
       fakePodRoundSignupRow({ discordId: 'p2' }),
       fakePodRoundSignupRow({ discordId: 'p3' }),
     ])
-    const updateMany = stub(async () => ({ count: 0 }))
-    const findManyTargets = stub(async () => {
-      throw new Error('podRoundTarget.findMany should not have been called for an unclaimed round')
+    const claimExpired = stub(async () => ({ count: 0 }))
+    const findByRoundId = stub(async () => {
+      throw new Error('podRoundTarget.findByRoundId should not have been called for an unclaimed round')
     })
     const deps = buildDeps({
-      podRound: { findMany: findManyRounds, updateMany },
-      podRoundSignup: { findMany },
-      podRoundTarget: { findMany: findManyTargets },
+      podRound: { findOverdueRounds, claimExpired },
+      podRoundSignup: { findSignedUp },
+      podRoundTarget: { findByRoundId },
     })
 
     const result = await expireOverdueRounds(deps)
@@ -1452,8 +1395,8 @@ describe('expireOverdueRounds', () => {
   })
 
   it('returns an empty array when nothing is overdue', async () => {
-    const findManyRounds = stub(async () => [])
-    const deps = buildDeps({ podRound: { findMany: findManyRounds } })
+    const findOverdueRounds = stub(async () => [])
+    const deps = buildDeps({ podRound: { findOverdueRounds } })
 
     const result = await expireOverdueRounds(deps)
 
@@ -1467,32 +1410,26 @@ describe('retryFailedFires', () => {
   const PAST_WINDOW = new Date(NOW.getTime() - 31 * 60 * 1000) // 31 min ago, > 30 min window
 
   it('queries for THRESHOLD_REACHED rounds that have not yet been notified', async () => {
-    // Real call site (retryFailedFires) uses the {where, include}
-    // overload, not PodRoundFindManyArgs — same reasoning as
-    // expireOverdueRounds's test above.
-    const findManyRounds = stub(async (args: unknown) => {
-      expect((args as { where?: unknown })?.where).toEqual({ status: 'THRESHOLD_REACHED', fireFailureNotified: false })
-      return []
-    })
-    const deps = buildDeps({
-      podRound: { findMany: findManyRounds as unknown as AppStorage['podRound']['findMany'] },
-    })
+    const findStuckThresholdReachedRounds = stub(async () => [])
+    const deps = buildDeps({ podRound: { findStuckThresholdReachedRounds } })
 
     await retryFailedFires(deps)
 
-    expect(findManyRounds.calls).toHaveLength(1)
+    expect(findStuckThresholdReachedRounds.calls).toHaveLength(1)
   })
 
   it('a round with fireFailureNotified: true already set is never picked up (excluded by the query itself)', async () => {
-    // The query's own where-clause is what guarantees this — asserted above
-    // — but this test additionally guards that nothing downstream ever
-    // even sees such a round, by returning an empty candidate set (as the
-    // real query would) and confirming zero side effects follow.
-    const findManyRounds = stub(async () => [])
-    const updateMany = stub(async () => {
+    // The query's own filter is what guarantees this — its concrete name
+    // (findStuckThresholdReachedRounds) hardcodes fireFailureNotified:
+    // false internally — but this test additionally guards that nothing
+    // downstream ever even sees such a round, by returning an empty
+    // candidate set (as the real query would) and confirming zero side
+    // effects follow.
+    const findStuckThresholdReachedRounds = stub(async () => [])
+    const markFireFailureNotified = stub(async () => {
       throw new Error('podRound updates should not have been called')
     })
-    const deps = buildDeps({ podRound: { findMany: findManyRounds, updateMany } })
+    const deps = buildDeps({ podRound: { findStuckThresholdReachedRounds, markFireFailureNotified } })
 
     const result = await retryFailedFires(deps)
 
@@ -1511,20 +1448,17 @@ describe('retryFailedFires', () => {
         fireFailureNotified: false,
         chatChannelId: 'chat-channel-1',
       })
-      const findManyRounds = stubPodRoundFindMany(async () => [round])
-      const update = stub(async (args: PodRoundUpdateArgs) => {
-        const expected: PodRoundUpdateArgs = {
-          where: { id: 'round-1' },
-          data: { status: 'POD_CREATED', ptpPodShareId: 'share-1', chatChannelId: 'chat-channel-1' },
-        }
-        if (!deepEqual(args, expected)) throw new Error(`unexpected update args: ${JSON.stringify(args)}`)
+      const findStuckThresholdReachedRounds = stub(async () => [round])
+      const markPodCreated = stub(async (id: string, data: { ptpPodShareId: string; chatChannelId?: string }) => {
+        const argsLookRight = id === 'round-1' && data.ptpPodShareId === 'share-1' && data.chatChannelId === 'chat-channel-1'
+        if (!argsLookRight) throw new Error(`unexpected markPodCreated args: ${id} ${JSON.stringify(data)}`)
         return fakePodRoundRow()
       })
-      const findManySignups = stub(async () => [
+      const findSignedUp = stub(async () => [
         fakePodRoundSignupRow({ discordId: 'p1' }),
         fakePodRoundSignupRow({ discordId: 'p2' }),
       ])
-      const findManyTargets = stub(async () => [
+      const findByRoundId = stub(async () => [
         { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
       ])
       const createPod = stub(async () => ({
@@ -1539,9 +1473,9 @@ describe('retryFailedFires', () => {
       })
       const deps: PodServiceDeps = {
         storage: createFakeAppSqlStorage({
-          podRound: { findMany: findManyRounds, update },
-          podRoundSignup: { findMany: findManySignups },
-          podRoundTarget: { findMany: findManyTargets },
+          podRound: { findStuckThresholdReachedRounds, markPodCreated },
+          podRoundSignup: { findSignedUp },
+          podRoundTarget: { findByRoundId },
         }),
         ptp: createFakePtpClient({ createPod }),
         tokenEncryptionKey: TOKEN_KEY,
@@ -1582,10 +1516,10 @@ describe('retryFailedFires', () => {
         fireFailureNotified: false,
         chatChannelId: null,
       })
-      const findManyRounds = stubPodRoundFindMany(async () => [round])
-      const update = stub(async () => fakePodRoundRow())
-      const findManySignups = stub(async () => [fakePodRoundSignupRow({ discordId: 'p1' })])
-      const findManyTargets = stub(async () => [])
+      const findStuckThresholdReachedRounds = stub(async () => [round])
+      const markPodCreated = stub(async () => fakePodRoundRow())
+      const findSignedUp = stub(async () => [fakePodRoundSignupRow({ discordId: 'p1' })])
+      const findByRoundId = stub(async () => [])
       const createPod = stub(async () => ({
         id: 'ptp-pod-1',
         shareId: 'share-1',
@@ -1597,9 +1531,9 @@ describe('retryFailedFires', () => {
       })
       const deps: PodServiceDeps = {
         storage: createFakeAppSqlStorage({
-          podRound: { findMany: findManyRounds, update },
-          podRoundSignup: { findMany: findManySignups },
-          podRoundTarget: { findMany: findManyTargets },
+          podRound: { findStuckThresholdReachedRounds, markPodCreated },
+          podRoundSignup: { findSignedUp },
+          podRoundTarget: { findByRoundId },
         }),
         ptp: createFakePtpClient({ createPod }),
         tokenEncryptionKey: TOKEN_KEY,
@@ -1625,19 +1559,19 @@ describe('retryFailedFires', () => {
         thresholdReachedAt: WITHIN_WINDOW,
         fireFailureNotified: false,
       })
-      const findManyRounds = stubPodRoundFindMany(async () => [round])
-      const update = stub(async () => {
-        throw new Error('podRound.update should not have been called — still-failing retry changes nothing')
+      const findStuckThresholdReachedRounds = stub(async () => [round])
+      const markPodCreated = stub(async () => {
+        throw new Error('podRound.markPodCreated should not have been called — still-failing retry changes nothing')
       })
-      const findManySignups = stub(async () => [fakePodRoundSignupRow({ discordId: 'p1' })])
+      const findSignedUp = stub(async () => [fakePodRoundSignupRow({ discordId: 'p1' })])
       const createPod = stub(async () => {
         throw new Error('PTP pod creation failed: 401')
       })
       const errors: unknown[] = []
       const deps: PodServiceDeps = {
         storage: createFakeAppSqlStorage({
-          podRound: { findMany: findManyRounds, update },
-          podRoundSignup: { findMany: findManySignups },
+          podRound: { findStuckThresholdReachedRounds, markPodCreated },
+          podRoundSignup: { findSignedUp },
         }),
         ptp: createFakePtpClient({ createPod }),
         tokenEncryptionKey: TOKEN_KEY,
@@ -1664,13 +1598,12 @@ describe('retryFailedFires', () => {
         thresholdReachedAt: PAST_WINDOW,
         fireFailureNotified: false,
       })
-      const findManyRounds = stubPodRoundFindMany(async () => [round])
-      const update = stub(async (args: PodRoundUpdateArgs) => {
-        const expected: PodRoundUpdateArgs = { where: { id: 'round-1' }, data: { fireFailureNotified: true } }
-        if (!deepEqual(args, expected)) throw new Error(`unexpected update args: ${JSON.stringify(args)}`)
+      const findStuckThresholdReachedRounds = stub(async () => [round])
+      const markFireFailureNotified = stub(async (id: string) => {
+        if (id !== 'round-1') throw new Error(`unexpected markFireFailureNotified id: ${id}`)
         return fakePodRoundRow({ fireFailureNotified: true })
       })
-      const findManyTargets = stub(async () => [
+      const findByRoundId = stub(async () => [
         { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
       ])
       const createPod = stub(async () => {
@@ -1678,8 +1611,8 @@ describe('retryFailedFires', () => {
       })
       const deps: PodServiceDeps = {
         storage: createFakeAppSqlStorage({
-          podRound: { findMany: findManyRounds, update },
-          podRoundTarget: { findMany: findManyTargets },
+          podRound: { findStuckThresholdReachedRounds, markFireFailureNotified },
+          podRoundTarget: { findByRoundId },
         }),
         ptp: createFakePtpClient({ createPod }),
         tokenEncryptionKey: TOKEN_KEY,
@@ -1688,7 +1621,7 @@ describe('retryFailedFires', () => {
 
       const result = await retryFailedFires(deps)
 
-      expect(update.calls).toHaveLength(1)
+      expect(markFireFailureNotified.calls).toHaveLength(1)
       expect(result).toEqual([
         {
           podRoundId: 'round-1',
@@ -1712,20 +1645,19 @@ describe('retryFailedFires', () => {
       thresholdReachedAt: null,
       fireFailureNotified: false,
     })
-    const findManyRounds = stubPodRoundFindMany(async () => [round])
-    const update = stub(async (args: PodRoundUpdateArgs) => {
-      const expected: PodRoundUpdateArgs = { where: { id: 'round-1' }, data: { fireFailureNotified: true } }
-      if (!deepEqual(args, expected)) throw new Error(`unexpected update args: ${JSON.stringify(args)}`)
+    const findStuckThresholdReachedRounds = stub(async () => [round])
+    const markFireFailureNotified = stub(async (id: string) => {
+      if (id !== 'round-1') throw new Error(`unexpected markFireFailureNotified id: ${id}`)
       return fakePodRoundRow({ fireFailureNotified: true })
     })
-    const findManyTargets = stub(async () => [])
+    const findByRoundId = stub(async () => [])
     const createPod = stub(async () => {
       throw new Error('createPod should not have been called for a null thresholdReachedAt')
     })
     const deps: PodServiceDeps = {
       storage: createFakeAppSqlStorage({
-        podRound: { findMany: findManyRounds, update },
-        podRoundTarget: { findMany: findManyTargets },
+        podRound: { findStuckThresholdReachedRounds, markFireFailureNotified },
+        podRoundTarget: { findByRoundId },
       }),
       ptp: createFakePtpClient({ createPod }),
       tokenEncryptionKey: TOKEN_KEY,
@@ -1734,7 +1666,7 @@ describe('retryFailedFires', () => {
 
     const result = await retryFailedFires(deps)
 
-    expect(update.calls).toHaveLength(1)
+    expect(markFireFailureNotified.calls).toHaveLength(1)
     expect(result).toEqual([
       {
         podRoundId: 'round-1',

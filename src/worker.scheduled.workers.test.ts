@@ -40,7 +40,7 @@ describe('worker.scheduled', () => {
   it('expires an overdue round with no signups on the pod-sweep cron', async () => {
     const stub = getGlobalStub()
     const podRoundId = await runInDurableObject(stub, async (instance: EscapePodDurableObject) => {
-      await instance.appStorage.organizer.upsert({
+      await instance.appStorage.organizer.linkOrganizer({
         where: { discordId: 'organizer-1' },
         create: {
           discordId: 'organizer-1',
@@ -54,7 +54,7 @@ describe('worker.scheduled', () => {
           expiresAt: new Date('2030-01-01'),
         },
       })
-      const round = await instance.appStorage.podRound.create({
+      const round = await instance.appStorage.podRound.createRoundWithTargets({
         data: {
           organizerDiscordId: 'organizer-1',
           organizerRoundNumber: 1,
@@ -70,7 +70,7 @@ describe('worker.scheduled', () => {
     await fireScheduled(POD_SWEEP_CRON)
 
     await runInDurableObject(stub, async (instance: EscapePodDurableObject) => {
-      const round = await instance.appStorage.podRound.findUnique({ where: { id: podRoundId } })
+      const round = await instance.appStorage.podRound.findRoundById(podRoundId)
       expect(round?.status).toBe('EXPIRED')
     })
   })
@@ -96,7 +96,7 @@ describe('worker.scheduled', () => {
 
     try {
       await runInDurableObject(stub, async (instance: EscapePodDurableObject) => {
-        await instance.appStorage.organizer.upsert({
+        await instance.appStorage.organizer.linkOrganizer({
           where: { discordId: 'organizer-refresh' },
           create: {
             discordId: 'organizer-refresh',
@@ -117,18 +117,16 @@ describe('worker.scheduled', () => {
 
       await fireScheduled(TOKEN_REFRESH_CRON)
 
-      // AppStorage.organizer has no by-discordId lookup (only findMany
-      // filtered by expiresAt, and upsert/update — see storage/
-      // appStorage.ts) — so this checks a cutoff strictly between the
-      // seeded near-term expiry (2 days out) and the refreshed one (30
-      // days out): present in this filtered set only if refresh did NOT
-      // happen, since the seeded 2-day expiry is well inside the 5-day
-      // refresh window this job actually consults.
+      // AppStorage.organizer has no by-discordId lookup (only
+      // findExpiringBefore, and incrementNextRoundNumber/updateToken/
+      // linkOrganizer — see storage/appStorage.ts) — so this checks a
+      // cutoff strictly between the seeded near-term expiry (2 days out)
+      // and the refreshed one (30 days out): present in this filtered set
+      // only if refresh did NOT happen, since the seeded 2-day expiry is
+      // well inside the 5-day refresh window this job actually consults.
       const midpointCutoff = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000)
       await runInDurableObject(stub, async (instance: EscapePodDurableObject) => {
-        const stillNearTerm = await instance.appStorage.organizer.findMany({
-          where: { expiresAt: { lt: midpointCutoff } },
-        })
+        const stillNearTerm = await instance.appStorage.organizer.findExpiringBefore(midpointCutoff)
         expect(stillNearTerm.find((o) => o.discordId === 'organizer-refresh')).toBeUndefined()
       })
     } finally {

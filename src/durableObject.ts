@@ -63,7 +63,7 @@ export class EscapePodDurableObject extends DurableObject<Env> {
     })
     this.appStorage = createAppSqlStorage(ctx.storage.sql)
     this.ptp = new HttpPtpClient({ baseUrl: env.PTP_BASE_URL })
-    this.discordRest = createFetchDiscordRest({ botToken: env.DISCORD_BOT_TOKEN, botUserId: env.DISCORD_APPLICATION_ID })
+    this.discordRest = createFetchDiscordRest({ botToken: env.DISCORD_BOT_TOKEN, botUserId: env.DISCORD_APPLICATION_ID, fetch })
     this.tokenEncryptionKey = env.TOKEN_ENCRYPTION_KEY
     this.logger = { error: (obj, msg) => console.error(msg, obj) }
     this.honoApp = buildHonoApp({

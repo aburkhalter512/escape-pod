@@ -40,7 +40,7 @@ export async function subscribeGuild(
 ): Promise<Result<SubscribeGuildResult>> {
   const { guildId, installedBy, channelId, policy } = params
 
-  const existing = await deps.storage.guildSubscription.findUnique({ where: { guildId } })
+  const existing = await deps.storage.guildSubscription.findByGuildId(guildId)
   const isActive = !!existing && existing.unsubscribedAt === null
 
   if (!isActive && !channelId) {
@@ -54,7 +54,7 @@ export async function subscribeGuild(
   }
 
   if (!existing) {
-    const created = await deps.storage.guildSubscription.create({
+    const created = await deps.storage.guildSubscription.createSubscription({
       data: {
         guildId,
         broadcastChannelId: channelId!,
@@ -78,7 +78,7 @@ export async function subscribeGuild(
   // cleared when a channel is given (reactivating) — this branch is only
   // reachable with a channel unless already active, so a policy-only call
   // on an inactive subscription can't silently resurrect it.
-  const updated = await deps.storage.guildSubscription.update({
+  const updated = await deps.storage.guildSubscription.updateSettings({
     where: { guildId },
     data: {
       ...(channelId ? { broadcastChannelId: channelId, unsubscribedAt: null } : {}),
@@ -102,15 +102,12 @@ export interface UnsubscribeGuildResult {
 // history and allow-list entries are untouched; only future eligibility
 // checks (listEligibleGuilds, startPod) stop counting this guild.
 export async function unsubscribeGuild(deps: GuildServiceDeps, guildId: string): Promise<UnsubscribeGuildResult> {
-  const existing = await deps.storage.guildSubscription.findUnique({ where: { guildId } })
+  const existing = await deps.storage.guildSubscription.findByGuildId(guildId)
   if (!existing || existing.unsubscribedAt !== null) {
     return { wasSubscribed: false }
   }
 
-  await deps.storage.guildSubscription.update({
-    where: { guildId },
-    data: { unsubscribedAt: new Date() },
-  })
+  await deps.storage.guildSubscription.markUnsubscribed(guildId)
   return { wasSubscribed: true }
 }
 
@@ -130,7 +127,7 @@ export interface AllowOrganizerParams {
 export async function allowOrganizer(deps: GuildServiceDeps, params: AllowOrganizerParams): Promise<void> {
   const { guildId, organizerDiscordId, approvedBy } = params
 
-  await deps.storage.guildOrganizerAllowlist.upsert({
+  await deps.storage.guildOrganizerAllowlist.approveOrganizer({
     where: { guildId_organizerDiscordId: { guildId, organizerDiscordId } },
     create: { guildId, organizerDiscordId, approvedBy },
     update: { approvedBy },
@@ -152,7 +149,7 @@ export interface AllowGuildParams {
 export async function allowGuild(deps: GuildServiceDeps, params: AllowGuildParams): Promise<void> {
   const { guildId, allowedOriginGuildId, approvedBy } = params
 
-  await deps.storage.guildOriginAllowlist.upsert({
+  await deps.storage.guildOriginAllowlist.approveOriginGuild({
     where: { guildId_allowedOriginGuildId: { guildId, allowedOriginGuildId } },
     create: { guildId, allowedOriginGuildId, approvedBy },
     update: { approvedBy },

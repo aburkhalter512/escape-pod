@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { createFetchDiscordRest } from './restWorkers.js'
 import { stub } from '../testUtils/stub.js'
 
@@ -10,24 +10,21 @@ import { stub } from '../testUtils/stub.js'
 // a per-Discord-method test suite; one representative case per transport
 // behavior is enough since the route-building logic itself is already
 // proven identical in rest.test.ts.
+//
+// fetch is injected directly via createFetchDiscordRest's own `fetch`
+// option (per PR review), not via monkey-patching globalThis.fetch — the
+// whole point of injecting it.
 describe('createFetchDiscordRest transport', () => {
-  const realFetch = globalThis.fetch
-
-  afterEach(() => {
-    globalThis.fetch = realFetch
-  })
-
-  function rest() {
-    return createFetchDiscordRest({ botToken: 'test-token', botUserId: 'bot-user-id' })
+  function rest(fetchImpl: typeof fetch) {
+    return createFetchDiscordRest({ botToken: 'test-token', botUserId: 'bot-user-id', fetch: fetchImpl })
   }
 
   it('sends a real fetch() POST with Bot auth, JSON content-type, and a JSON-encoded body', async () => {
     const fetchStub = stub(async (_url: string | URL | Request, _init?: RequestInit) => {
       return new Response(JSON.stringify({ id: 'msg-1' }), { status: 200 })
     })
-    globalThis.fetch = fetchStub
 
-    const result = await rest().postMessage('channel-1', { content: 'hello' })
+    const result = await rest(fetchStub as unknown as typeof fetch).postMessage('channel-1', { content: 'hello' })
 
     const [url, init] = fetchStub.calls[0]
     expect(url).toBe('https://discord.com/api/v10/channels/channel-1/messages')
@@ -39,16 +36,16 @@ describe('createFetchDiscordRest transport', () => {
   })
 
   it('returns undefined for a 204 response instead of parsing an empty body as JSON', async () => {
-    globalThis.fetch = stub(async () => new Response(null, { status: 204 }))
+    const fetchStub = stub(async () => new Response(null, { status: 204 }))
 
-    const result = await rest().deleteChannel('channel-1')
+    const result = await rest(fetchStub as unknown as typeof fetch).deleteChannel('channel-1')
 
     expect(result).toBeUndefined()
   })
 
   it('throws with the status and response body text when Discord returns a non-2xx status', async () => {
-    globalThis.fetch = stub(async () => new Response('{"message":"missing access"}', { status: 403 }))
+    const fetchStub = stub(async () => new Response('{"message":"missing access"}', { status: 403 }))
 
-    await expect(rest().postMessage('channel-1', { content: 'hello' })).rejects.toThrow(/403/)
+    await expect(rest(fetchStub as unknown as typeof fetch).postMessage('channel-1', { content: 'hello' })).rejects.toThrow(/403/)
   })
 })

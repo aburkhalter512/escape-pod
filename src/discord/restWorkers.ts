@@ -20,15 +20,23 @@ const DISCORD_API_BASE = 'https://discord.com/api/v10'
 interface FetchDiscordRestOptions {
   botToken: string
   botUserId: string
+  // Injected rather than referencing the global fetch directly inside
+  // createFetchRawRestClient below — per PR review, foundational IO
+  // functions (fetch, file I/O, etc.) should be defined once at the
+  // application's entry point and passed down, not referenced ad hoc
+  // wherever needed. durableObject.ts (the one real caller) passes the
+  // ambient global `fetch` explicitly; tests can inject a stub function
+  // directly here instead of monkey-patching globalThis.fetch.
+  fetch: typeof fetch
 }
 
 export function createFetchDiscordRest(options: FetchDiscordRestOptions): DiscordRestClient {
-  return new HttpDiscordRest(createFetchRawRestClient(options.botToken), options.botUserId)
+  return new HttpDiscordRest(createFetchRawRestClient(options.botToken, options.fetch), options.botUserId)
 }
 
-function createFetchRawRestClient(botToken: string): RawRestClient {
+function createFetchRawRestClient(botToken: string, fetchFn: typeof fetch): RawRestClient {
   async function request(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', fullRoute: string, options?: { body?: unknown }) {
-    const response = await fetch(`${DISCORD_API_BASE}${fullRoute}`, {
+    const response = await fetchFn(`${DISCORD_API_BASE}${fullRoute}`, {
       method,
       headers: {
         Authorization: `Bot ${botToken}`,

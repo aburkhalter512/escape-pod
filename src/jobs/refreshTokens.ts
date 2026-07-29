@@ -40,9 +40,7 @@ export async function refreshExpiringTokensForStorage(storage: AppStorage, ptp: 
 async function runRefresh(storage: AppStorage, ptp: PtpClient, tokenEncryptionKey: string) {
   const cutoff = new Date(Date.now() + REFRESH_WINDOW_DAYS * 24 * 60 * 60 * 1000)
 
-  const expiring = await storage.organizer.findMany({
-    where: { expiresAt: { lt: cutoff } },
-  })
+  const expiring = await storage.organizer.findExpiringBefore(cutoff)
 
   let refreshed = 0
   let failed = 0

@@ -139,14 +139,14 @@ describe('buildHonoApp', () => {
 
     it('dispatches a real ModalSubmit interaction all the way to the backend and storage', async () => {
       const token = fakeJwt({ id: 'ptp-1', discord_id: 'user-1', username: 'PlayerOne', exp: Math.floor(Date.now() / 1000) + 3600 })
-      const upsertCalls: unknown[] = []
+      const linkOrganizerCalls: unknown[] = []
       const app = buildHonoApp(
         buildDeps({
           ptp: createFakePtpClient({ validateToken: async () => true }),
           storage: createFakeAppSqlStorage({
             organizer: {
-              upsert: async (args) => {
-                upsertCalls.push(args)
+              linkOrganizer: async (args) => {
+                linkOrganizerCalls.push(args)
                 return {
                   discordId: 'user-1',
                   username: 'PlayerOne',
@@ -164,7 +164,7 @@ describe('buildHonoApp', () => {
       const response = await app.request(await signedInteractionsRequest(connectPtpModalSubmit(token)))
 
       expect(response.status).toBe(200)
-      expect(upsertCalls).toHaveLength(1)
+      expect(linkOrganizerCalls).toHaveLength(1)
       const body = (await response.json()) as { data?: { content?: string } }
       expect(body.data?.content).toContain('PlayerOne')
     })

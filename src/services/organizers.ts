@@ -38,7 +38,7 @@ export async function linkOrganizer(
     return err(validationError('Could not read token payload'))
   }
 
-  await deps.storage.organizer.upsert({
+  await deps.storage.organizer.linkOrganizer({
     where: { discordId },
     create: {
       discordId,
@@ -83,12 +83,7 @@ export async function listEligibleGuilds(
   deps: Pick<OrganizerServiceDeps, 'storage'>,
   originGuildId: string
 ): Promise<ListEligibleGuildsResult> {
-  const eligible = await deps.storage.guildSubscription.findMany({
-    where: {
-      unsubscribedAt: null,
-      OR: [{ postingPolicy: 'OPEN' }, { originAllowlist: { some: { allowedOriginGuildId: originGuildId } } }],
-    },
-  })
+  const eligible = await deps.storage.guildSubscription.findEligibleForOrigin(originGuildId)
   const guilds = eligible.map((guild) => ({ guildId: guild.guildId }))
   if (guilds.length > 0) {
     return { guilds, anySubscribed: true }
@@ -96,6 +91,6 @@ export async function listEligibleGuilds(
 
   // Only queried when the first result is empty — avoids a second
   // round-trip in the common (eligible-guilds-exist) case.
-  const subscribedCount = await deps.storage.guildSubscription.count({ where: { unsubscribedAt: null } })
+  const subscribedCount = await deps.storage.guildSubscription.countActiveSubscriptions()
   return { guilds, anySubscribed: subscribedCount > 0 }
 }

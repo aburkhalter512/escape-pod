@@ -126,7 +126,7 @@ async function waitUntil(check: () => Promise<boolean> | boolean, timeoutMs = 40
 async function seedOrganizer(discordId: string, username: string): Promise<void> {
   const stub = getGlobalStub()
   await runInDurableObject(stub, async (instance: EscapePodDurableObject) => {
-    await instance.appStorage.organizer.upsert({
+    await instance.appStorage.organizer.linkOrganizer({
       where: { discordId },
       create: {
         discordId,
@@ -146,7 +146,7 @@ async function seedOrganizer(discordId: string, username: string): Promise<void>
 async function seedGuildSubscription(guildId: string, installedBy: string): Promise<void> {
   const stub = getGlobalStub()
   await runInDurableObject(stub, async (instance: EscapePodDurableObject) => {
-    await instance.appStorage.guildSubscription.create({
+    await instance.appStorage.guildSubscription.createSubscription({
       data: { guildId, broadcastChannelId: `channel-${guildId}`, installedByDiscordId: installedBy },
     })
   })
@@ -155,7 +155,7 @@ async function seedGuildSubscription(guildId: string, installedBy: string): Prom
 async function seedCollectingRound(organizerDiscordId: string): Promise<string> {
   const stub = getGlobalStub()
   return runInDurableObject(stub, async (instance: EscapePodDurableObject) => {
-    const round = await instance.appStorage.podRound.create({
+    const round = await instance.appStorage.podRound.createRoundWithTargets({
       data: {
         organizerDiscordId,
         organizerRoundNumber: 1,
@@ -205,9 +205,7 @@ describe('signing up under real concurrent requests (Phase 4 go/no-go gate)', ()
       const stub = getGlobalStub()
       async function countRecordedSignups(): Promise<number> {
         return runInDurableObject(stub, async (instance: EscapePodDurableObject) => {
-          const signups = await instance.appStorage.podRoundSignup.findMany({
-            where: { podRoundId, status: 'IN' },
-          })
+          const signups = await instance.appStorage.podRoundSignup.findSignedUp(podRoundId)
           return signups.length
         })
       }
@@ -249,7 +247,7 @@ describe('signing up under real concurrent requests (Phase 4 go/no-go gate)', ()
       expect(finalCount).toBeLessThanOrEqual(signupCount)
 
       await runInDurableObject(stub, async (instance: EscapePodDurableObject) => {
-        const round = await instance.appStorage.podRound.findUnique({ where: { id: podRoundId } })
+        const round = await instance.appStorage.podRound.findRoundById(podRoundId)
         expect(round?.status).toBe('POD_CREATED')
       })
     } finally {
@@ -303,10 +301,7 @@ describe('per-organizer round numbering under real concurrent requests (Phase 4 
   async function roundNumbersFor(organizerDiscordId: string): Promise<number[]> {
     const stub = getGlobalStub()
     return runInDurableObject(stub, async (instance: EscapePodDurableObject) => {
-      const rounds = await instance.appStorage.podRound.findMany({
-        where: { organizerDiscordId, status: { in: ['COLLECTING'] } },
-        orderBy: { organizerRoundNumber: 'asc' },
-      })
+      const rounds = await instance.appStorage.podRound.findActiveRoundsForOrganizer(organizerDiscordId, ['COLLECTING'])
       return rounds.map((r) => r.organizerRoundNumber)
     })
   }
