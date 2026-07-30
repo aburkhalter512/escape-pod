@@ -1,15 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import { LocalBackendClient } from './backendClient.js'
-import { createFakePrismaClient, type FakePrismaOverrides } from './testUtils/fakePrismaClient.js'
+import { createFakeAppSqlStorage, type FakeAppStorageOverrides } from './testUtils/fakeAppSqlStorage.js'
 import { createFakePtpClient } from './testUtils/fakePtpClient.js'
 import { stub } from './testUtils/stub.js'
 import type { OnFiringHook } from './services/pods.js'
 
 const TOKEN_KEY = '00'.repeat(32)
 
-function client(overrides: FakePrismaOverrides = {}) {
+function client(overrides: FakeAppStorageOverrides = {}) {
   return new LocalBackendClient({
-    prisma: createFakePrismaClient(overrides),
+    storage: createFakeAppSqlStorage(overrides),
     ptp: createFakePtpClient(),
     tokenEncryptionKey: TOKEN_KEY,
     logger: { error: () => {} },
@@ -17,8 +17,9 @@ function client(overrides: FakePrismaOverrides = {}) {
 }
 
 // startPod's atomic round-numbering claim reads the organizer row back via
-// organizer.update — every startPod test needs this stubbed.
-function stubOrganizerUpdate() {
+// organizer.incrementNextRoundNumber — every startPod test needs this
+// stubbed.
+function stubOrganizerNextRoundNumber() {
   return stub(async (_args: unknown) => ({
     discordId: 'org-1',
     username: 'OrganizerOne',
@@ -30,9 +31,9 @@ function stubOrganizerUpdate() {
 }
 
 describe('LocalBackendClient', () => {
-  it('delegates a first-time subscribeGuild to guildSubscription.create with the right args', async () => {
-    const findUnique = stub(async (_args: unknown) => null)
-    const create = stub(async (_args: unknown) => ({
+  it('delegates a first-time subscribeGuild to guildSubscription.createSubscription with the right args', async () => {
+    const findByGuildId = stub(async (_guildId: string) => null)
+    const createSubscription = stub(async (_args: unknown) => ({
       guildId: 'g1',
       installedByDiscordId: 'admin-1',
       broadcastChannelId: 'channel-1',
@@ -41,16 +42,18 @@ describe('LocalBackendClient', () => {
       installedAt: new Date(),
     }))
 
-    await client({ guildSubscription: { findUnique, create } }).subscribeGuild('g1', 'admin-1', { channelId: 'channel-1' })
+    await client({ guildSubscription: { findByGuildId, createSubscription } }).subscribeGuild('g1', 'admin-1', {
+      channelId: 'channel-1',
+    })
 
-    expect(create.calls).toHaveLength(1)
-    expect(create.calls[0][0]).toEqual({
+    expect(createSubscription.calls).toHaveLength(1)
+    expect(createSubscription.calls[0][0]).toEqual({
       data: { guildId: 'g1', broadcastChannelId: 'channel-1', installedByDiscordId: 'admin-1' },
     })
   })
 
   it('delegates unsubscribeGuild to services/guilds.ts', async () => {
-    const findUnique = stub(async (_args: unknown) => ({
+    const findByGuildId = stub(async (_guildId: string) => ({
       guildId: 'g1',
       installedByDiscordId: 'admin-1',
       broadcastChannelId: 'channel-1',
@@ -58,7 +61,7 @@ describe('LocalBackendClient', () => {
       unsubscribedAt: null,
       installedAt: new Date(),
     }))
-    const update = stub(async (_args: unknown) => ({
+    const markUnsubscribed = stub(async (_guildId: string) => ({
       guildId: 'g1',
       installedByDiscordId: 'admin-1',
       broadcastChannelId: 'channel-1',
@@ -67,40 +70,40 @@ describe('LocalBackendClient', () => {
       installedAt: new Date(),
     }))
 
-    const result = await client({ guildSubscription: { findUnique, update } }).unsubscribeGuild('g1')
+    const result = await client({ guildSubscription: { findByGuildId, markUnsubscribed } }).unsubscribeGuild('g1')
 
     expect(result).toEqual({ wasSubscribed: true })
-    expect(update.calls).toHaveLength(1)
+    expect(markUnsubscribed.calls).toHaveLength(1)
   })
 
-  it('delegates allowOrganizer to guildOrganizerAllowlist.upsert', async () => {
-    const upsert = stub(async (_args: unknown) => ({
+  it('delegates allowOrganizer to guildOrganizerAllowlist.approveOrganizer', async () => {
+    const approveOrganizer = stub(async (_args: unknown) => ({
       guildId: 'g1',
       organizerDiscordId: 'org-1',
       approvedBy: 'admin-1',
       approvedAt: new Date(),
     }))
 
-    await client({ guildOrganizerAllowlist: { upsert } }).allowOrganizer('g1', 'org-1', 'admin-1')
+    await client({ guildOrganizerAllowlist: { approveOrganizer } }).allowOrganizer('g1', 'org-1', 'admin-1')
 
-    expect(upsert.calls).toHaveLength(1)
+    expect(approveOrganizer.calls).toHaveLength(1)
   })
 
-  it('delegates allowGuild to guildOriginAllowlist.upsert', async () => {
-    const upsert = stub(async (_args: unknown) => ({
+  it('delegates allowGuild to guildOriginAllowlist.approveOriginGuild', async () => {
+    const approveOriginGuild = stub(async (_args: unknown) => ({
       guildId: 'g1',
       allowedOriginGuildId: 'origin-g1',
       approvedBy: 'admin-1',
       approvedAt: new Date(),
     }))
 
-    await client({ guildOriginAllowlist: { upsert } }).allowGuild('g1', 'origin-g1', 'admin-1')
+    await client({ guildOriginAllowlist: { approveOriginGuild } }).allowGuild('g1', 'origin-g1', 'admin-1')
 
-    expect(upsert.calls).toHaveLength(1)
+    expect(approveOriginGuild.calls).toHaveLength(1)
   })
 
-  it('delegates listEligibleGuilds to guildSubscription.findMany and maps the result', async () => {
-    const findMany = stub(async (_args: unknown) => [
+  it('delegates listEligibleGuilds to guildSubscription.findEligibleForOrigin and maps the result', async () => {
+    const findEligibleForOrigin = stub(async (_originGuildId: string) => [
       {
         guildId: 'g1',
         installedByDiscordId: 'admin-1',
@@ -111,13 +114,13 @@ describe('LocalBackendClient', () => {
       },
     ])
 
-    const result = await client({ guildSubscription: { findMany } }).listEligibleGuilds('org-1')
+    const result = await client({ guildSubscription: { findEligibleForOrigin } }).listEligibleGuilds('org-1')
 
     expect(result).toEqual({ guilds: [{ guildId: 'g1' }], anySubscribed: true })
   })
 
-  it('delegates startPod to podRound.create and guildSubscription.findMany', async () => {
-    const findMany = stub(async (_args: unknown) => [
+  it('delegates startPod to podRound.createRoundWithTargets and guildSubscription.findActiveByGuildIds', async () => {
+    const findActiveByGuildIds = stub(async (_guildIds: string[]) => [
       {
         guildId: 'g1',
         installedByDiscordId: 'admin-1',
@@ -127,7 +130,7 @@ describe('LocalBackendClient', () => {
         installedAt: new Date(),
       },
     ])
-    const create = stub(async (_args: unknown) => ({
+    const createRoundWithTargets = stub(async (_args: unknown) => ({
       id: 'round-1',
       organizerDiscordId: 'org-1',
       organizerRoundNumber: 1,
@@ -145,9 +148,9 @@ describe('LocalBackendClient', () => {
     }))
 
     const result = await client({
-      guildSubscription: { findMany },
-      podRound: { create },
-      organizer: { update: stubOrganizerUpdate() },
+      guildSubscription: { findActiveByGuildIds },
+      podRound: { createRoundWithTargets },
+      organizer: { incrementNextRoundNumber: stubOrganizerNextRoundNumber() },
     }).startPod({
       organizerDiscordId: 'org-1',
       setCode: 'JTL',
@@ -162,9 +165,9 @@ describe('LocalBackendClient', () => {
     })
   })
 
-  it('forwards originGuildId through startPod to podRound.create', async () => {
-    const findMany = stub(async (_args: unknown) => [])
-    const create = stub(async (args: { data: { originGuildId?: string | null } }) => {
+  it('forwards originGuildId through startPod to podRound.createRoundWithTargets', async () => {
+    const findActiveByGuildIds = stub(async (_guildIds: string[]) => [])
+    const createRoundWithTargets = stub(async (args: { data: { originGuildId?: string | null } }) => {
       expect(args.data.originGuildId).toBe('guild-123')
       return {
         id: 'round-1',
@@ -185,9 +188,9 @@ describe('LocalBackendClient', () => {
     })
 
     const result = await client({
-      guildSubscription: { findMany },
-      podRound: { create },
-      organizer: { update: stubOrganizerUpdate() },
+      guildSubscription: { findActiveByGuildIds },
+      podRound: { createRoundWithTargets },
+      organizer: { incrementNextRoundNumber: stubOrganizerNextRoundNumber() },
     }).startPod({
       organizerDiscordId: 'org-1',
       setCode: 'JTL',
@@ -197,38 +200,37 @@ describe('LocalBackendClient', () => {
     })
 
     expect(result.podRoundId).toBe('round-1')
-    expect(create.calls).toHaveLength(1)
+    expect(createRoundWithTargets.calls).toHaveLength(1)
   })
 
   it('forwards onFiring through to podsService.recordSignup and threads chatUrl/signupDiscordIds back out', async () => {
-    // podRound.findUnique here is generic in AppPrismaClient (called both
-    // with and without `include: { organizer: true }` elsewhere), so a
-    // small function wrapper is needed instead of a plain stub() — same
-    // pattern as services/pods.test.ts and the cancelPod test below.
     const { encryptToken } = await import('./crypto/tokenCrypto.js')
     const TOKEN_KEY_LOCAL = '00'.repeat(32)
-    function findUnique() {
-      return Promise.resolve({
-        id: 'round-1',
-        organizerDiscordId: 'organizer-1',
-        setCode: 'JTL',
-        threshold: 8,
-        status: 'COLLECTING' as const,
-        scheduledFor: null,
-        ptpPodShareId: null,
-        originGuildName: null,
-        originGuildId: null,
-        createdAt: new Date(),
-        organizer: {
-          discordId: 'organizer-1',
-          username: 'OrganizerOne',
-          encryptedToken: encryptToken('a-real-token', TOKEN_KEY_LOCAL),
-          expiresAt: new Date(),
-          linkedAt: new Date(),
-        },
-      }) as never
-    }
-    const upsert = stub(async (_args: unknown) => ({
+    const findRoundWithOrganizerById = stub(async (_id: string) => ({
+      id: 'round-1',
+      organizerDiscordId: 'organizer-1',
+      organizerRoundNumber: 1,
+      setCode: 'JTL',
+      threshold: 8,
+      status: 'COLLECTING' as const,
+      scheduledFor: null,
+      ptpPodShareId: null,
+      originGuildName: null,
+      originGuildId: null,
+      chatChannelId: null,
+      thresholdReachedAt: null,
+      fireFailureNotified: false,
+      createdAt: new Date(),
+      organizer: {
+        discordId: 'organizer-1',
+        username: 'OrganizerOne',
+        encryptedToken: encryptToken('a-real-token', TOKEN_KEY_LOCAL),
+        expiresAt: new Date(),
+        linkedAt: new Date(),
+        nextRoundNumber: 2,
+      },
+    }))
+    const recordSignup = stub(async (_args: unknown) => ({
       podRoundId: 'round-1',
       discordId: 'p8',
       usernameSnapshot: 'P8',
@@ -237,8 +239,8 @@ describe('LocalBackendClient', () => {
       signedUpAt: new Date(),
     }))
     // A full table (POD_CAPACITY: 8) — count is derived from this
-    // findMany's length, not a separate .count() call.
-    const findManySignups = stub(async (_args: unknown) =>
+    // findSignedUp's length, not a separate .count() call.
+    const findSignedUp = stub(async (_podRoundId: string) =>
       ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'].map((discordId) => ({
         podRoundId: 'round-1',
         discordId,
@@ -248,9 +250,9 @@ describe('LocalBackendClient', () => {
         signedUpAt: new Date(),
       }))
     )
-    const findManyTargets = stub(async (_args: unknown) => [])
-    const updateMany = stub(async (_args: unknown) => ({ count: 1 }))
-    const update = stub(async (_args: unknown) => ({
+    const findByRoundId = stub(async (_podRoundId: string) => [])
+    const claimForFiring = stub(async (_id: string, _thresholdReachedAt: Date) => ({ count: 1 }))
+    const markPodCreated = stub(async (_id: string, _data: unknown) => ({
       id: 'round-1',
       organizerDiscordId: 'organizer-1',
       organizerRoundNumber: 1,
@@ -279,10 +281,10 @@ describe('LocalBackendClient', () => {
     }))
 
     const backendClient = new LocalBackendClient({
-      prisma: createFakePrismaClient({
-        podRound: { findUnique, updateMany, update },
-        podRoundSignup: { upsert, findMany: findManySignups },
-        podRoundTarget: { findMany: findManyTargets },
+      storage: createFakeAppSqlStorage({
+        podRound: { findRoundWithOrganizerById, claimForFiring, markPodCreated },
+        podRoundSignup: { recordSignup, findSignedUp },
+        podRoundTarget: { findByRoundId },
       }),
       ptp: createFakePtpClient({ createPod }),
       tokenEncryptionKey: TOKEN_KEY_LOCAL,
@@ -306,28 +308,31 @@ describe('LocalBackendClient', () => {
   it('recordSignup works with onFiring omitted entirely (regression guard)', async () => {
     const { encryptToken } = await import('./crypto/tokenCrypto.js')
     const TOKEN_KEY_LOCAL = '00'.repeat(32)
-    function findUnique() {
-      return Promise.resolve({
-        id: 'round-1',
-        organizerDiscordId: 'organizer-1',
-        setCode: 'JTL',
-        threshold: 8,
-        status: 'COLLECTING' as const,
-        scheduledFor: null,
-        ptpPodShareId: null,
-        originGuildName: null,
-        originGuildId: null,
-        createdAt: new Date(),
-        organizer: {
-          discordId: 'organizer-1',
-          username: 'OrganizerOne',
-          encryptedToken: encryptToken('a-real-token', TOKEN_KEY_LOCAL),
-          expiresAt: new Date(),
-          linkedAt: new Date(),
-        },
-      }) as never
-    }
-    const upsert = stub(async (_args: unknown) => ({
+    const findRoundWithOrganizerById = stub(async (_id: string) => ({
+      id: 'round-1',
+      organizerDiscordId: 'organizer-1',
+      organizerRoundNumber: 1,
+      setCode: 'JTL',
+      threshold: 8,
+      status: 'COLLECTING' as const,
+      scheduledFor: null,
+      ptpPodShareId: null,
+      originGuildName: null,
+      originGuildId: null,
+      chatChannelId: null,
+      thresholdReachedAt: null,
+      fireFailureNotified: false,
+      createdAt: new Date(),
+      organizer: {
+        discordId: 'organizer-1',
+        username: 'OrganizerOne',
+        encryptedToken: encryptToken('a-real-token', TOKEN_KEY_LOCAL),
+        expiresAt: new Date(),
+        linkedAt: new Date(),
+        nextRoundNumber: 2,
+      },
+    }))
+    const recordSignup = stub(async (_args: unknown) => ({
       podRoundId: 'round-1',
       discordId: 'p8',
       usernameSnapshot: 'P8',
@@ -335,20 +340,20 @@ describe('LocalBackendClient', () => {
       status: 'IN' as const,
       signedUpAt: new Date(),
     }))
-    // Below POD_CAPACITY — no fire, so fireRound's own separate findMany
-    // never runs; only recordSignup's own unconditional findMany does.
-    const findManySignups = stub(async (_args: unknown) => [
+    // Below POD_CAPACITY — no fire, so fireRound's own separate findSignedUp
+    // never runs; only recordSignup's own unconditional findSignedUp does.
+    const findSignedUp = stub(async (_podRoundId: string) => [
       { podRoundId: 'round-1', discordId: 'p8', usernameSnapshot: 'P8', sourceGuildId: 'g1', status: 'IN' as const, signedUpAt: new Date() },
       { podRoundId: 'round-1', discordId: 'p9', usernameSnapshot: 'P9', sourceGuildId: 'g1', status: 'IN' as const, signedUpAt: new Date() },
       { podRoundId: 'round-1', discordId: 'p10', usernameSnapshot: 'P10', sourceGuildId: 'g1', status: 'IN' as const, signedUpAt: new Date() },
     ])
-    const findManyTargets = stub(async (_args: unknown) => [])
+    const findByRoundId = stub(async (_podRoundId: string) => [])
 
     const backendClient = new LocalBackendClient({
-      prisma: createFakePrismaClient({
-        podRound: { findUnique },
-        podRoundSignup: { upsert, findMany: findManySignups },
-        podRoundTarget: { findMany: findManyTargets },
+      storage: createFakeAppSqlStorage({
+        podRound: { findRoundWithOrganizerById },
+        podRoundSignup: { recordSignup, findSignedUp },
+        podRoundTarget: { findByRoundId },
       }),
       ptp: createFakePtpClient(),
       tokenEncryptionKey: TOKEN_KEY_LOCAL,
@@ -372,34 +377,8 @@ describe('LocalBackendClient', () => {
     })
   })
 
-  it('delegates cancelPod to podRound.findUnique + update, returning a forbidden error for a non-organizer requester', async () => {
-    // podRound.findUnique is generic in AppPrismaClient (called both with
-    // and without `include: { organizer: true }` elsewhere), so a plain
-    // stub() can't satisfy its type — a small generic wrapper is needed
-    // instead (same pattern as services/pods.test.ts).
-    function findUnique() {
-      return Promise.resolve({
-        id: 'round-1',
-        organizerDiscordId: 'org-1',
-        setCode: 'JTL',
-        threshold: 8,
-        status: 'COLLECTING' as const,
-        scheduledFor: null,
-        ptpPodShareId: null,
-        createdAt: new Date(),
-      }) as never
-    }
-
-    const result = await client({ podRound: { findUnique } }).cancelPod('round-1', 'someone-else')
-
-    expect(result).toEqual({
-      ok: false,
-      error: { kind: 'forbidden', message: 'Only the organizer who started this round can cancel it' },
-    })
-  })
-
-  it('delegates concludeActiveRound to podRound.findFirst + update, returning a validation error for a non-concludable round', async () => {
-    const findFirst = stub(async (_args: unknown) => ({
+  it('delegates cancelPod to podRound.findRoundById, returning a forbidden error for a non-organizer requester', async () => {
+    const findRoundById = stub(async (_id: string) => ({
       id: 'round-1',
       organizerDiscordId: 'org-1',
       organizerRoundNumber: 1,
@@ -415,23 +394,50 @@ describe('LocalBackendClient', () => {
       fireFailureNotified: false,
       createdAt: new Date(),
     }))
-    function findUnique() {
-      return Promise.resolve({
-        id: 'round-1',
-        organizerDiscordId: 'org-1',
-        setCode: 'JTL',
-        threshold: 8,
-        status: 'COLLECTING' as const,
-        scheduledFor: null,
-        ptpPodShareId: null,
-        originGuildName: null,
-        originGuildId: null,
-        chatChannelId: null,
-        createdAt: new Date(),
-      }) as never
-    }
 
-    const result = await client({ podRound: { findFirst, findUnique } }).concludeActiveRound('org-1')
+    const result = await client({ podRound: { findRoundById } }).cancelPod('round-1', 'someone-else')
+
+    expect(result).toEqual({
+      ok: false,
+      error: { kind: 'forbidden', message: 'Only the organizer who started this round can cancel it' },
+    })
+  })
+
+  it('delegates concludeActiveRound to podRound.findLatestRoundForOrganizer + findRoundById, returning a validation error for a non-concludable round', async () => {
+    const findLatestRoundForOrganizer = stub(async (_organizerDiscordId: string) => ({
+      id: 'round-1',
+      organizerDiscordId: 'org-1',
+      organizerRoundNumber: 1,
+      setCode: 'JTL',
+      threshold: 8,
+      status: 'COLLECTING' as const,
+      scheduledFor: null,
+      ptpPodShareId: null,
+      originGuildName: null,
+      originGuildId: null,
+      chatChannelId: null,
+      thresholdReachedAt: null,
+      fireFailureNotified: false,
+      createdAt: new Date(),
+    }))
+    const findRoundById = stub(async (_id: string) => ({
+      id: 'round-1',
+      organizerDiscordId: 'org-1',
+      organizerRoundNumber: 1,
+      setCode: 'JTL',
+      threshold: 8,
+      status: 'COLLECTING' as const,
+      scheduledFor: null,
+      ptpPodShareId: null,
+      originGuildName: null,
+      originGuildId: null,
+      chatChannelId: null,
+      thresholdReachedAt: null,
+      fireFailureNotified: false,
+      createdAt: new Date(),
+    }))
+
+    const result = await client({ podRound: { findLatestRoundForOrganizer, findRoundById } }).concludeActiveRound('org-1')
 
     expect(result).toEqual({
       ok: false,

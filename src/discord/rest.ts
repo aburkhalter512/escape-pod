@@ -1,4 +1,3 @@
-import { REST } from '@discordjs/rest'
 import type {
   RESTPostAPIChannelMessageJSONBody,
   RESTPostAPIChannelMessageResult,
@@ -17,13 +16,9 @@ import { HttpDiscordRest } from './httpDiscordRest.js'
 // The contract the app depends on for talking to Discord — scoped to the
 // operations we actually perform, with real response types (no
 // `unknown`). See testUtils/fakeDiscordRest.ts. The actual route/body
-// logic (HttpDiscordRest) lives in httpDiscordRest.ts, shared by both
-// platforms — this file only has the interface plus the AWS-specific
-// factory below, which is the one place that needs a real
-// @discordjs/rest runtime import; discord/restWorkers.ts (Workers) never
-// imports this file's createDiscordRest, only HttpDiscordRest itself
-// from httpDiscordRest.ts, so @discordjs/rest's actual code never ends
-// up in the Workers bundle.
+// logic (HttpDiscordRest) lives in httpDiscordRest.ts, shared with
+// discord/restWorkers.ts (Workers) — this file just re-exports it
+// alongside the interface, so both call sites can import from one place.
 export interface DiscordRestClient {
   // A bot's user ID is always identical to its application/client ID
   // (standard Discord convention) — exposed here rather than fetched via
@@ -82,11 +77,3 @@ export interface DiscordRestClient {
 }
 
 export { HttpDiscordRest }
-
-// Pure REST client — no gateway connection. Used for anything the
-// interaction response itself can't do inline, e.g. editing a message in a
-// *different* guild than the one that triggered the interaction (needed for
-// the cross-guild shared-counter sync in INTEGRATIONS.md §7.5 step 3).
-export function createDiscordRest(botToken: string, botUserId: string): DiscordRestClient {
-  return new HttpDiscordRest(new REST({ version: '10' }).setToken(botToken), botUserId)
-}

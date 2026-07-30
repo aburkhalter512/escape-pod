@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Prisma } from '@prisma/client'
-import { createFakePrismaClient } from '../testUtils/fakePrismaClient.js'
+import { createFakeAppSqlStorage } from '../testUtils/fakeAppSqlStorage.js'
 import { createFakePtpClient } from '../testUtils/fakePtpClient.js'
 import { createFakeDiscordRest } from '../testUtils/fakeDiscordRest.js'
 import { stub } from '../testUtils/stub.js'
@@ -10,22 +9,10 @@ import { expireOverduePodRounds } from './expirePodRounds.js'
 
 const TOKEN_KEY = '00'.repeat(32)
 
-// podRound.findMany is generic (see prismaClient.ts — same reasoning as
-// findUnique there), so a plain fixed-return stub doesn't structurally
-// satisfy it. Mirrors services/pods.test.ts's stubPodRoundFindMany.
-function stubPodRoundFindMany<Result>(impl: () => Promise<Result[]>) {
-  function findMany<T extends Prisma.PodRoundFindManyArgs>(
-    _args: Prisma.SelectSubset<T, Prisma.PodRoundFindManyArgs>
-  ): Promise<Prisma.PodRoundGetPayload<T>[]> {
-    return impl() as unknown as Promise<Prisma.PodRoundGetPayload<T>[]>
-  }
-  return findMany
-}
-
-// podRound.findMany is always called with `include: { organizer: true }`
-// (see prismaClient.ts) since a round that reached its threshold needs the
-// organizer's token to fire — so every fixture here carries one, even
-// though the expire-path tests below never actually read it.
+// findOverdueRounds always includes the organizer (a round that reached
+// its threshold needs their token to fire) — so every fixture here
+// carries one, even though the expire-path tests below never actually
+// read it.
 function fakePodRoundRow(
   overrides: { threshold?: number; originGuildName?: string | null; originGuildId?: string | null } = {}
 ) {
@@ -76,7 +63,7 @@ describe('expireOverduePodRounds', () => {
       throw new Error('editMessage should not have been called')
     })
     const deps: ExpirePodRoundsDeps = {
-      prisma: createFakePrismaClient({ podRound: { findMany: stub(async () => []) } }),
+      storage: createFakeAppSqlStorage({ podRound: { findOverdueRounds: stub(async () => []) } }),
       ptp: createFakePtpClient(),
       tokenEncryptionKey: TOKEN_KEY,
       logger: { error: () => {} },
@@ -90,22 +77,22 @@ describe('expireOverduePodRounds', () => {
   it('expires an overdue round (below its own threshold) and edits every target with a recorded message id', async () => {
     const editMessage = stub(async (_channelId: string, _messageId: string, _body: unknown) => ({}) as never)
     const deps: ExpirePodRoundsDeps = {
-      prisma: createFakePrismaClient({
+      storage: createFakeAppSqlStorage({
         podRound: {
-          findMany: stubPodRoundFindMany(async () => [fakePodRoundRow({ threshold: 6 })]),
-          updateMany: stub(async () => ({ count: 1 })),
+          findOverdueRounds: stub(async () => [fakePodRoundRow({ threshold: 6 })]),
+          claimExpired: stub(async () => ({ count: 1 })),
         },
-        // below threshold: 6 — count is derived from findMany's length,
-        // not a separate .count() call.
+        // below threshold: 6 — count is derived from findSignedUp's
+        // length, not a separate .count() call.
         podRoundSignup: {
-          findMany: stub(async () => [
+          findSignedUp: stub(async () => [
             fakePodRoundSignupRow({ discordId: 'p1' }),
             fakePodRoundSignupRow({ discordId: 'p2' }),
             fakePodRoundSignupRow({ discordId: 'p3' }),
           ]),
         },
         podRoundTarget: {
-          findMany: stub(async () => [
+          findByRoundId: stub(async () => [
             { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
             { podRoundId: 'round-1', guildId: 'g2', channelId: 'channel-2', messageId: null, approvalStatus: null, postedAt: new Date() },
           ]),
@@ -126,16 +113,16 @@ describe('expireOverduePodRounds', () => {
   it('fires (does not expire) an overdue round that reached its own threshold, short of a full table', async () => {
     const editMessage = stub(async (_channelId: string, _messageId: string, _body: unknown) => ({}) as never)
     const deps: ExpirePodRoundsDeps = {
-      prisma: createFakePrismaClient({
+      storage: createFakeAppSqlStorage({
         podRound: {
-          findMany: stubPodRoundFindMany(async () => [fakePodRoundRow({ threshold: 2 })]),
-          updateMany: stub(async () => ({ count: 1 })),
-          update: stub(async () => fakePodRoundRow()),
+          findOverdueRounds: stub(async () => [fakePodRoundRow({ threshold: 2 })]),
+          claimForFiring: stub(async () => ({ count: 1 })),
+          markPodCreated: stub(async () => fakePodRoundRow()),
         },
         // >= threshold (2), short of POD_CAPACITY (8) — count is derived
-        // from findMany's length, not a separate .count() call.
+        // from findSignedUp's length, not a separate .count() call.
         podRoundSignup: {
-          findMany: stub(async () => [
+          findSignedUp: stub(async () => [
             fakePodRoundSignupRow({ discordId: 'p1' }),
             fakePodRoundSignupRow({ discordId: 'p2' }),
             fakePodRoundSignupRow({ discordId: 'p3' }),
@@ -144,7 +131,7 @@ describe('expireOverduePodRounds', () => {
           ]),
         },
         podRoundTarget: {
-          findMany: stub(async () => [
+          findByRoundId: stub(async () => [
             { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
           ]),
         },
@@ -173,21 +160,21 @@ describe('expireOverduePodRounds', () => {
       return {} as never
     })
     const expiredDeps: ExpirePodRoundsDeps = {
-      prisma: createFakePrismaClient({
+      storage: createFakeAppSqlStorage({
         podRound: {
-          findMany: stubPodRoundFindMany(async () => [fakePodRoundRow({ threshold: 6, originGuildName: 'Expired-From Guild' })]),
-          updateMany: stub(async () => ({ count: 1 })),
+          findOverdueRounds: stub(async () => [fakePodRoundRow({ threshold: 6, originGuildName: 'Expired-From Guild' })]),
+          claimExpired: stub(async () => ({ count: 1 })),
         },
-        // below threshold: 6 — count is derived from findMany's length.
+        // below threshold: 6 — count is derived from findSignedUp's length.
         podRoundSignup: {
-          findMany: stub(async () => [
+          findSignedUp: stub(async () => [
             fakePodRoundSignupRow({ discordId: 'p1' }),
             fakePodRoundSignupRow({ discordId: 'p2' }),
             fakePodRoundSignupRow({ discordId: 'p3' }),
           ]),
         },
         podRoundTarget: {
-          findMany: stub(async () => [
+          findByRoundId: stub(async () => [
             { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
           ]),
         },
@@ -204,16 +191,16 @@ describe('expireOverduePodRounds', () => {
       return {} as never
     })
     const firedDeps: ExpirePodRoundsDeps = {
-      prisma: createFakePrismaClient({
+      storage: createFakeAppSqlStorage({
         podRound: {
-          findMany: stubPodRoundFindMany(async () => [fakePodRoundRow({ threshold: 2, originGuildName: 'Fired-From Guild' })]),
-          updateMany: stub(async () => ({ count: 1 })),
-          update: stub(async () => fakePodRoundRow()),
+          findOverdueRounds: stub(async () => [fakePodRoundRow({ threshold: 2, originGuildName: 'Fired-From Guild' })]),
+          claimForFiring: stub(async () => ({ count: 1 })),
+          markPodCreated: stub(async () => fakePodRoundRow()),
         },
         // >= threshold (2), short of POD_CAPACITY (8) — count is derived
-        // from findMany's length.
+        // from findSignedUp's length.
         podRoundSignup: {
-          findMany: stub(async () => [
+          findSignedUp: stub(async () => [
             fakePodRoundSignupRow({ discordId: 'p1' }),
             fakePodRoundSignupRow({ discordId: 'p2' }),
             fakePodRoundSignupRow({ discordId: 'p3' }),
@@ -222,7 +209,7 @@ describe('expireOverduePodRounds', () => {
           ]),
         },
         podRoundTarget: {
-          findMany: stub(async () => [
+          findByRoundId: stub(async () => [
             { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
           ]),
         },
@@ -248,14 +235,14 @@ describe('expireOverduePodRounds', () => {
       return {} as never
     })
     const deps: ExpirePodRoundsDeps = {
-      prisma: createFakePrismaClient({
+      storage: createFakeAppSqlStorage({
         podRound: {
-          findMany: stubPodRoundFindMany(async () => [fakePodRoundRow({ threshold: 2 })]),
-          updateMany: stub(async () => ({ count: 1 })),
-          update: stub(async () => fakePodRoundRow()),
+          findOverdueRounds: stub(async () => [fakePodRoundRow({ threshold: 2 })]),
+          claimForFiring: stub(async () => ({ count: 1 })),
+          markPodCreated: stub(async () => fakePodRoundRow()),
         },
         podRoundSignup: {
-          findMany: stub(async () => [
+          findSignedUp: stub(async () => [
             fakePodRoundSignupRow({ discordId: 'p1' }),
             fakePodRoundSignupRow({ discordId: 'p2' }),
             fakePodRoundSignupRow({ discordId: 'p3' }),
@@ -264,7 +251,7 @@ describe('expireOverduePodRounds', () => {
           ]),
         },
         podRoundTarget: {
-          findMany: stub(async () => [
+          findByRoundId: stub(async () => [
             { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
           ]),
         },
@@ -294,22 +281,22 @@ describe('expireOverduePodRounds', () => {
     const createDmChannel = stub(async (userId: string) => ({ id: `dm-${userId}` }) as never)
     const postMessage = stub(async (_channelId: string, _body: unknown) => ({}) as never)
     const deps: ExpirePodRoundsDeps = {
-      prisma: createFakePrismaClient({
+      storage: createFakeAppSqlStorage({
         podRound: {
-          findMany: stubPodRoundFindMany(async () => [fakePodRoundRow({ threshold: 2, originGuildId: 'origin-guild-1' })]),
-          updateMany: stub(async () => ({ count: 1 })),
-          update: stub(async () => fakePodRoundRow()),
+          findOverdueRounds: stub(async () => [fakePodRoundRow({ threshold: 2, originGuildId: 'origin-guild-1' })]),
+          claimForFiring: stub(async () => ({ count: 1 })),
+          markPodCreated: stub(async () => fakePodRoundRow()),
         },
-        // count is derived from this findMany's length, not a separate
+        // count is derived from this findSignedUp's length, not a separate
         // .count() call — 2 rows still clears this round's threshold (2).
         podRoundSignup: {
-          findMany: stub(async () => [
+          findSignedUp: stub(async () => [
             { podRoundId: 'round-1', discordId: 'p1', usernameSnapshot: 'P1', sourceGuildId: 'g1', status: 'IN' as const, signedUpAt: new Date() },
             { podRoundId: 'round-1', discordId: 'p2', usernameSnapshot: 'P2', sourceGuildId: 'g1', status: 'IN' as const, signedUpAt: new Date() },
           ]),
         },
         podRoundTarget: {
-          findMany: stub(async () => [
+          findByRoundId: stub(async () => [
             { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
           ]),
         },
@@ -364,15 +351,15 @@ describe('expireOverduePodRounds', () => {
     const createDmChannel = stub(async (userId: string) => ({ id: `dm-${userId}` }) as never)
     const postMessage = stub(async (_channelId: string, _body: unknown) => ({}) as never)
     const deps: ExpirePodRoundsDeps = {
-      prisma: createFakePrismaClient({
+      storage: createFakeAppSqlStorage({
         podRound: {
-          findMany: stubPodRoundFindMany(async () => [fakePodRoundRow({ threshold: 2, originGuildId: null })]),
-          updateMany: stub(async () => ({ count: 1 })),
-          update: stub(async () => fakePodRoundRow()),
+          findOverdueRounds: stub(async () => [fakePodRoundRow({ threshold: 2, originGuildId: null })]),
+          claimForFiring: stub(async () => ({ count: 1 })),
+          markPodCreated: stub(async () => fakePodRoundRow()),
         },
-        // >= threshold (2) — count is derived from this findMany's length.
+        // >= threshold (2) — count is derived from this findSignedUp's length.
         podRoundSignup: {
-          findMany: stub(async () => [
+          findSignedUp: stub(async () => [
             fakePodRoundSignupRow({ discordId: 'p1' }),
             fakePodRoundSignupRow({ discordId: 'p2' }),
             fakePodRoundSignupRow({ discordId: 'p3' }),
@@ -381,7 +368,7 @@ describe('expireOverduePodRounds', () => {
           ]),
         },
         podRoundTarget: {
-          findMany: stub(async () => [
+          findByRoundId: stub(async () => [
             { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
           ]),
         },
@@ -414,22 +401,22 @@ describe('expireOverduePodRounds', () => {
     })
     const errors: unknown[] = []
     const deps: ExpirePodRoundsDeps = {
-      prisma: createFakePrismaClient({
+      storage: createFakeAppSqlStorage({
         podRound: {
-          findMany: stubPodRoundFindMany(async () => [fakePodRoundRow({ threshold: 6 })]),
-          updateMany: stub(async () => ({ count: 1 })),
+          findOverdueRounds: stub(async () => [fakePodRoundRow({ threshold: 6 })]),
+          claimExpired: stub(async () => ({ count: 1 })),
         },
-        // below threshold: 6 — count is derived from this findMany's
+        // below threshold: 6 — count is derived from this findSignedUp's
         // length, not a separate .count() call.
         podRoundSignup: {
-          findMany: stub(async () => [
+          findSignedUp: stub(async () => [
             fakePodRoundSignupRow({ discordId: 'p1' }),
             fakePodRoundSignupRow({ discordId: 'p2' }),
             fakePodRoundSignupRow({ discordId: 'p3' }),
           ]),
         },
         podRoundTarget: {
-          findMany: stub(async () => [
+          findByRoundId: stub(async () => [
             { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
           ]),
         },
