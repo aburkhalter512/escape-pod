@@ -1,51 +1,27 @@
 name: Deploy Cloudflare
 
-# Runs on both cloudflare-migration (where this whole migration has
-# landed, phase by phase) and main (once merged there too) — doesn't
-# compete with ci.yml/deploy-app.yml's separate AWS pipeline, which keeps
-# running independently on main pushes. Node 22 here (not 20, like
-# ci.yml) since wrangler requires it; this has no bearing on the AWS
-# side's Node 20 runtime/Dockerfile.
-#
-# ci.yml only triggers on pushes to main and on pull requests — pushes
-# directly to cloudflare-migration (how every phase of this migration
-# landed before the eventual merge into main) never triggered it, so
-# nothing was otherwise verifying the AWS/Postgres side of this branch in
-# CI at all, despite "keep both platforms independently buildable" being
-# a governing requirement for the whole migration. Phase 8 folds ci.yml's
-# AWS-side verification steps in here too (Postgres service, build,
-# migration-apply check, real integration tests, Docker build) alongside
-# the Cloudflare-specific ones, so a single workflow run actually proves
-# both platforms still build and pass their tests, on either branch.
+# Triggered by the CI workflow succeeding on main, rather than its own
+# push trigger — mirrors deploy-app.yml's exact pattern, so both
+# platforms only ever deploy code that already passed the full
+# typecheck/lint/test/build/migration-check/wrangler-dry-run gate in
+# ci.yml. No longer triggers on cloudflare-migration (merged into main;
+# builds/tests on other branches happen via ci.yml's pull_request
+# trigger, but never deploy).
 on:
-  push:
-    branches: [cloudflare-migration, main]
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
 
 jobs:
-  verify-and-deploy:
+  deploy:
+    if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: draft_pod
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/draft_pod
-      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/draft_pod
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - uses: actions/setup-node@v4
         with:
@@ -54,58 +30,17 @@ jobs:
 
       - run: npm ci
 
-      - run: npm run typecheck
-
-      - run: npm run typecheck:cloudflare
-
-      - run: npm run lint
-
-      - run: npm test
-
-      # AWS-side build — this branch's whole premise is that app.ts/
-      # server.ts and the rest of the AWS-reachable compile graph stay
-      # buildable unmodified alongside the Cloudflare-specific additions;
-      # this is what actually proves that, the same way ci.yml's own
-      # build step does for main.
-      - run: npm run build
-
-      # Catches a schema change that was never turned into a migration —
-      # same check ci.yml runs, against the Postgres service above.
-      - name: Verify Prisma migrations apply cleanly
-        run: npm run prisma:deploy
-
-      # Real Postgres + a real Fastify app (src/app.ts's buildApp) — the
-      # AWS code path's own proof, same as ci.yml's equivalent step.
-      - name: Run integration tests
-        run: npm run test:integration:run
-
-      # Real DO SQLite via @cloudflare/vitest-pool-workers — added as
-      # soon as Phase 1's storage layer existed to test against, rather
-      # than waiting for Phase 8 as originally planned; no reason to
-      # leave CI blind to this for 7 more phases once it's meaningful.
-      - run: npm run test:workers
-
-      # Build-only, same as ci.yml's equivalent step — catches a broken
-      # Dockerfile before merge, doesn't push anywhere.
-      - name: Build container image
-        run: docker build -t escape-pod:ci .
-
-      # Validates the Worker bundles and every binding resolves, without
-      # needing real Cloudflare credentials — safe to run on every push.
-      - name: Dry-run deploy
-        run: npx wrangler deploy --dry-run
-
-      # Real deploy — reuses the existing (AWS production) Discord
-      # Application (user decision, see wrangler.toml's [vars] comment),
-      # not a second throwaway one as Phase 9 originally planned, so only
-      # the two real secrets durableObject.ts's Env actually declares are
-      # needed here: DISCORD_BOT_TOKEN, TOKEN_ENCRYPTION_KEY. No
-      # BOT_API_KEY — that's an AWS-only bearer-auth concept for the
-      # /organizers, /guilds, /pods admin REST surface, which honoApp.ts
-      # deliberately never ports to Hono (see its own comment on why).
-      # wrangler-action's `secrets:` input runs `wrangler secret put` for
-      # each listed name using the identically-named env var below —
-      # idempotent (just re-syncs the same value) if nothing's changed.
+      # Reuses the existing (AWS production) Discord Application (user
+      # decision, see wrangler.toml's [vars] comment), not a second
+      # throwaway one, so only the two real secrets durableObject.ts's
+      # Env actually declares are needed here: DISCORD_BOT_TOKEN,
+      # TOKEN_ENCRYPTION_KEY. No BOT_API_KEY — that's an AWS-only
+      # bearer-auth concept for the /organizers, /guilds, /pods admin
+      # REST surface, which honoApp.ts deliberately never ports to Hono
+      # (see its own comment on why). wrangler-action's `secrets:` input
+      # runs `wrangler secret put` for each listed name using the
+      # identically-named env var below — idempotent (just re-syncs the
+      # same value) if nothing's changed.
       - name: Deploy
         uses: cloudflare/wrangler-action@v3
         with:
