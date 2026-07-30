@@ -1,5 +1,11 @@
 name: CI
 
+# Covers both platforms (AWS/Postgres and Cloudflare Workers/Durable
+# Objects) in one run — folded together once the cloudflare-migration
+# branch merged into main, since there's no longer a second long-lived
+# branch that needed its own separate verification workflow. Node 22
+# (not 20) since wrangler requires it; the AWS side runs fine on 22 too
+# (package.json's engines only requires >=20).
 on:
   push:
     branches: [main]
@@ -39,12 +45,14 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - run: npm ci
 
       - run: npm run typecheck
+
+      - run: npm run typecheck:cloudflare
 
       - run: npm run lint
 
@@ -69,7 +77,15 @@ jobs:
       - name: Run integration tests
         run: npm run test:integration:run
 
+      # Real DO SQLite via @cloudflare/vitest-pool-workers.
+      - run: npm run test:workers
+
       # Build-only — catches a broken Dockerfile before merge. Doesn't
       # push anywhere; no registry is configured.
       - name: Build container image
         run: docker build -t escape-pod:ci .
+
+      # Validates the Worker bundles and every binding resolves, without
+      # needing real Cloudflare credentials — safe to run on every push/PR.
+      - name: Dry-run Cloudflare deploy
+        run: npx wrangler deploy --dry-run
