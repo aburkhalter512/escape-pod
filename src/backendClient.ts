@@ -7,9 +7,7 @@
 // interface, so none of them needed to change for that merge.
 
 import type { PostingPolicy } from '@prisma/client'
-import type { AppPrismaClient } from './prismaClient.js'
 import type { AppStorage } from './storage/appStorage.js'
-import { createPrismaAppStorage } from './storage/prismaAppStorage.js'
 import type { PtpClient } from './ptp/client.js'
 import type { Logger, Result } from './services/errors.js'
 import type { ActiveRoundSummary, ConcludeActiveRoundResult, OnFiringHook } from './services/pods.js'
@@ -103,28 +101,17 @@ interface ServiceDeps {
   logger: Logger
 }
 
-// Two accepted shapes, kept as a union rather than one canonical type, so
-// each platform passes exactly what it already naturally has on hand:
-// app.ts/server.ts (AWS) construct a real Prisma client and never need to
-// change what they pass in, while honoApp.ts (Worker/DO) already has a
-// real AppStorage — this.appStorage, built once in durableObject.ts's
-// constructor — with no Prisma client to adapt from in the first place.
-// See storage/appStorage.ts for the shared AppStorage contract both
-// platforms' services/*.ts calls depend on.
-export type LocalBackendClientDeps =
-  | { prisma: AppPrismaClient; ptp: PtpClient; tokenEncryptionKey: string; logger: Logger }
-  | { storage: AppStorage; ptp: PtpClient; tokenEncryptionKey: string; logger: Logger }
+// honoApp.ts (Worker/DO) already has a real AppStorage on hand —
+// this.appStorage, built once in durableObject.ts's constructor. See
+// storage/appStorage.ts for the shared AppStorage contract services/*.ts
+// depends on.
+export type LocalBackendClientDeps = { storage: AppStorage; ptp: PtpClient; tokenEncryptionKey: string; logger: Logger }
 
 export class LocalBackendClient implements BackendClient {
   private readonly serviceDeps: ServiceDeps
 
   constructor(deps: LocalBackendClientDeps) {
-    this.serviceDeps = {
-      storage: 'prisma' in deps ? createPrismaAppStorage(deps.prisma) : deps.storage,
-      ptp: deps.ptp,
-      tokenEncryptionKey: deps.tokenEncryptionKey,
-      logger: deps.logger,
-    }
+    this.serviceDeps = deps
   }
 
   // §8.2: submit a pasted PTP token for validation + storage.

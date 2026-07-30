@@ -10,7 +10,7 @@ import type { PtpClient } from './ptp/client.js'
 import type { Logger } from './services/errors.js'
 import { expireOverduePodRounds } from './jobs/expirePodRounds.js'
 import { retryOverdueFailedFires } from './jobs/retryFailedFires.js'
-import { refreshExpiringTokensForStorage } from './jobs/refreshTokens.js'
+import { refreshExpiringTokens } from './jobs/refreshTokens.js'
 
 // The two cron expressions wrangler.toml's [triggers] declares — matched
 // literally against event.cron in scheduled() below. One-minute covers
@@ -115,7 +115,7 @@ export class EscapePodDurableObject extends DurableObject<Env> {
       return
     }
     if (cron === TOKEN_REFRESH_CRON) {
-      await refreshExpiringTokensForStorage(this.appStorage, this.ptp, this.tokenEncryptionKey)
+      await refreshExpiringTokens(this.appStorage, this.ptp, this.tokenEncryptionKey)
       return
     }
     this.logger.error({ cron }, 'runScheduledJob: unrecognized cron expression')

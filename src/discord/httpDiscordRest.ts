@@ -16,14 +16,10 @@ import type { RequestData, RouteLike } from '@discordjs/rest'
 import type { DiscordRestClient } from './rest.js'
 
 // The DiscordRestClient logic (route/body shapes, response typing) shared
-// by both platforms — split out of rest.ts specifically so
-// discord/restWorkers.ts (Workers) can reuse this class without pulling
-// @discordjs/rest's actual runtime into the Workers bundle. The
-// RequestData/RouteLike imports above are type-only (erased at compile
-// time), so importing this file never bundles @discordjs/rest itself;
-// only rest.ts's createDiscordRest (a real `import { REST } from
-// '@discordjs/rest'`) does that, and only the AWS side ever imports
-// createDiscordRest.
+// by rest.ts and discord/restWorkers.ts. The RequestData/RouteLike
+// imports above are type-only (erased at compile time), so importing
+// this file never bundles @discordjs/rest's actual runtime into the
+// Workers bundle.
 export interface RawRestClient {
   get(fullRoute: RouteLike, options?: RequestData): Promise<unknown>
   post(fullRoute: RouteLike, options?: RequestData): Promise<unknown>
@@ -32,11 +28,9 @@ export interface RawRestClient {
 }
 
 // The only place `unknown` gets cast away — every other consumer works
-// with DiscordRestClient's real response types directly. rest.ts's
-// createDiscordRest constructs this with a real @discordjs/rest REST
-// instance; restWorkers.ts's createFetchDiscordRest constructs it with a
-// plain-fetch-based RawRestClient instead — same class, same route/body
-// logic, different transport underneath.
+// with DiscordRestClient's real response types directly. restWorkers.ts's
+// createFetchDiscordRest constructs this with a plain-fetch-based
+// RawRestClient.
 export class HttpDiscordRest implements DiscordRestClient {
   #raw: RawRestClient
   readonly botUserId: string

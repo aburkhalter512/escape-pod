@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { Prisma } from '@prisma/client'
-import { createFakePrismaClient } from '../testUtils/fakePrismaClient.js'
+import { createFakeAppSqlStorage } from '../testUtils/fakeAppSqlStorage.js'
 import { createFakePtpClient } from '../testUtils/fakePtpClient.js'
 import { createFakeDiscordRest } from '../testUtils/fakeDiscordRest.js'
 import { stub } from '../testUtils/stub.js'
@@ -12,18 +11,6 @@ const TOKEN_KEY = '00'.repeat(32)
 const NOW = new Date('2026-01-01T12:00:00Z')
 const WITHIN_WINDOW = new Date(NOW.getTime() - 10 * 60 * 1000) // 10 min ago, < 30 min retry window
 const PAST_WINDOW = new Date(NOW.getTime() - 31 * 60 * 1000) // 31 min ago, > 30 min retry window
-
-// podRound.findMany is generic (see prismaClient.ts), so a plain fixed-return
-// stub doesn't structurally satisfy it — mirrors expirePodRounds.test.ts's
-// own stubPodRoundFindMany.
-function stubPodRoundFindMany<Result>(impl: () => Promise<Result[]>) {
-  function findMany<T extends Prisma.PodRoundFindManyArgs>(
-    _args: Prisma.SelectSubset<T, Prisma.PodRoundFindManyArgs>
-  ): Promise<Prisma.PodRoundGetPayload<T>[]> {
-    return impl() as unknown as Promise<Prisma.PodRoundGetPayload<T>[]>
-  }
-  return findMany
-}
 
 function fakePodRoundRow(
   overrides: {
@@ -79,7 +66,7 @@ describe('retryOverdueFailedFires', () => {
       throw new Error('editMessage should not have been called')
     })
     const deps: RetryFailedFiresDeps = {
-      prisma: createFakePrismaClient({ podRound: { findMany: stub(async () => []) } }),
+      storage: createFakeAppSqlStorage({ podRound: { findStuckThresholdReachedRounds: stub(async () => []) } }),
       ptp: createFakePtpClient(),
       tokenEncryptionKey: TOKEN_KEY,
       logger: { error: () => {} },
@@ -102,19 +89,19 @@ describe('retryOverdueFailedFires', () => {
       const createDmChannel = stub(async (userId: string) => ({ id: `dm-${userId}` }) as never)
       const postMessage = stub(async (_channelId: string, _body: unknown) => ({}) as never)
       const deps: RetryFailedFiresDeps = {
-        prisma: createFakePrismaClient({
+        storage: createFakeAppSqlStorage({
           podRound: {
-            findMany: stubPodRoundFindMany(async () => [fakePodRoundRow({ chatChannelId: 'chat-channel-1' })]),
-            update: stub(async () => fakePodRoundRow()),
+            findStuckThresholdReachedRounds: stub(async () => [fakePodRoundRow({ chatChannelId: 'chat-channel-1' })]),
+            markPodCreated: stub(async () => fakePodRoundRow()),
           },
           podRoundSignup: {
-            findMany: stub(async () => [
+            findSignedUp: stub(async () => [
               fakePodRoundSignupRow({ discordId: 'p1' }),
               fakePodRoundSignupRow({ discordId: 'p2' }),
             ]),
           },
           podRoundTarget: {
-            findMany: stub(async () => [
+            findByRoundId: stub(async () => [
               { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
             ]),
           },
@@ -172,14 +159,14 @@ describe('retryOverdueFailedFires', () => {
         throw new Error('postMessage should not have been called for a round with no chat channel')
       })
       const deps: RetryFailedFiresDeps = {
-        prisma: createFakePrismaClient({
+        storage: createFakeAppSqlStorage({
           podRound: {
-            findMany: stubPodRoundFindMany(async () => [fakePodRoundRow({ chatChannelId: null })]),
-            update: stub(async () => fakePodRoundRow()),
+            findStuckThresholdReachedRounds: stub(async () => [fakePodRoundRow({ chatChannelId: null })]),
+            markPodCreated: stub(async () => fakePodRoundRow()),
           },
-          podRoundSignup: { findMany: stub(async () => [fakePodRoundSignupRow({ discordId: 'p1' })]) },
+          podRoundSignup: { findSignedUp: stub(async () => [fakePodRoundSignupRow({ discordId: 'p1' })]) },
           podRoundTarget: {
-            findMany: stub(async () => [
+            findByRoundId: stub(async () => [
               { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
             ]),
           },
@@ -218,16 +205,16 @@ describe('retryOverdueFailedFires', () => {
         throw new Error('createDmChannel should not have been called for a gave-up round')
       })
       const deps: RetryFailedFiresDeps = {
-        prisma: createFakePrismaClient({
+        storage: createFakeAppSqlStorage({
           podRound: {
-            findMany: stubPodRoundFindMany(async () => [fakePodRoundRow({ thresholdReachedAt: PAST_WINDOW })]),
-            update: stub(async (args: unknown) => {
-              expect(args).toEqual({ where: { id: 'round-1' }, data: { fireFailureNotified: true } })
-              return fakePodRoundRow({ fireFailureNotified: true }) as never
+            findStuckThresholdReachedRounds: stub(async () => [fakePodRoundRow({ thresholdReachedAt: PAST_WINDOW })]),
+            markFireFailureNotified: stub(async (id: string) => {
+              expect(id).toBe('round-1')
+              return fakePodRoundRow({ fireFailureNotified: true })
             }),
           },
           podRoundTarget: {
-            findMany: stub(async () => [
+            findByRoundId: stub(async () => [
               { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
               { podRoundId: 'round-1', guildId: 'g2', channelId: 'channel-2', messageId: null, approvalStatus: null, postedAt: new Date() },
             ]),
@@ -264,13 +251,13 @@ describe('retryOverdueFailedFires', () => {
       })
       const errors: unknown[] = []
       const deps: RetryFailedFiresDeps = {
-        prisma: createFakePrismaClient({
+        storage: createFakeAppSqlStorage({
           podRound: {
-            findMany: stubPodRoundFindMany(async () => [fakePodRoundRow({ thresholdReachedAt: PAST_WINDOW })]),
-            update: stub(async () => fakePodRoundRow({ fireFailureNotified: true })),
+            findStuckThresholdReachedRounds: stub(async () => [fakePodRoundRow({ thresholdReachedAt: PAST_WINDOW })]),
+            markFireFailureNotified: stub(async () => fakePodRoundRow({ fireFailureNotified: true })),
           },
           podRoundTarget: {
-            findMany: stub(async () => [
+            findByRoundId: stub(async () => [
               { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
               { podRoundId: 'round-1', guildId: 'g2', channelId: 'channel-2', messageId: 'msg-2', approvalStatus: null, postedAt: new Date() },
             ]),

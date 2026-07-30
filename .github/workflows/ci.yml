@@ -1,11 +1,7 @@
 name: CI
 
-# Covers both platforms (AWS/Postgres and Cloudflare Workers/Durable
-# Objects) in one run — folded together once the cloudflare-migration
-# branch merged into main, since there's no longer a second long-lived
-# branch that needed its own separate verification workflow. Node 22
-# (not 20) since wrangler requires it; the AWS side runs fine on 22 too
-# (package.json's engines only requires >=20).
+# Cloudflare Workers + Durable Objects is the only deployed platform now
+# (AWS app/infra removed). Node 22 since wrangler requires it.
 on:
   push:
     branches: [main]
@@ -14,31 +10,6 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
-
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: draft_pod
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/draft_pod
-      # Reuses the same throwaway postgres service/database the migration
-      # check below already applies migrations to — this runner is
-      # ephemeral and single-purpose for the duration of this job, so
-      # there's no real dev data to protect here the way
-      # scripts/test-db-setup.sh's separate draft_pod_test database
-      # protects a developer's local dev DB.
-      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/draft_pod
 
     steps:
       - uses: actions/checkout@v4
@@ -58,32 +29,8 @@ jobs:
 
       - run: npm test
 
-      - run: npm run build
-
-      # Catches a schema change that was never turned into a migration, or
-      # a migration that doesn't actually apply cleanly — the same check
-      # a real deploy would run (prisma migrate deploy), against a
-      # throwaway Postgres instance.
-      - name: Verify Prisma migrations apply cleanly
-        run: npm run prisma:deploy
-
-      # Real Postgres (the service above, already migrated by the step
-      # right above this one) + a real Fastify app (src/app.ts's
-      # buildApp), Discord/PTP still faked — see README's Testing section.
-      # Runs vitest directly (test:integration:run), not the local-only
-      # `npm run test:integration`, since that also shells out to
-      # scripts/test-db-setup.sh to manage a docker/podman container this
-      # runner doesn't have.
-      - name: Run integration tests
-        run: npm run test:integration:run
-
       # Real DO SQLite via @cloudflare/vitest-pool-workers.
       - run: npm run test:workers
-
-      # Build-only — catches a broken Dockerfile before merge. Doesn't
-      # push anywhere; no registry is configured.
-      - name: Build container image
-        run: docker build -t escape-pod:ci .
 
       # Validates the Worker bundles and every binding resolves, without
       # needing real Cloudflare credentials — safe to run on every push/PR.

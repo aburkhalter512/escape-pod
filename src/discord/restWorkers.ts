@@ -1,13 +1,12 @@
 import { HttpDiscordRest, type RawRestClient } from './httpDiscordRest.js'
 import type { DiscordRestClient } from './rest.js'
 
-// The Worker-side counterpart to rest.ts's createDiscordRest — same
-// HttpDiscordRest class (route/body shapes, response typing, shared via
-// httpDiscordRest.ts), just a different RawRestClient transport
-// underneath: hand-rolled plain fetch() instead of @discordjs/rest,
-// which isn't clean on Workers (undici/Node-compat friction; Discord's
-// own Workers tutorial hand-rolls fetch() for the same reason, see the
-// migration plan's Phase 5 research).
+// Same HttpDiscordRest class (route/body shapes, response typing, shared
+// via httpDiscordRest.ts) that any other DiscordRestClient consumer
+// would use, but with a hand-rolled plain fetch() RawRestClient transport
+// instead of @discordjs/rest, which isn't clean on Workers (undici/Node-
+// compat friction; Discord's own Workers tutorial hand-rolls fetch() for
+// the same reason, see the migration plan's Phase 5 research).
 //
 // Known, accepted gap (flagged in the migration plan, not a silent
 // omission): no automatic rate-limit backoff/retry, unlike

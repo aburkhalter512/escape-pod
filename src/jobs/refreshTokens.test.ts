@@ -1,16 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import { encryptToken, decryptToken } from '../crypto/tokenCrypto.js'
-import type { AppPrismaClient } from '../prismaClient.js'
-import { createFakePrismaClient } from '../testUtils/fakePrismaClient.js'
+import type { AppStorage } from '../storage/appStorage.js'
+import { createFakeAppSqlStorage } from '../testUtils/fakeAppSqlStorage.js'
 import { createFakePtpClient } from '../testUtils/fakePtpClient.js'
 import { stub } from '../testUtils/stub.js'
 import { refreshExpiringTokens } from './refreshTokens.js'
 
 const TOKEN_KEY = '00'.repeat(32)
 
-type OrganizerFindManyArgs = Parameters<AppPrismaClient['organizer']['findMany']>[0]
-type OrganizerRow = Awaited<ReturnType<AppPrismaClient['organizer']['findMany']>>[number]
-type OrganizerUpdateArgs = Parameters<AppPrismaClient['organizer']['update']>[0]
+type OrganizerRow = Awaited<ReturnType<AppStorage['organizer']['findExpiringBefore']>>[number]
+type OrganizerUpdateTokenArgs = Parameters<AppStorage['organizer']['updateToken']>[0]
 
 function fakeJwt(payload: Record<string, unknown>): string {
   const encode = (obj: Record<string, unknown>) => Buffer.from(JSON.stringify(obj)).toString('base64url')
@@ -30,14 +29,13 @@ function fakeOrganizer(discordId: string, token: string): OrganizerRow {
 
 describe('refreshExpiringTokens', () => {
   it('queries for organizers expiring within the refresh window, not all organizers', async () => {
-    const findMany = stub(async (_args: OrganizerFindManyArgs) => [])
-    const prisma = createFakePrismaClient({ organizer: { findMany } })
+    const findExpiringBefore = stub(async (_cutoff: Date) => [])
+    const storage = createFakeAppSqlStorage({ organizer: { findExpiringBefore } })
     const ptp = createFakePtpClient()
 
-    await refreshExpiringTokens(prisma, ptp, TOKEN_KEY)
+    await refreshExpiringTokens(storage, ptp, TOKEN_KEY)
 
-    const expiresAtFilter = findMany.calls[0][0]?.where?.expiresAt
-    const cutoff = (expiresAtFilter as { lt?: Date } | undefined)?.lt as Date
+    const cutoff = findExpiringBefore.calls[0][0]
     expect(cutoff).toBeInstanceOf(Date)
     const daysFromNow = (cutoff.getTime() - Date.now()) / (24 * 60 * 60 * 1000)
     expect(daysFromNow).toBeGreaterThan(4.9)
@@ -50,25 +48,25 @@ describe('refreshExpiringTokens', () => {
     const newToken = fakeJwt({ discord_id: 'user-1', username: 'PlayerOne', exp: newExp })
     const organizer = fakeOrganizer('user-1', oldToken)
 
-    const update = stub(async (args: OrganizerUpdateArgs) => {
+    const updateToken = stub(async (args: OrganizerUpdateTokenArgs) => {
       const ciphertext = args.data.encryptedToken
       if (typeof ciphertext !== 'string' || decryptToken(ciphertext, TOKEN_KEY) !== newToken) {
-        throw new Error(`unexpected encryptedToken in organizer.update: ${JSON.stringify(args)}`)
+        throw new Error(`unexpected encryptedToken in organizer.updateToken: ${JSON.stringify(args)}`)
       }
       if (!(args.data.expiresAt instanceof Date) || args.data.expiresAt.getTime() !== newExp * 1000) {
-        throw new Error(`unexpected expiresAt in organizer.update: ${JSON.stringify(args)}`)
+        throw new Error(`unexpected expiresAt in organizer.updateToken: ${JSON.stringify(args)}`)
       }
       return organizer
     })
-    const prisma = createFakePrismaClient({
-      organizer: { findMany: stub(async (_args: OrganizerFindManyArgs) => [organizer]), update },
+    const storage = createFakeAppSqlStorage({
+      organizer: { findExpiringBefore: stub(async (_cutoff: Date) => [organizer]), updateToken },
     })
     const refreshToken = stub(async (token: string) => (token === oldToken ? newToken : null))
     const ptp = createFakePtpClient({ refreshToken })
 
-    const result = await refreshExpiringTokens(prisma, ptp, TOKEN_KEY)
+    const result = await refreshExpiringTokens(storage, ptp, TOKEN_KEY)
 
-    expect(update.calls).toHaveLength(1)
+    expect(updateToken.calls).toHaveLength(1)
     expect(result).toEqual({ refreshed: 1, failed: 0, checked: 1 })
   })
 
@@ -76,15 +74,15 @@ describe('refreshExpiringTokens', () => {
     const oldToken = fakeJwt({ discord_id: 'user-1', username: 'PlayerOne', exp: 1000 })
     const organizer = fakeOrganizer('user-1', oldToken)
 
-    const update = stub(async (_args: OrganizerUpdateArgs) => {
-      throw new Error('organizer.update should not have been called')
+    const updateToken = stub(async (_args: OrganizerUpdateTokenArgs) => {
+      throw new Error('organizer.updateToken should not have been called')
     })
-    const prisma = createFakePrismaClient({
-      organizer: { findMany: stub(async (_args: OrganizerFindManyArgs) => [organizer]), update },
+    const storage = createFakeAppSqlStorage({
+      organizer: { findExpiringBefore: stub(async (_cutoff: Date) => [organizer]), updateToken },
     })
     const ptp = createFakePtpClient({ refreshToken: stub(async (_token: string) => null) })
 
-    const result = await refreshExpiringTokens(prisma, ptp, TOKEN_KEY)
+    const result = await refreshExpiringTokens(storage, ptp, TOKEN_KEY)
 
     expect(result).toEqual({ refreshed: 0, failed: 1, checked: 1 })
   })
@@ -93,15 +91,15 @@ describe('refreshExpiringTokens', () => {
     const oldToken = fakeJwt({ discord_id: 'user-1', username: 'PlayerOne', exp: 1000 })
     const organizer = fakeOrganizer('user-1', oldToken)
 
-    const update = stub(async (_args: OrganizerUpdateArgs) => {
-      throw new Error('organizer.update should not have been called')
+    const updateToken = stub(async (_args: OrganizerUpdateTokenArgs) => {
+      throw new Error('organizer.updateToken should not have been called')
     })
-    const prisma = createFakePrismaClient({
-      organizer: { findMany: stub(async (_args: OrganizerFindManyArgs) => [organizer]), update },
+    const storage = createFakeAppSqlStorage({
+      organizer: { findExpiringBefore: stub(async (_cutoff: Date) => [organizer]), updateToken },
     })
     const ptp = createFakePtpClient({ refreshToken: stub(async (_token: string) => 'not-a-valid-jwt') })
 
-    const result = await refreshExpiringTokens(prisma, ptp, TOKEN_KEY)
+    const result = await refreshExpiringTokens(storage, ptp, TOKEN_KEY)
 
     expect(result).toEqual({ refreshed: 0, failed: 1, checked: 1 })
   })
@@ -116,29 +114,29 @@ describe('refreshExpiringTokens', () => {
     })
 
     const organizers = [fakeOrganizer('user-1', successToken), fakeOrganizer('user-2', failToken)]
-    const prisma = createFakePrismaClient({
+    const storage = createFakeAppSqlStorage({
       organizer: {
-        findMany: stub(async (_args: OrganizerFindManyArgs) => organizers),
-        update: stub(async (_args: OrganizerUpdateArgs) => organizers[0]),
+        findExpiringBefore: stub(async (_cutoff: Date) => organizers),
+        updateToken: stub(async (_args: OrganizerUpdateTokenArgs) => organizers[0]),
       },
     })
     const ptp = createFakePtpClient({
       refreshToken: stub(async (token: string) => (token === successToken ? refreshedToken : null)),
     })
 
-    const result = await refreshExpiringTokens(prisma, ptp, TOKEN_KEY)
+    const result = await refreshExpiringTokens(storage, ptp, TOKEN_KEY)
 
     expect(result).toEqual({ refreshed: 1, failed: 1, checked: 2 })
   })
 
   it('returns all-zero counts when nothing is expiring soon', async () => {
-    const prisma = createFakePrismaClient({ organizer: { findMany: stub(async (_args: OrganizerFindManyArgs) => []) } })
+    const storage = createFakeAppSqlStorage({ organizer: { findExpiringBefore: stub(async (_cutoff: Date) => []) } })
     const refreshToken = stub(async (_token: string) => {
       throw new Error('refreshToken should not have been called')
     })
     const ptp = createFakePtpClient({ refreshToken })
 
-    const result = await refreshExpiringTokens(prisma, ptp, TOKEN_KEY)
+    const result = await refreshExpiringTokens(storage, ptp, TOKEN_KEY)
 
     expect(result).toEqual({ refreshed: 0, failed: 0, checked: 0 })
   })
