@@ -1,13 +1,16 @@
 # Escape Pod — Integration Research
 
-Status: **Core loop implemented.** `discord-bot/` and `backend/` (sibling
-repos, see §3.4) both exist with the RSVP → cross-guild sync → PTP
-pod-creation flow built and unit-tested (§6 item 4) — not yet live-tested
-against real Discord/PTP. Known gaps from here are tracked as individual
-files in `../tasks/`, not in this document; check `tasks/README.md` before
-assuming this doc's "next steps" (§6) are the full picture. This document
-itself remains the record of *why* things are built the way they are —
-research findings and design rationale, not a live status board.
+Status: **Core loop implemented and live.** The RSVP → cross-guild sync →
+PTP pod-creation flow described below is built, tested, and deployed
+(now on Cloudflare Workers + Durable Objects — see the top-level
+`README.md`). Open work is tracked as [GitHub Issues](https://github.com/aburkhalter512/escape-pod/issues),
+not in this document, and not in the `../tasks/` directory referenced
+further down (an earlier, now-superseded local tracking convention). This
+document itself remains the record of *why* things are built the way
+they are — research findings and design rationale from across this
+project's history (including an early two-repo split and an AWS-hosted,
+Postgres-backed period, both since consolidated), not a live status
+board — some details below may no longer match the current code.
 
 ## Summary: the technical approach this document builds toward
 
