@@ -10,8 +10,8 @@ import { SWU_SETS } from '../swuSets.js'
 // bot is installed in via scripts/register-commands.ts.
 export const commandDefinitions: RESTPostAPIChatInputApplicationCommandsJSONBody[] = [
   {
-    name: 'connect-ptp',
-    description: 'Link your Protect the Pod account so you can organize draft pods',
+    name: 'connect-niamos',
+    description: "Link this server's Niamos token so organizers here can start draft pods",
     type: ApplicationCommandType.ChatInput,
     default_member_permissions: PermissionFlagsBits.ManageGuild.toString(),
   },

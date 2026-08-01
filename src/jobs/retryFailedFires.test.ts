@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createFakeAppSqlStorage } from '../testUtils/fakeAppSqlStorage.js'
-import { createFakePtpClient } from '../testUtils/fakePtpClient.js'
+import { createFakeNiamosClient } from '../testUtils/fakeNiamosClient.js'
 import { createFakeDiscordRest } from '../testUtils/fakeDiscordRest.js'
 import { stub } from '../testUtils/stub.js'
 import { encryptToken } from '../crypto/tokenCrypto.js'
@@ -36,15 +36,11 @@ function fakePodRoundRow(
     thresholdReachedAt: overrides.thresholdReachedAt ?? WITHIN_WINDOW,
     fireFailureNotified: overrides.fireFailureNotified ?? false,
     createdAt: new Date(),
-    organizer: {
-      discordId: 'organizer-1',
-      username: 'OrganizerOne',
+    guildToken: {
       // Must be real ciphertext — attemptPodCreation actually decrypts this
-      // before calling the stubbed createPod.
+      // before calling the stubbed createDraft.
       encryptedToken: encryptToken('a-real-token', TOKEN_KEY),
-      expiresAt: new Date(),
-      linkedAt: new Date(),
-      nextRoundNumber: 2,
+      displayName: 'Niamos',
     },
   }
 }
@@ -67,7 +63,7 @@ describe('retryOverdueFailedFires', () => {
     })
     const deps: RetryFailedFiresDeps = {
       storage: createFakeAppSqlStorage({ podRound: { findStuckThresholdReachedRounds: stub(async () => []) } }),
-      ptp: createFakePtpClient(),
+      niamos: createFakeNiamosClient(),
       tokenEncryptionKey: TOKEN_KEY,
       logger: { error: () => {} },
     }
@@ -106,12 +102,10 @@ describe('retryOverdueFailedFires', () => {
             ]),
           },
         }),
-        ptp: createFakePtpClient({
-          createPod: stub(async () => ({
-            id: 'ptp-pod-1',
-            shareId: 'share-1',
-            shareUrl: 'https://www.protectthepod.com/draft/share-1',
-            createdAt: '2026-01-01T00:00:00Z',
+        niamos: createFakeNiamosClient({
+          createDraft: stub(async () => ({
+            uuid: 'share-1',
+            shareUrl: 'https://niamos.net/drafts/share-1',
           })),
         }),
         tokenEncryptionKey: TOKEN_KEY,
@@ -140,7 +134,7 @@ describe('retryOverdueFailedFires', () => {
       const content = (welcomeCall?.[1] as { content: string }).content
       expect(content).toContain('<@p1>')
       expect(content).toContain('<@p2>')
-      expect(content).toContain('https://www.protectthepod.com/draft/share-1')
+      expect(content).toContain('https://niamos.net/drafts/share-1')
     } finally {
       vi.useRealTimers()
     }
@@ -171,12 +165,10 @@ describe('retryOverdueFailedFires', () => {
             ]),
           },
         }),
-        ptp: createFakePtpClient({
-          createPod: stub(async () => ({
-            id: 'ptp-pod-1',
-            shareId: 'share-1',
-            shareUrl: 'https://www.protectthepod.com/draft/share-1',
-            createdAt: '2026-01-01T00:00:00Z',
+        niamos: createFakeNiamosClient({
+          createDraft: stub(async () => ({
+            uuid: 'share-1',
+            shareUrl: 'https://niamos.net/drafts/share-1',
           })),
         }),
         tokenEncryptionKey: TOKEN_KEY,
@@ -220,9 +212,9 @@ describe('retryOverdueFailedFires', () => {
             ]),
           },
         }),
-        ptp: createFakePtpClient({
-          createPod: stub(async () => {
-            throw new Error('createPod should not have been called past the retry window')
+        niamos: createFakeNiamosClient({
+          createDraft: stub(async () => {
+            throw new Error('createDraft should not have been called past the retry window')
           }),
         }),
         tokenEncryptionKey: TOKEN_KEY,
@@ -263,7 +255,7 @@ describe('retryOverdueFailedFires', () => {
             ]),
           },
         }),
-        ptp: createFakePtpClient(),
+        niamos: createFakeNiamosClient(),
         tokenEncryptionKey: TOKEN_KEY,
         logger: { error: (obj) => errors.push(obj) },
       }

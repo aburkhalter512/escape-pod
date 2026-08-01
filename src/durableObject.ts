@@ -5,20 +5,20 @@ import { createSqlPendingStartPodStore } from './storage/pendingStartPodsSql.js'
 import { buildHonoApp } from './honoApp.js'
 import { createFetchDiscordRest } from './discord/restWorkers.js'
 import type { DiscordRestClient } from './discord/rest.js'
-import { HttpPtpClient } from './ptp/client.js'
-import type { PtpClient } from './ptp/client.js'
+import { HttpNiamosClient } from './niamos/client.js'
+import type { NiamosClient } from './niamos/client.js'
 import type { Logger } from './services/errors.js'
 import { expireOverduePodRounds } from './jobs/expirePodRounds.js'
 import { retryOverdueFailedFires } from './jobs/retryFailedFires.js'
-import { refreshExpiringTokens } from './jobs/refreshTokens.js'
 
-// The two cron expressions wrangler.toml's [triggers] declares — matched
-// literally against event.cron in scheduled() below. One-minute covers
-// both expirePodRounds and retryFailedFires (they already share a 60s
-// interval on the AWS side, see server.ts's SWEEP_INTERVAL_MS); daily
-// covers refreshTokens (see server.ts's TOKEN_REFRESH_INTERVAL_MS).
+// The one cron expression wrangler.toml's [triggers] declares — matched
+// literally against event.cron in scheduled() below. Covers both
+// expirePodRounds and retryFailedFires (they already share a 60s
+// interval on the AWS side, see server.ts's SWEEP_INTERVAL_MS). There is
+// no token-refresh cron anymore — Niamos tokens never expire (unlike
+// PTP's), so jobs/refreshTokens.ts was deleted entirely rather than
+// adapted.
 export const POD_SWEEP_CRON = '*/1 * * * *'
-export const TOKEN_REFRESH_CRON = '0 0 * * *'
 
 // Single source of truth for this Worker's bindings — worker.ts imports
 // this rather than declaring its own copy. Same env vars server.ts's
@@ -26,19 +26,18 @@ export const TOKEN_REFRESH_CRON = '0 0 * * *'
 // BOT_API_KEY/DATABASE_URL (no bearer-protected admin surface or
 // separate DB connection string on this platform — see honoApp.ts's own
 // comment on why the admin routes aren't ported). DISCORD_PUBLIC_KEY/
-// DISCORD_APPLICATION_ID/PTP_BASE_URL are plain [vars]; DISCORD_BOT_TOKEN/
-// TOKEN_ENCRYPTION_KEY are `wrangler secret put` secrets — both surface
-// identically as plain string properties on env. Phase 9 is what actually
-// populates these for a real deployment (a second, throwaway Discord
-// Application) — until then, requests that reach code paths using these
-// see whatever wrangler.toml/.dev.vars currently provides, or undefined.
+// DISCORD_APPLICATION_ID/NIAMOS_API_BASE_URL/NIAMOS_SHARE_BASE_URL are
+// plain [vars]; DISCORD_BOT_TOKEN/TOKEN_ENCRYPTION_KEY are
+// `wrangler secret put` secrets — both surface identically as plain
+// string properties on env.
 export interface Env {
   ESCAPE_POD_DO: DurableObjectNamespace<EscapePodDurableObject>
   DISCORD_PUBLIC_KEY: string
   DISCORD_BOT_TOKEN: string
   DISCORD_APPLICATION_ID: string
   TOKEN_ENCRYPTION_KEY: string
-  PTP_BASE_URL: string
+  NIAMOS_API_BASE_URL: string
+  NIAMOS_SHARE_BASE_URL: string
 }
 
 // The single, global instance holding this app's entire schema — see the
@@ -49,7 +48,7 @@ export interface Env {
 export class EscapePodDurableObject extends DurableObject<Env> {
   readonly appStorage: AppStorage
   private readonly honoApp: ReturnType<typeof buildHonoApp>
-  private readonly ptp: PtpClient
+  private readonly niamos: NiamosClient
   private readonly discordRest: DiscordRestClient
   private readonly tokenEncryptionKey: string
   private readonly logger: Logger
@@ -62,13 +61,13 @@ export class EscapePodDurableObject extends DurableObject<Env> {
       runMigrations(ctx.storage)
     })
     this.appStorage = createAppSqlStorage(ctx.storage.sql)
-    this.ptp = new HttpPtpClient({ baseUrl: env.PTP_BASE_URL })
+    this.niamos = new HttpNiamosClient({ apiBaseUrl: env.NIAMOS_API_BASE_URL, shareBaseUrl: env.NIAMOS_SHARE_BASE_URL })
     this.discordRest = createFetchDiscordRest({ botToken: env.DISCORD_BOT_TOKEN, botUserId: env.DISCORD_APPLICATION_ID, fetch })
     this.tokenEncryptionKey = env.TOKEN_ENCRYPTION_KEY
     this.logger = { error: (obj, msg) => console.error(msg, obj) }
     this.honoApp = buildHonoApp({
       storage: this.appStorage,
-      ptp: this.ptp,
+      niamos: this.niamos,
       discordRest: this.discordRest,
       discordPublicKey: env.DISCORD_PUBLIC_KEY,
       tokenEncryptionKey: this.tokenEncryptionKey,
@@ -100,22 +99,14 @@ export class EscapePodDurableObject extends DurableObject<Env> {
   // notes on why shutdown.ts's setInterval/SIGTERM handling has no
   // Workers equivalent and isn't needed here).
   async runScheduledJob(cron: string): Promise<void> {
-    const jobDeps = { storage: this.appStorage, ptp: this.ptp, tokenEncryptionKey: this.tokenEncryptionKey, logger: this.logger }
+    const jobDeps = { storage: this.appStorage, niamos: this.niamos, tokenEncryptionKey: this.tokenEncryptionKey, logger: this.logger }
     if (cron === POD_SWEEP_CRON) {
-      // Run concurrently, not sequentially — server.ts registers these as
-      // two fully independent setInterval sweeps on the AWS side (see
-      // shutdown.ts's ScheduledSweep — "a slow token-refresh run in
-      // progress doesn't block the pod-round sweep's own ticks, or vice
-      // versa"), and retryOverdueFailedFires shouldn't need to wait on
-      // expireOverduePodRounds's own PTP/Discord REST calls to start
-      // (they touch disjoint PodRound rows — COLLECTING vs
-      // THRESHOLD_REACHED — so there's no ordering dependency between
-      // them).
+      // Run concurrently, not sequentially — retryOverdueFailedFires
+      // shouldn't need to wait on expireOverduePodRounds's own
+      // Niamos/Discord REST calls to start (they touch disjoint PodRound
+      // rows — COLLECTING vs THRESHOLD_REACHED — so there's no ordering
+      // dependency between them).
       await Promise.all([expireOverduePodRounds(jobDeps, this.discordRest), retryOverdueFailedFires(jobDeps, this.discordRest)])
-      return
-    }
-    if (cron === TOKEN_REFRESH_CRON) {
-      await refreshExpiringTokens(this.appStorage, this.ptp, this.tokenEncryptionKey)
       return
     }
     this.logger.error({ cron }, 'runScheduledJob: unrecognized cron expression')

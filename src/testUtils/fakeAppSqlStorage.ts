@@ -3,6 +3,7 @@ import type { AppStorage } from '../storage/appStorage.js'
 
 export interface FakeAppStorageOverrides {
   organizer?: Partial<AppStorage['organizer']>
+  guildNiamosToken?: Partial<AppStorage['guildNiamosToken']>
   guildSubscription?: Partial<AppStorage['guildSubscription']>
   guildOrganizerAllowlist?: Partial<AppStorage['guildOrganizerAllowlist']>
   guildOriginAllowlist?: Partial<AppStorage['guildOriginAllowlist']>
@@ -23,11 +24,12 @@ export interface FakeAppStorageOverrides {
 export function createFakeAppSqlStorage(overrides: FakeAppStorageOverrides = {}): AppStorage {
   return {
     organizer: {
-      findExpiringBefore: unimplemented('organizer.findExpiringBefore'),
       incrementNextRoundNumber: unimplemented('organizer.incrementNextRoundNumber'),
-      updateToken: unimplemented('organizer.updateToken'),
-      linkOrganizer: unimplemented('organizer.linkOrganizer'),
       ...overrides.organizer,
+    },
+    guildNiamosToken: {
+      linkToken: unimplemented('guildNiamosToken.linkToken'),
+      ...overrides.guildNiamosToken,
     },
     guildSubscription: {
       findActiveByGuildIds: unimplemented('guildSubscription.findActiveByGuildIds'),
@@ -50,7 +52,7 @@ export function createFakeAppSqlStorage(overrides: FakeAppStorageOverrides = {})
     podRound: {
       createRoundWithTargets: unimplemented('podRound.createRoundWithTargets'),
       findRoundById: unimplemented('podRound.findRoundById'),
-      findRoundWithOrganizerById: unimplemented('podRound.findRoundWithOrganizerById'),
+      findRoundWithGuildTokenById: unimplemented('podRound.findRoundWithGuildTokenById'),
       findRoundByOrganizerAndNumber: unimplemented('podRound.findRoundByOrganizerAndNumber'),
       findLatestRoundForOrganizer: unimplemented('podRound.findLatestRoundForOrganizer'),
       findActiveRoundsForOrganizer: unimplemented('podRound.findActiveRoundsForOrganizer'),

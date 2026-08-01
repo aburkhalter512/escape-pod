@@ -29,9 +29,9 @@ describe('routeInteraction', () => {
   })
 
   it('dispatches an application command to its registered handler', async () => {
-    const response = await routeInteraction(fakeChatInputInteraction({ name: 'connect-ptp' }), deps())
+    const response = await routeInteraction(fakeChatInputInteraction({ name: 'connect-niamos', guild_id: 'guild-1' }), deps())
     expect(response.type).toBe(InteractionResponseType.ChannelMessageWithSource)
-    expect(responseData(response).content).toContain('protectthepod.com')
+    expect(responseData(response).content).toContain('niamos.net')
   })
 
   it('returns a clear error for a command name with no registered handler', async () => {
@@ -41,14 +41,14 @@ describe('routeInteraction', () => {
 
   it('dispatches message components to the component handler', async () => {
     const interaction = fakeMessageComponentInteraction({
-      data: { custom_id: 'connect-ptp:open-modal', component_type: ComponentType.Button },
+      data: { custom_id: 'connect-niamos:open-modal', component_type: ComponentType.Button },
     })
     const response = await routeInteraction(interaction, deps())
     expect(response.type).toBe(InteractionResponseType.Modal)
   })
 
   it('dispatches modal submits to the modal handler', async () => {
-    const interaction = fakeModalSubmitInteraction({ customId: 'connect-ptp:submit', components: [] })
+    const interaction = fakeModalSubmitInteraction({ customId: 'connect-niamos:submit', components: [] })
     const response = await routeInteraction(interaction, deps())
     expect(responseData(response).content).toMatch(/no token was submitted/i)
   })

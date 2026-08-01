@@ -46,13 +46,6 @@ async function runAndAwaitBackgroundWork(
   return response
 }
 
-function fakeJwt(payload: Record<string, unknown>): string {
-  const encode = (obj: Record<string, unknown>) => Buffer.from(JSON.stringify(obj)).toString('base64url')
-  return `${encode({ alg: 'HS256' })}.${encode(payload)}.sig`
-}
-
-const FUTURE_EXP = () => Math.floor(Date.now() / 1000) + 3600
-const PAST_EXP = () => Math.floor(Date.now() / 1000) - 3600
 
 // Discord's own type guarantees member.user is always present — this
 // simulates the malformed payload that guarantee rules out, to prove the
@@ -78,35 +71,35 @@ describe('extractTextInputValue', () => {
     const components = [
       {
         type: ComponentType.ActionRow as const,
-        components: [{ type: ComponentType.TextInput as const, custom_id: 'ptp-token', value: 'abc' }],
+        components: [{ type: ComponentType.TextInput as const, custom_id: 'niamos-token', value: 'abc' }],
       },
     ]
-    expect(extractTextInputValue(components, 'ptp-token')).toBe('abc')
+    expect(extractTextInputValue(components, 'niamos-token')).toBe('abc')
   })
 
   it('finds a match inside a Label-wrapped component (Components v2)', () => {
     const components = [
       {
         type: ComponentType.Label as const,
-        component: { type: ComponentType.TextInput as const, custom_id: 'ptp-token', value: 'xyz' },
+        component: { type: ComponentType.TextInput as const, custom_id: 'niamos-token', value: 'xyz' },
       },
     ]
-    expect(extractTextInputValue(components, 'ptp-token')).toBe('xyz')
+    expect(extractTextInputValue(components, 'niamos-token')).toBe('xyz')
   })
 
   it('skips a Label wrapping a non-TextInput component without throwing', () => {
     const components = [
       {
         type: ComponentType.Label as const,
-        component: { type: ComponentType.StringSelect as const, custom_id: 'ptp-token', values: ['a'] },
+        component: { type: ComponentType.StringSelect as const, custom_id: 'niamos-token', values: ['a'] },
       },
     ]
-    expect(extractTextInputValue(components, 'ptp-token')).toBeUndefined()
+    expect(extractTextInputValue(components, 'niamos-token')).toBeUndefined()
   })
 
   it('skips TextDisplay components (no value to extract)', () => {
     const components = [{ type: ComponentType.TextDisplay as const }]
-    expect(extractTextInputValue(components, 'ptp-token')).toBeUndefined()
+    expect(extractTextInputValue(components, 'niamos-token')).toBeUndefined()
   })
 
   it('returns undefined when the custom_id is not present anywhere', () => {
@@ -116,18 +109,18 @@ describe('extractTextInputValue', () => {
         components: [{ type: ComponentType.TextInput as const, custom_id: 'something-else', value: 'abc' }],
       },
     ]
-    expect(extractTextInputValue(components, 'ptp-token')).toBeUndefined()
+    expect(extractTextInputValue(components, 'niamos-token')).toBeUndefined()
   })
 
   it('returns undefined for an empty components array', () => {
-    expect(extractTextInputValue([], 'ptp-token')).toBeUndefined()
+    expect(extractTextInputValue([], 'niamos-token')).toBeUndefined()
   })
 })
 
 describe('handleMessageComponent', () => {
-  it('opens the connect-ptp modal on the paste-token button', async () => {
+  it('opens the connect-niamos modal on the paste-token button', async () => {
     const interaction = fakeMessageComponentInteraction({
-      data: { custom_id: 'connect-ptp:open-modal', component_type: ComponentType.Button },
+      data: { custom_id: 'connect-niamos:open-modal', component_type: ComponentType.Button },
     })
     const response = await handleMessageComponent(
       interaction,
@@ -137,7 +130,22 @@ describe('handleMessageComponent', () => {
     )
 
     expect(response.type).toBe(InteractionResponseType.Modal)
-    expect(responseData(response).custom_id).toBe('connect-ptp:submit')
+    expect(responseData(response).custom_id).toBe('connect-niamos:submit')
+  })
+
+  it('rejects opening the connect-niamos modal from a DM (no guild_id)', async () => {
+    const interaction = fakeMessageComponentInteraction({
+      data: { custom_id: 'connect-niamos:open-modal', component_type: ComponentType.Button },
+      guild_id: undefined,
+    })
+    const response = await handleMessageComponent(
+      interaction,
+      createFakeBackendClient(),
+      createFakeDiscordRest(),
+      createInMemoryPendingStartPodStore()
+    )
+
+    expect(responseData(response).content).toMatch(/run.*inside a server, not a DM/i)
   })
 
   describe('start-pod:select-guilds:', () => {
@@ -1082,7 +1090,7 @@ describe('handleModalSubmit', () => {
         components: [
           {
             type: ComponentType.TextInput as const,
-            custom_id: 'ptp-token',
+            custom_id: 'niamos-token',
             style: TextInputStyle.Short,
             value,
           },
@@ -1091,20 +1099,22 @@ describe('handleModalSubmit', () => {
     ]
   }
 
-  it('links the organizer on a valid, matching, unexpired token', async () => {
-    const token = fakeJwt({ discord_id: 'user-1', username: 'PlayerOne', exp: FUTURE_EXP() })
-    const linkOrganizerMock = stub(async (discordId: string, t: string) => {
-      if (discordId !== 'user-1' || t !== token) throw new Error(`unexpected linkOrganizer args: ${discordId} ${t}`)
-      return { ok: true as const, value: { username: 'PlayerOne' } }
+  it('links the guild on a token the backend accepts', async () => {
+    const token = 'nms_a_real_token'
+    const linkNiamosTokenMock = stub(async (guildId: string, t: string, linkedBy: string) => {
+      if (guildId !== 'guild-1' || t !== token || linkedBy !== 'user-1') {
+        throw new Error(`unexpected linkNiamosToken args: ${guildId} ${t} ${linkedBy}`)
+      }
+      return { ok: true as const, value: { displayName: 'Niamos' } }
     })
     const interaction = fakeModalSubmitInteraction({
-      customId: 'connect-ptp:submit',
+      customId: 'connect-niamos:submit',
       components: actionRowWithToken(token),
     })
 
-    const response = await handleModalSubmit(interaction, createFakeBackendClient({ linkOrganizer: linkOrganizerMock }))
+    const response = await handleModalSubmit(interaction, createFakeBackendClient({ linkNiamosToken: linkNiamosTokenMock }))
 
-    expect(responseData(response).content).toContain('Linked as **PlayerOne**')
+    expect(responseData(response).content).toContain('Linked as **Niamos**')
   })
 
   it('ignores modals with an unrelated custom_id', async () => {
@@ -1114,100 +1124,42 @@ describe('handleModalSubmit', () => {
   })
 
   it('rejects when the Discord user id cannot be determined', async () => {
-    const interaction = fakeModalSubmitInteraction({ customId: 'connect-ptp:submit', components: [], member: undefined })
+    const interaction = fakeModalSubmitInteraction({ customId: 'connect-niamos:submit', components: [], member: undefined })
     const response = await handleModalSubmit(interaction, createFakeBackendClient())
     expect(responseData(response).content).toMatch(/could not determine your discord user id/i)
   })
 
+  it('rejects when submitted from a DM (no guild_id)', async () => {
+    const interaction = fakeModalSubmitInteraction({
+      customId: 'connect-niamos:submit',
+      components: actionRowWithToken('nms_a_real_token'),
+      guild_id: undefined,
+    })
+    const response = await handleModalSubmit(interaction, createFakeBackendClient())
+    expect(responseData(response).content).toMatch(/run.*inside a server, not a DM/i)
+  })
+
   it('rejects when no token was submitted in the modal', async () => {
     const interaction = fakeModalSubmitInteraction({
-      customId: 'connect-ptp:submit',
+      customId: 'connect-niamos:submit',
       components: actionRowWithToken(''),
     })
     const response = await handleModalSubmit(interaction, createFakeBackendClient())
     expect(responseData(response).content).toMatch(/no token was submitted/i)
   })
 
-  it('rejects a structurally malformed token before calling the backend', async () => {
-    const linkOrganizerMock = stub(async (_discordId: string, _t: string) => {
-      throw new Error('linkOrganizer should not have been called')
-    })
-    const interaction = fakeModalSubmitInteraction({
-      customId: 'connect-ptp:submit',
-      components: actionRowWithToken('not-a-jwt'),
-    })
-
-    const response = await handleModalSubmit(interaction, createFakeBackendClient({ linkOrganizer: linkOrganizerMock }))
-
-    expect(responseData(response).content).toMatch(/doesn't look like a valid token/i)
-  })
-
-  it('rejects a token whose embedded discord_id belongs to a different account', async () => {
-    const token = fakeJwt({ discord_id: 'someone-else', username: 'Other', exp: FUTURE_EXP() })
-    const linkOrganizerMock = stub(async (_discordId: string, _t: string) => {
-      throw new Error('linkOrganizer should not have been called')
-    })
-    const interaction = fakeModalSubmitInteraction({
-      customId: 'connect-ptp:submit',
-      components: actionRowWithToken(token),
-    })
-
-    const response = await handleModalSubmit(interaction, createFakeBackendClient({ linkOrganizer: linkOrganizerMock }))
-
-    expect(responseData(response).content).toMatch(/different discord account/i)
-  })
-
-  it('rejects an already-expired token before calling the backend', async () => {
-    const token = fakeJwt({ discord_id: 'user-1', username: 'PlayerOne', exp: PAST_EXP() })
-    const linkOrganizerMock = stub(async (_discordId: string, _t: string) => {
-      throw new Error('linkOrganizer should not have been called')
-    })
-    const interaction = fakeModalSubmitInteraction({
-      customId: 'connect-ptp:submit',
-      components: actionRowWithToken(token),
-    })
-
-    const response = await handleModalSubmit(interaction, createFakeBackendClient({ linkOrganizer: linkOrganizerMock }))
-
-    expect(responseData(response).content).toMatch(/already expired/i)
-  })
-
-  it("surfaces the service's specific validation error message when the backend rejects the token (e.g. PTP says it is invalid)", async () => {
-    const token = fakeJwt({ discord_id: 'user-1', username: 'PlayerOne', exp: FUTURE_EXP() })
-    const linkOrganizerMock = stub(async (_discordId: string, _t: string) => ({
+  it("surfaces the service's specific validation error message when the backend rejects the token (e.g. Niamos says it is invalid)", async () => {
+    const linkNiamosTokenMock = stub(async (_guildId: string, _t: string, _linkedBy: string) => ({
       ok: false as const,
-      error: { kind: 'validation' as const, message: 'PTP rejected this token' },
+      error: { kind: 'validation' as const, message: 'Niamos rejected this token' },
     }))
     const interaction = fakeModalSubmitInteraction({
-      customId: 'connect-ptp:submit',
-      components: actionRowWithToken(token),
+      customId: 'connect-niamos:submit',
+      components: actionRowWithToken('nms_bad_token'),
     })
 
-    const response = await handleModalSubmit(interaction, createFakeBackendClient({ linkOrganizer: linkOrganizerMock }))
+    const response = await handleModalSubmit(interaction, createFakeBackendClient({ linkNiamosToken: linkNiamosTokenMock }))
 
-    expect(responseData(response).content).toMatch(/PTP rejected this token/)
-  })
-
-  it('documents current behavior: a token with no embedded discord_id skips the anti-mistake check', async () => {
-    // §8.2(c) is a guard against pasting *someone else's* token; it can only
-    // fire when discord_id is present to compare against. In practice PTP's
-    // Option B tokens always carry discord_id (minted via Discord OAuth
-    // login), but the check is written as `payload.discord_id && ...`, so a
-    // token missing that field silently passes this check and proceeds to
-    // the live PTP validation instead. Pinning this so the behavior is a
-    // visible, deliberate choice rather than something discovered later.
-    const token = fakeJwt({ username: 'NoDiscordLink', exp: FUTURE_EXP() })
-    const linkOrganizerMock = stub(async (discordId: string, t: string) => {
-      if (discordId !== 'user-1' || t !== token) throw new Error(`unexpected linkOrganizer args: ${discordId} ${t}`)
-      return { ok: true as const, value: { username: 'NoDiscordLink' } }
-    })
-    const interaction = fakeModalSubmitInteraction({
-      customId: 'connect-ptp:submit',
-      components: actionRowWithToken(token),
-    })
-
-    const response = await handleModalSubmit(interaction, createFakeBackendClient({ linkOrganizer: linkOrganizerMock }))
-
-    expect(responseData(response).content).toContain('Linked as **NoDiscordLink**')
+    expect(responseData(response).content).toMatch(/Niamos rejected this token/)
   })
 })

@@ -16,7 +16,6 @@ import type { OnFiringHook } from '../services/pods.js'
 import { buildPodRoundMessage } from '../discord/podMessage.js'
 import { createPodChatSpace, postPodChatWelcomeMessage } from '../discord/podChat.js'
 import { notifyPlayersByDm } from '../discord/dmSignups.js'
-import { decodeJwtPayloadUnverified } from '../util/jwt.js'
 
 export async function handleMessageComponent(
   interaction: APIMessageComponentInteraction,
@@ -37,23 +36,32 @@ export async function handleMessageComponent(
 ): Promise<APIInteractionResponse> {
   const customId = interaction.data.custom_id
 
-  if (customId === 'connect-ptp:open-modal') {
+  if (customId === 'connect-niamos:open-modal') {
+    // Guild-scoped, not organizer-scoped (unlike the old PTP flow) — this
+    // button only ever appears from /connect-niamos, which already
+    // guards on interaction.guild_id (see commands/connectNiamos.ts), but
+    // re-checked here too since handleModalSubmit below needs guild_id
+    // to actually store the token and can't assume the earlier guard
+    // still holds by the time a user gets around to submitting the modal.
+    if (!interaction.guild_id) {
+      return ephemeral('Run `/connect-niamos` from inside a server, not a DM.')
+    }
     return {
       type: InteractionResponseType.Modal,
       data: {
-        custom_id: 'connect-ptp:submit',
-        title: 'Link your Protect the Pod account',
+        custom_id: 'connect-niamos:submit',
+        title: "Link this server's Niamos token",
         components: [
           {
             type: ComponentType.ActionRow,
             components: [
               {
                 type: ComponentType.TextInput,
-                custom_id: 'ptp-token',
-                label: 'Token from /api/auth/token',
+                custom_id: 'niamos-token',
+                label: 'Token from niamos.net/settings',
                 style: TextInputStyle.Short,
                 required: true,
-                min_length: 20,
+                min_length: 10,
               },
             ],
           },
@@ -299,8 +307,8 @@ export async function handleMessageComponent(
     const backgroundWork = (async () => {
       try {
         // Creates the round's temporary chat channel (in its origin guild)
-        // and invites everyone signed up so far, before the PTP pod itself
-        // gets created (see services/pods.ts's fireRound) — best-effort,
+        // and invites everyone signed up so far, before the Niamos draft
+        // itself gets created (see services/pods.ts's fireRound) — best-effort,
         // never throws, so a permissions problem in that guild can't block
         // firing. Adapts createPodChatSpace's { channelId, inviteUrl } into
         // the hook's { channelId, chatUrl } shape.
@@ -358,7 +366,7 @@ export async function handleMessageComponent(
         // alongside a best-effort DM to every signed-up player (a
         // supplement, not a replacement — see discord/dmSignups.ts) and a
         // best-effort welcome message into the chat channel onFiring
-        // created above (now that the real PTP share URL is known — see
+        // created above (now that the real Niamos share URL is known — see
         // services/pods.ts's fireRound for why that message can't be
         // posted any earlier), both only once the round has actually
         // fired.
@@ -422,43 +430,42 @@ export async function handleModalSubmit(
   interaction: APIModalSubmitInteraction,
   backend: BackendClient
 ): Promise<APIInteractionResponse> {
-  if (interaction.data.custom_id !== 'connect-ptp:submit') {
+  if (interaction.data.custom_id !== 'connect-niamos:submit') {
     return ephemeral('Unrecognized modal.')
   }
 
-  const discordId = interaction.member?.user.id ?? interaction.user?.id
-  if (!discordId) {
+  const linkedBy = interaction.member?.user.id ?? interaction.user?.id
+  if (!linkedBy) {
     return ephemeral('Could not determine your Discord user ID.')
   }
 
-  const token = extractTextInputValue(interaction.data.components, 'ptp-token')
+  // Discord preserves guild context through a modal round-trip, but this
+  // is re-checked (not assumed) since the token is stored against
+  // guild_id, not linkedBy — same defensive re-check as the
+  // open-modal branch above.
+  const guildId = interaction.guild_id
+  if (!guildId) {
+    return ephemeral('Run `/connect-niamos` from inside a server, not a DM.')
+  }
+
+  const token = extractTextInputValue(interaction.data.components, 'niamos-token')
   if (!token) {
     return ephemeral('No token was submitted.')
   }
 
-  // INTEGRATIONS.md §8.2 checks (a)-(c) — structural + anti-mistake — happen
-  // here since they're cheap and don't need the backend. Check (d), the live
-  // call to PTP, happens backend-side in backend.linkOrganizer.
-  const payload = decodeJwtPayloadUnverified(token)
-  if (!payload) {
-    return ephemeral("That doesn't look like a valid token. Copy the full `token` value from the JSON response.")
-  }
-  if (payload.discord_id && payload.discord_id !== discordId) {
-    return ephemeral('That token belongs to a different Discord account. Make sure you copied your own token.')
-  }
-  if (payload.exp * 1000 < Date.now()) {
-    return ephemeral('That token has already expired — grab a fresh one from /api/auth/token.')
-  }
-
-  const result = await backend.linkOrganizer(discordId, token)
+  // Niamos tokens are opaque (nms_-prefixed, not JWTs) — no client-side
+  // structural pre-check is possible, unlike PTP's decodeJwtPayloadUnverified.
+  // The live check happens entirely backend-side in
+  // backend.linkNiamosToken (a GET /api/bot/whoami call).
+  const result = await backend.linkNiamosToken(guildId, token, linkedBy)
   if (!result.ok) {
-    // Surfaces the real reason (e.g. "PTP rejected this token" vs. "Could
-    // not read token payload") instead of one fixed message regardless of
-    // cause. Any genuinely unexpected failure (not this Result's concern)
-    // propagates uncaught to server.ts's single /interactions catch-all.
+    // Surfaces the real reason (e.g. "Niamos rejected this token") instead
+    // of one fixed message regardless of cause. Any genuinely unexpected
+    // failure (not this Result's concern) propagates uncaught to
+    // honoApp.ts's single /interactions catch-all.
     return ephemeral(result.error.message)
   }
-  return ephemeral(`Linked as **${result.value.username}** ✅ — you can now run \`/start-pod\`.`)
+  return ephemeral(`Linked as **${result.value.displayName}** ✅ — organizers here can now run \`/start-pod\`.`)
 }
 
 function ephemeral(content: string): APIInteractionResponse {

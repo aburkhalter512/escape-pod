@@ -1,50 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createFakeAppSqlStorage } from '../testUtils/fakeAppSqlStorage.js'
-import { createFakePtpClient } from '../testUtils/fakePtpClient.js'
 import { stub } from '../testUtils/stub.js'
-import { linkOrganizer, listEligibleGuilds, type OrganizerServiceDeps } from './organizers.js'
-
-const TOKEN_KEY = '00'.repeat(32)
-
-function fakeJwt(payload: Record<string, unknown>): string {
-  const encode = (obj: Record<string, unknown>) => Buffer.from(JSON.stringify(obj)).toString('base64url')
-  return `${encode({ alg: 'HS256' })}.${encode(payload)}.sig`
-}
-
-const FUTURE_EXP = () => Math.floor(Date.now() / 1000) + 3600
-
-describe('linkOrganizer', () => {
-  it('returns a validation error when PTP does not accept the token, without storing anything', async () => {
-    const token = fakeJwt({ discord_id: 'user-1', username: 'PlayerOne', exp: FUTURE_EXP() })
-    const linkOrganizerStorage = stub(async () => {
-      throw new Error('organizer.linkOrganizer should not have been called')
-    })
-    const deps: OrganizerServiceDeps = {
-      storage: createFakeAppSqlStorage({ organizer: { linkOrganizer: linkOrganizerStorage } }),
-      ptp: createFakePtpClient({ validateToken: stub(async () => false) }),
-      tokenEncryptionKey: TOKEN_KEY,
-    }
-
-    const result = await linkOrganizer(deps, { discordId: 'user-1', token })
-
-    expect(result).toEqual({ ok: false, error: { kind: 'validation', message: 'PTP rejected this token' } })
-  })
-
-  it('returns a validation error when the token cannot be decoded, even if PTP would have accepted it', async () => {
-    const linkOrganizerStorage = stub(async () => {
-      throw new Error('organizer.linkOrganizer should not have been called')
-    })
-    const deps: OrganizerServiceDeps = {
-      storage: createFakeAppSqlStorage({ organizer: { linkOrganizer: linkOrganizerStorage } }),
-      ptp: createFakePtpClient({ validateToken: stub(async () => true) }),
-      tokenEncryptionKey: TOKEN_KEY,
-    }
-
-    const result = await linkOrganizer(deps, { discordId: 'user-1', token: 'not-a-real-jwt' })
-
-    expect(result).toEqual({ ok: false, error: { kind: 'validation', message: 'Could not read token payload' } })
-  })
-})
+import { listEligibleGuilds, type OrganizerServiceDeps } from './organizers.js'
 
 describe('listEligibleGuilds', () => {
   it('returns anySubscribed: true (without a count query) when eligible guilds are found', async () => {
@@ -56,8 +13,6 @@ describe('listEligibleGuilds', () => {
     })
     const deps: OrganizerServiceDeps = {
       storage: createFakeAppSqlStorage({ guildSubscription: { findEligibleForOrigin, countActiveSubscriptions } }),
-      ptp: createFakePtpClient(),
-      tokenEncryptionKey: TOKEN_KEY,
     }
 
     const result = await listEligibleGuilds(deps, 'origin-guild-1')
@@ -70,8 +25,6 @@ describe('listEligibleGuilds', () => {
     const countActiveSubscriptions = stub(async () => 0)
     const deps: OrganizerServiceDeps = {
       storage: createFakeAppSqlStorage({ guildSubscription: { findEligibleForOrigin, countActiveSubscriptions } }),
-      ptp: createFakePtpClient(),
-      tokenEncryptionKey: TOKEN_KEY,
     }
 
     const result = await listEligibleGuilds(deps, 'origin-guild-1')
@@ -84,8 +37,6 @@ describe('listEligibleGuilds', () => {
     const countActiveSubscriptions = stub(async () => 3)
     const deps: OrganizerServiceDeps = {
       storage: createFakeAppSqlStorage({ guildSubscription: { findEligibleForOrigin, countActiveSubscriptions } }),
-      ptp: createFakePtpClient(),
-      tokenEncryptionKey: TOKEN_KEY,
     }
 
     const result = await listEligibleGuilds(deps, 'origin-guild-1')
@@ -106,8 +57,6 @@ describe('listEligibleGuilds', () => {
       storage: createFakeAppSqlStorage({
         guildSubscription: { findEligibleForOrigin, countActiveSubscriptions: stub(async () => 0) },
       }),
-      ptp: createFakePtpClient(),
-      tokenEncryptionKey: TOKEN_KEY,
     }
 
     await listEligibleGuilds(deps, 'origin-guild-1')

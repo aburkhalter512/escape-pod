@@ -1,13 +1,13 @@
-import type { AppStorage } from '../storage/appStorage.js'
-import type { Prisma, PodRoundStatus } from '@prisma/client'
-import type { PtpClient } from '../ptp/client.js'
+import type { AppStorage, RoundWithGuildToken } from '../storage/appStorage.js'
+import type { PodRoundStatus } from '@prisma/client'
+import type { NiamosClient } from '../niamos/client.js'
 import { decryptToken } from '../crypto/tokenCrypto.js'
 import { POD_CAPACITY } from '../podConfig.js'
 import { ok, err, notFound, forbidden, validationError, type Logger, type Result } from './errors.js'
 
 export interface PodServiceDeps {
   storage: AppStorage
-  ptp: PtpClient
+  niamos: NiamosClient
   tokenEncryptionKey: string
   logger: Logger
 }
@@ -149,8 +149,6 @@ export interface RecordSignupResult {
   targets: Array<{ guildId: string; channelId: string; messageId: string | null }>
 }
 
-type RoundWithOrganizer = Prisma.PodRoundGetPayload<{ include: { organizer: true } }>
-
 interface FireRoundResult {
   claimed: boolean
   podCreated: boolean
@@ -161,20 +159,20 @@ interface FireRoundResult {
 }
 
 // Opaque, plain-data hook invoked between claiming a round for firing and
-// actually creating the PTP pod — lets a Discord-touching caller (e.g.
-// creating a shared chat channel + invite, see discord/podChat.ts) run at
-// exactly that point in the sequence without this file importing anything
-// Discord-specific. Keeps the Discord-agnostic-services boundary described
-// on cancelActiveRound above intact: fireRound only ever deals in plain
-// data in and a plain optional { channelId, chatUrl } back out, never
-// discordRest itself. Documented (at the one real implementation,
+// actually creating the Niamos draft — lets a Discord-touching caller
+// (e.g. creating a shared chat channel + invite, see discord/podChat.ts)
+// run at exactly that point in the sequence without this file importing
+// anything Discord-specific. Keeps the Discord-agnostic-services boundary
+// described on cancelActiveRound above intact: fireRound only ever deals
+// in plain data in and a plain optional { channelId, chatUrl } back out,
+// never discordRest itself. Documented (at the one real implementation,
 // createPodChatSpace) as never throwing/rejecting — fireRound awaits it
 // directly, no extra guarding. The channelId has to make the round trip back
 // out through fireRound (and recordSignup/expireOverdueRounds beyond it)
-// because the welcome message naming the real PTP share URL can only be
-// posted once that URL exists — i.e. after ptp.createPod, which runs after
-// this hook — so the caller needs the channel ID later to post into, not
-// just the invite URL.
+// because the welcome message naming the real Niamos share URL can only be
+// posted once that URL exists — i.e. after niamos.createDraft, which runs
+// after this hook — so the caller needs the channel ID later to post into,
+// not just the invite URL.
 export type OnFiringHook = (ctx: {
   setCode: string
   organizerDiscordId: string
@@ -187,50 +185,61 @@ interface AttemptPodCreationResult {
   shareUrl?: string
 }
 
-// The one PTP-touching step shared by fireRound's first attempt (below) and
-// retryFailedFires's later retries of an already-claimed round (see below)
-// — decrypts the organizer's token, calls ptp.createPod, and on success
-// updates the round to POD_CREATED (persisting chatChannelId alongside it,
-// if one was already recorded). Deliberately does NOT touch the
-// COLLECTING -> THRESHOLD_REACHED claim, the signups fetch, or onFiring —
-// those only ever happen once, on the first attempt (see fireRound); a
-// retry re-runs only this step against a round that's already
+// The one Niamos-touching step shared by fireRound's first attempt
+// (below) and retryFailedFires's later retries of an already-claimed
+// round (see below) — decrypts the origin guild's linked Niamos token,
+// calls niamos.createDraft, and on success updates the round to
+// POD_CREATED (persisting chatChannelId alongside it, if one was already
+// recorded). A round whose origin guild never linked a token (or had it
+// unlinked since the round started) has no token to resolve at all —
+// treated the same as any other failed creation, not a crash: logged,
+// podCreated: false, picked up by the same retry/give-up path a real API
+// failure would be. Deliberately does NOT touch the COLLECTING ->
+// THRESHOLD_REACHED claim, the signups fetch, or onFiring — those only
+// ever happen once, on the first attempt (see fireRound); a retry
+// re-runs only this step against a round that's already
 // THRESHOLD_REACHED with its chat channel (if any) already created. On
 // failure this logs and returns podCreated: false rather than throwing —
 // same never-throws contract fireRound's own try/catch used to have
 // inline, now shared by both callers.
 async function attemptPodCreation(
   deps: PodServiceDeps,
-  round: RoundWithOrganizer,
+  round: RoundWithGuildToken,
   chatChannelId: string | undefined
 ): Promise<AttemptPodCreationResult> {
+  if (!round.guildToken) {
+    deps.logger.error({ podRoundId: round.id, originGuildId: round.originGuildId }, 'No Niamos token linked for this round\'s origin guild')
+    return { podCreated: false }
+  }
+
   try {
-    const token = decryptToken(round.organizer.encryptedToken, deps.tokenEncryptionKey)
-    const result = await deps.ptp.createPod(token, {
-      setCode: round.setCode,
-      maxPlayers: POD_CAPACITY,
+    const token = decryptToken(round.guildToken.encryptedToken, deps.tokenEncryptionKey)
+    const result = await deps.niamos.createDraft(token, {
+      setName: round.setCode,
+      numSeats: POD_CAPACITY,
+      seatCreator: false,
     })
-    await deps.storage.podRound.markPodCreated(round.id, { ptpPodShareId: result.shareId, chatChannelId })
+    await deps.storage.podRound.markPodCreated(round.id, { ptpPodShareId: result.uuid, chatChannelId })
     return { podCreated: true, shareUrl: result.shareUrl }
   } catch (err) {
-    // Pod creation failed (e.g. expired/revoked token) even though we've
+    // Pod creation failed (e.g. revoked/unlinked token) even though we've
     // hit the fire condition — the round is already at THRESHOLD_REACHED
     // (set by the claim in fireRound, before this ever runs), so this
     // doesn't silently retry on every subsequent signup or sweep tick on
     // its own. The bounded retry sweep (retryFailedFires below) is what
     // actually retries this, and eventually gives up with a visible
     // notification if it keeps failing.
-    deps.logger.error({ err, podRoundId: round.id }, 'PTP pod creation failed after threshold reached')
+    deps.logger.error({ err, podRoundId: round.id }, 'Niamos draft creation failed after threshold reached')
     return { podCreated: false }
   }
 }
 
 // Atomically claims a COLLECTING round for firing (see tasks/001) and, if
-// this call won the claim, creates the PTP pod. Always sized to
+// this call won the claim, creates the Niamos draft. Always sized to
 // POD_CAPACITY, never to however many players actually committed —
 // `threshold` (consulted only by expireOverdueRounds) is just the
 // minimum needed to bother starting at all, not the pod's real size; a
-// draft pod is a fixed-size event on PTP's side (pack counts etc. assume
+// draft pod is a fixed-size event on Niamos's side (pack counts etc. assume
 // a full table), so a round that fires short of capacity at its deadline
 // still gets a full-size pod with open seats, not one artificially
 // capped at the headcount it happened to have at that moment. Shared by
@@ -239,15 +248,15 @@ async function attemptPodCreation(
 // players joined, even short of capacity).
 async function fireRound(
   deps: PodServiceDeps,
-  round: RoundWithOrganizer,
+  round: RoundWithGuildToken,
   onFiring?: OnFiringHook
 ): Promise<FireRoundResult> {
   // A plain read-then-write here is racy — two callers (a signup and a
   // concurrent sweep, or two signups) landing close together could both
-  // observe status: 'COLLECTING' and both call ptp.createPod. Postgres
+  // observe status: 'COLLECTING' and both call niamos.createDraft. Postgres
   // serializes conditional UPDATEs, so this WHERE-guarded updateMany
   // atomically claims the transition for exactly one caller; everyone else
-  // sees count: 0 and skips PTP entirely. The claim itself lands on
+  // sees count: 0 and skips Niamos entirely. The claim itself lands on
   // THRESHOLD_REACHED — so a claim that's never followed by a successful
   // create still leaves the round in a correct, non-retrying state.
   // thresholdReachedAt is stamped in this same call — it's the one
@@ -302,7 +311,7 @@ export async function recordSignup(
   const { podRoundId, discordId, username, sourceGuildId, action, onFiring } = params
   const status = action === 'leave' ? 'LEFT' : 'IN'
 
-  const round = await deps.storage.podRound.findRoundWithOrganizerById(podRoundId)
+  const round = await deps.storage.podRound.findRoundWithGuildTokenById(podRoundId)
   if (!round) {
     return err(notFound('Pod round not found'))
   }
@@ -499,9 +508,9 @@ export interface ConcludePodParams {
 }
 
 // New terminal transition (POD_CREATED -> CONCLUDED) for a round the
-// organizer says has actually finished on PTP's side — see tasks/010.
+// organizer says has actually finished on Niamos's side — see tasks/010.
 // Trusts the organizer outright (resolved decision #1): no verification
-// against PTP that the draft really finished, no elapsed-time guard. A
+// against Niamos that the draft really finished, no elapsed-time guard. A
 // plain conditional `update` is enough here, unlike fireRound's
 // updateMany-as-compare-and-swap claim — there's no concurrent writer
 // racing to conclude the same round, so the status checks below (which
@@ -733,7 +742,7 @@ export async function expireOverdueRounds(deps: PodServiceDeps, onFiring?: OnFir
 
 // Bounded window a round is allowed to keep retrying pod creation after its
 // initial fireRound attempt failed (see issue #5 — a round stuck at
-// THRESHOLD_REACHED with a failed PTP call used to notify no one). Once a
+// THRESHOLD_REACHED with a failed Niamos call used to notify no one). Once a
 // round has been stuck this long without a successful create, retryFailedFires
 // below gives up and sends a one-time visible failure notification instead
 // of continuing to retry silently forever.
@@ -776,12 +785,12 @@ export type OnRetrySuccessHook = (ctx: { chatChannelId: string }) => Promise<str
 
 // Runs on a periodic sweep (jobs/retryFailedFires.ts), not on any user
 // action — finds every round stuck at THRESHOLD_REACHED whose initial
-// fireRound attempt failed to create the PTP pod (issue #5: previously such
+// fireRound attempt failed to create the Niamos draft (issue #5: previously such
 // a round just sat there forever with zero visible signal to anyone).
 // Query excludes fireFailureNotified: true so a round that already got its
 // one give-up notification is never re-processed or re-notified on a later
 // tick. For each candidate still within RETRY_WINDOW_MS of its
-// thresholdReachedAt, this re-attempts only the PTP-creation step (via
+// thresholdReachedAt, this re-attempts only the Niamos-creation step (via
 // attemptPodCreation) — NOT the original claim, signups fetch, or onFiring
 // chat-channel creation, all of which only ever happen once, during the
 // first fireRound call. A round past the window (or with a null

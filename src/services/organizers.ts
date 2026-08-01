@@ -1,59 +1,7 @@
 import type { AppStorage } from '../storage/appStorage.js'
-import type { PtpClient } from '../ptp/client.js'
-import { encryptToken } from '../crypto/tokenCrypto.js'
-import { decodeJwtPayloadUnverified } from '../util/jwt.js'
-import { ok, err, validationError, type Result } from './errors.js'
 
 export interface OrganizerServiceDeps {
   storage: AppStorage
-  ptp: PtpClient
-  tokenEncryptionKey: string
-}
-
-export interface LinkOrganizerParams {
-  discordId: string
-  token: string
-}
-
-export interface LinkOrganizerResult {
-  username: string
-}
-
-// INTEGRATIONS.md §8.2 step 3(d) + step 4 — the live check + storage half
-// of account linking. Structural + anti-mistake checks (a)-(c) already
-// happened bot-side before this was called.
-export async function linkOrganizer(
-  deps: OrganizerServiceDeps,
-  params: LinkOrganizerParams
-): Promise<Result<LinkOrganizerResult>> {
-  const { discordId, token } = params
-
-  const isValid = await deps.ptp.validateToken(token)
-  if (!isValid) {
-    return err(validationError('PTP rejected this token'))
-  }
-
-  const payload = decodeJwtPayloadUnverified(token)
-  if (!payload) {
-    return err(validationError('Could not read token payload'))
-  }
-
-  await deps.storage.organizer.linkOrganizer({
-    where: { discordId },
-    create: {
-      discordId,
-      username: payload.username,
-      encryptedToken: encryptToken(token, deps.tokenEncryptionKey),
-      expiresAt: new Date(payload.exp * 1000),
-    },
-    update: {
-      username: payload.username,
-      encryptedToken: encryptToken(token, deps.tokenEncryptionKey),
-      expiresAt: new Date(payload.exp * 1000),
-    },
-  })
-
-  return ok({ username: payload.username })
 }
 
 export interface EligibleGuild {

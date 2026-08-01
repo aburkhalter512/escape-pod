@@ -3,7 +3,7 @@ import type { webcrypto } from 'node:crypto'
 import { ComponentType, InteractionType } from 'discord-api-types/v10'
 import { buildHonoApp, type HonoAppDeps } from './honoApp.js'
 import { createFakeAppSqlStorage } from './testUtils/fakeAppSqlStorage.js'
-import { createFakePtpClient } from './testUtils/fakePtpClient.js'
+import { createFakeNiamosClient } from './testUtils/fakeNiamosClient.js'
 import { createFakeDiscordRest } from './testUtils/fakeDiscordRest.js'
 import { createInMemoryPendingStartPodStore } from './pendingStartPods.js'
 
@@ -29,15 +29,10 @@ beforeAll(async () => {
   publicKeyHex = Buffer.from(rawPublicKey).toString('hex')
 })
 
-function fakeJwt(payload: Record<string, unknown>): string {
-  const encode = (obj: Record<string, unknown>) => Buffer.from(JSON.stringify(obj)).toString('base64url')
-  return `${encode({ alg: 'HS256' })}.${encode(payload)}.sig`
-}
-
 function buildDeps(overrides: Partial<HonoAppDeps> = {}): HonoAppDeps {
   return {
     storage: createFakeAppSqlStorage(),
-    ptp: createFakePtpClient(),
+    niamos: createFakeNiamosClient(),
     discordRest: createFakeDiscordRest(),
     discordPublicKey: publicKeyHex,
     tokenEncryptionKey: '00'.repeat(32),
@@ -62,21 +57,24 @@ async function signedInteractionsRequest(bodyObj: unknown): Promise<Request> {
 }
 
 // The interaction shape interactions/components.ts's handleModalSubmit
-// expects for the /connect-ptp token-submission modal (custom_id
-// 'connect-ptp:submit', a 'ptp-token' text input) — reused by both tests
-// below that need a real interaction reaching backend.linkOrganizer.
-function connectPtpModalSubmit(token: string) {
+// expects for the /connect-niamos token-submission modal (custom_id
+// 'connect-niamos:submit', a 'niamos-token' text input) — reused by both
+// tests below that need a real interaction reaching
+// backend.linkNiamosToken. guild_id is required (this is now a
+// guild-scoped link, not a per-organizer one).
+function connectNiamosModalSubmit(token: string) {
   return {
     type: InteractionType.ModalSubmit,
     data: {
-      custom_id: 'connect-ptp:submit',
+      custom_id: 'connect-niamos:submit',
       components: [
         {
           type: ComponentType.ActionRow,
-          components: [{ type: ComponentType.TextInput, custom_id: 'ptp-token', value: token }],
+          components: [{ type: ComponentType.TextInput, custom_id: 'niamos-token', value: token }],
         },
       ],
     },
+    guild_id: 'guild-1',
     member: { user: { id: 'user-1', username: 'PlayerOne' } },
   }
 }
@@ -138,22 +136,21 @@ describe('buildHonoApp', () => {
     })
 
     it('dispatches a real ModalSubmit interaction all the way to the backend and storage', async () => {
-      const token = fakeJwt({ id: 'ptp-1', discord_id: 'user-1', username: 'PlayerOne', exp: Math.floor(Date.now() / 1000) + 3600 })
-      const linkOrganizerCalls: unknown[] = []
+      const token = 'nms_a_real_token'
+      const linkTokenCalls: unknown[] = []
       const app = buildHonoApp(
         buildDeps({
-          ptp: createFakePtpClient({ validateToken: async () => true }),
+          niamos: createFakeNiamosClient({ whoami: async () => ({ displayName: 'PlayerOne' }) }),
           storage: createFakeAppSqlStorage({
-            organizer: {
-              linkOrganizer: async (args) => {
-                linkOrganizerCalls.push(args)
+            guildNiamosToken: {
+              linkToken: async (args) => {
+                linkTokenCalls.push(args)
                 return {
-                  discordId: 'user-1',
-                  username: 'PlayerOne',
+                  guildId: 'guild-1',
                   encryptedToken: 'enc',
-                  expiresAt: new Date('2030-01-01'),
+                  linkedByDiscordId: 'user-1',
                   linkedAt: new Date('2026-01-01'),
-                  nextRoundNumber: 1,
+                  displayName: 'PlayerOne',
                 }
               },
             },
@@ -161,27 +158,27 @@ describe('buildHonoApp', () => {
         })
       )
 
-      const response = await app.request(await signedInteractionsRequest(connectPtpModalSubmit(token)))
+      const response = await app.request(await signedInteractionsRequest(connectNiamosModalSubmit(token)))
 
       expect(response.status).toBe(200)
-      expect(linkOrganizerCalls).toHaveLength(1)
+      expect(linkTokenCalls).toHaveLength(1)
       const body = (await response.json()) as { data?: { content?: string } }
       expect(body.data?.content).toContain('PlayerOne')
     })
 
     it('returns a well-formed ephemeral response instead of crashing when the backend throws', async () => {
-      const token = fakeJwt({ id: 'ptp-1', discord_id: 'user-1', username: 'PlayerOne', exp: Math.floor(Date.now() / 1000) + 3600 })
+      const token = 'nms_a_real_token'
       const app = buildHonoApp(
         buildDeps({
-          ptp: createFakePtpClient({
-            validateToken: async () => {
+          niamos: createFakeNiamosClient({
+            whoami: async () => {
               throw new Error('boom')
             },
           }),
         })
       )
 
-      const response = await app.request(await signedInteractionsRequest(connectPtpModalSubmit(token)))
+      const response = await app.request(await signedInteractionsRequest(connectNiamosModalSubmit(token)))
 
       expect(response.status).toBe(200)
       const body = (await response.json()) as { data?: { content?: string } }

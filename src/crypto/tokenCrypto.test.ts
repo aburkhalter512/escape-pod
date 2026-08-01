@@ -79,10 +79,10 @@ describe('encryptToken / decryptToken', () => {
     expect(decryptToken(encryptToken('', key), key)).toBe('')
   })
 
-  it('round-trips a realistically long PTP JWT', () => {
+  it('round-trips a realistically long token', () => {
     const key = generateKeyHex()
-    // Representative length of a real signed JWT with the fields from
-    // §8.2's decoded payload (id, discord_id, username, exp, etc.)
+    // Representative length of a real signed JWT (PTP's old token shape)
+    // — a generic long-string case, not a Niamos-specific assumption.
     const plaintext = `header.${'x'.repeat(400)}.signature`
     expect(decryptToken(encryptToken(plaintext, key), key)).toBe(plaintext)
   })

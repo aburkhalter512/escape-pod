@@ -6,7 +6,7 @@ import type { BackendClient } from '../backendClient.js'
 // called; pass overrides for the ones a given test cares about.
 export function createFakeBackendClient(overrides: Partial<BackendClient> = {}): BackendClient {
   return {
-    linkOrganizer: unimplemented('linkOrganizer'),
+    linkNiamosToken: unimplemented('linkNiamosToken'),
     subscribeGuild: unimplemented('subscribeGuild'),
     unsubscribeGuild: unimplemented('unsubscribeGuild'),
     allowOrganizer: unimplemented('allowOrganizer'),

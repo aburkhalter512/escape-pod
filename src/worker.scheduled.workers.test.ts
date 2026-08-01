@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { createExecutionContext, createScheduledController, env, runInDurableObject, waitOnExecutionContext } from 'cloudflare:test'
 import type { EscapePodDurableObject, Env } from './durableObject.js'
-import { POD_SWEEP_CRON, TOKEN_REFRESH_CRON } from './durableObject.js'
+import { POD_SWEEP_CRON } from './durableObject.js'
 import { POD_CAPACITY } from './podConfig.js'
-import { encryptToken } from './crypto/tokenCrypto.js'
 import worker from './worker.js'
 
 declare module 'cloudflare:test' {
@@ -40,19 +39,13 @@ describe('worker.scheduled', () => {
   it('expires an overdue round with no signups on the pod-sweep cron', async () => {
     const stub = getGlobalStub()
     const podRoundId = await runInDurableObject(stub, async (instance: EscapePodDurableObject) => {
-      await instance.appStorage.organizer.linkOrganizer({
+      // Creates the organizer row as a side effect (no separate linking
+      // step exists anymore — see organizer.incrementNextRoundNumber's
+      // upsert) so pod_rounds' FK to organizers(discord_id) is
+      // satisfiable; increment: 0 is a test-only seeding trick.
+      await instance.appStorage.organizer.incrementNextRoundNumber({
         where: { discordId: 'organizer-1' },
-        create: {
-          discordId: 'organizer-1',
-          username: 'OrganizerOne',
-          encryptedToken: encryptToken('fake-ptp-token', env.TOKEN_ENCRYPTION_KEY),
-          expiresAt: new Date('2030-01-01'),
-        },
-        update: {
-          username: 'OrganizerOne',
-          encryptedToken: encryptToken('fake-ptp-token', env.TOKEN_ENCRYPTION_KEY),
-          expiresAt: new Date('2030-01-01'),
-        },
+        data: { increment: 0 },
       })
       const round = await instance.appStorage.podRound.createRoundWithTargets({
         data: {
@@ -75,64 +68,10 @@ describe('worker.scheduled', () => {
     })
   })
 
-  it("refreshes an organizer's token within the refresh window on the daily cron", async () => {
-    const stub = getGlobalStub()
-    const originalFetch = globalThis.fetch
-    // ptp.refreshToken (jobs/refreshTokens.ts) reads the fresh JWT off a
-    // Set-Cookie response header — see ptp/client.ts's refreshToken.
-    const freshExp = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60
-    const freshToken = [
-      Buffer.from(JSON.stringify({ alg: 'HS256' })).toString('base64url'),
-      Buffer.from(JSON.stringify({ id: 'ptp-1', username: 'OrganizerOne', exp: freshExp })).toString('base64url'),
-      'sig',
-    ].join('.')
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
-      if (url.includes('/api/auth/refresh')) {
-        return new Response(null, { status: 200, headers: { 'set-cookie': `swupod_session=${freshToken}; Path=/` } })
-      }
-      return new Response('{}', { status: 200 })
-    }) as typeof fetch
-
-    try {
-      await runInDurableObject(stub, async (instance: EscapePodDurableObject) => {
-        await instance.appStorage.organizer.linkOrganizer({
-          where: { discordId: 'organizer-refresh' },
-          create: {
-            discordId: 'organizer-refresh',
-            username: 'RefreshMe',
-            encryptedToken: encryptToken('stale-token', env.TOKEN_ENCRYPTION_KEY),
-            // Inside the 5-day refresh window (REFRESH_WINDOW_DAYS in
-            // jobs/refreshTokens.ts) so this organizer is actually picked
-            // up by the sweep.
-            expiresAt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000),
-          },
-          update: {
-            username: 'RefreshMe',
-            encryptedToken: encryptToken('stale-token', env.TOKEN_ENCRYPTION_KEY),
-            expiresAt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000),
-          },
-        })
-      })
-
-      await fireScheduled(TOKEN_REFRESH_CRON)
-
-      // AppStorage.organizer has no by-discordId lookup (only
-      // findExpiringBefore, and incrementNextRoundNumber/updateToken/
-      // linkOrganizer — see storage/appStorage.ts) — so this checks a
-      // cutoff strictly between the seeded near-term expiry (2 days out)
-      // and the refreshed one (30 days out): present in this filtered set
-      // only if refresh did NOT happen, since the seeded 2-day expiry is
-      // well inside the 5-day refresh window this job actually consults.
-      const midpointCutoff = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000)
-      await runInDurableObject(stub, async (instance: EscapePodDurableObject) => {
-        const stillNearTerm = await instance.appStorage.organizer.findExpiringBefore(midpointCutoff)
-        expect(stillNearTerm.find((o) => o.discordId === 'organizer-refresh')).toBeUndefined()
-      })
-    } finally {
-      globalThis.fetch = originalFetch
-    }
-  })
+  // No token-refresh cron test anymore — Niamos tokens never expire, so
+  // jobs/refreshTokens.ts and its daily cron were deleted entirely
+  // rather than adapted (see the migration plan). POD_SWEEP_CRON above
+  // is the only cron this Worker declares now.
 
   it('does nothing and logs rather than throwing for an unrecognized cron expression', async () => {
     await expect(fireScheduled('unrecognized-cron')).resolves.toBeUndefined()

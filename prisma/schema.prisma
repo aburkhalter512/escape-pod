@@ -35,15 +35,15 @@ enum SignupStatus {
   LEFT
 }
 
-// §3.1 Option B: an organizer who has linked their own PTP account.
+// Round-numbering identity for a Discord user who has started at least
+// one round. No account-linking data lives here anymore — PTP's
+// per-organizer token was dropped in the Niamos cutover in favor of a
+// per-guild token (see GuildNiamosToken below); this row now exists
+// purely to anchor nextRoundNumber, created lazily on an organizer's
+// first /start-pod (see services/pods.ts's startPod / the storage
+// layer's incrementNextRoundNumber upsert).
 model Organizer {
   discordId      String   @id @map("discord_id")
-  username       String
-  // AES-256-GCM ciphertext (see src/crypto/tokenCrypto.ts) — §8.5, never
-  // stored in plaintext.
-  encryptedToken String   @map("encrypted_token")
-  expiresAt      DateTime @map("expires_at")
-  linkedAt       DateTime @default(now()) @map("linked_at")
   // Atomically incremented each time this organizer starts a round (see
   // services/pods.ts's startPod) — the value read back *before* the
   // increment is that round's PodRound.organizerRoundNumber. Postgres
@@ -56,6 +56,30 @@ model Organizer {
   podRounds PodRound[]
 
   @@map("organizers")
+}
+
+// One Niamos bearer token per Discord guild — linked once by any guild
+// admin via /connect-niamos (requires Manage Guild, same as
+// /allow-guild), then usable by any eligible organizer's /start-pod from
+// that guild. Replaces Organizer's old per-organizer PTP token entirely
+// (hard cutover, no dual support). Deliberately no relation field to
+// PodRound: a round's origin guild (PodRound.originGuildId) has no
+// formal FK/relation to anything today, and this table follows the same
+// convention — see services/pods.ts's attemptPodCreation, which resolves
+// the token by a plain query on originGuildId, not a Prisma relation.
+model GuildNiamosToken {
+  guildId    String   @id @map("guild_id")
+  // AES-256-GCM ciphertext (see src/crypto/tokenCrypto.ts), never stored
+  // in plaintext — same encryption scheme PTP's token used.
+  encryptedToken String @map("encrypted_token")
+  linkedByDiscordId String @map("linked_by_discord_id")
+  linkedAt   DateTime @default(now()) @map("linked_at")
+  // From Niamos's GET /api/bot/whoami response at link time — shown back
+  // in the link confirmation message, replacing PTP's JWT-decoded
+  // username (Niamos tokens are opaque, nothing to decode client-side).
+  displayName String  @map("display_name")
+
+  @@map("guild_niamos_tokens")
 }
 
 // §7.2: a guild's own admin opts their server in, independent of any

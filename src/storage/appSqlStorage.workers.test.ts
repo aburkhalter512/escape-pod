@@ -22,41 +22,17 @@ function getStub(name: string) {
 }
 
 describe('organizer', () => {
-  it('linkOrganizer creates, then updates on a second call with the same discordId', async () => {
-    const stub = getStub('organizer-link')
-    await runInDurableObject(stub, async (instance: EscapePodDurableObject) => {
-      const created = await instance.appStorage.organizer.linkOrganizer({
-        where: { discordId: 'organizer-1' },
-        create: { discordId: 'organizer-1', username: 'PlayerOne', encryptedToken: 'enc-1', expiresAt: new Date('2030-01-01') },
-        update: { username: 'PlayerOne', encryptedToken: 'enc-1', expiresAt: new Date('2030-01-01') },
-      })
-      expect(created).toMatchObject({ discordId: 'organizer-1', username: 'PlayerOne', nextRoundNumber: 1 })
-      expect(created.linkedAt).toBeInstanceOf(Date)
-
-      const updated = await instance.appStorage.organizer.linkOrganizer({
-        where: { discordId: 'organizer-1' },
-        create: { discordId: 'organizer-1', username: 'stale', encryptedToken: 'enc-2', expiresAt: new Date('2030-02-01') },
-        update: { username: 'PlayerOneRenamed', encryptedToken: 'enc-2', expiresAt: new Date('2030-02-01') },
-      })
-      expect(updated.username).toBe('PlayerOneRenamed')
-      expect(updated.encryptedToken).toBe('enc-2')
-    })
-  })
-
-  it('incrementNextRoundNumber atomically bumps the counter and returns the post-increment row', async () => {
+  it('incrementNextRoundNumber creates the row on first use (starting at 1), then continues incrementing on later calls', async () => {
+    // No separate linking step creates this row anymore (unlike PTP's old
+    // per-organizer linkOrganizer) — the first /start-pod is what creates
+    // it, via this same upsert.
     const stub = getStub('organizer-increment')
     await runInDurableObject(stub, async (instance: EscapePodDurableObject) => {
-      await instance.appStorage.organizer.linkOrganizer({
-        where: { discordId: 'organizer-1' },
-        create: { discordId: 'organizer-1', username: 'x', encryptedToken: 'enc', expiresAt: new Date('2030-01-01') },
-        update: { username: 'x', encryptedToken: 'enc', expiresAt: new Date('2030-01-01') },
-      })
-
       const first = await instance.appStorage.organizer.incrementNextRoundNumber({
         where: { discordId: 'organizer-1' },
         data: { increment: 1 },
       })
-      expect(first.nextRoundNumber).toBe(2)
+      expect(first).toEqual({ discordId: 'organizer-1', nextRoundNumber: 2 })
 
       const second = await instance.appStorage.organizer.incrementNextRoundNumber({
         where: { discordId: 'organizer-1' },
@@ -65,41 +41,26 @@ describe('organizer', () => {
       expect(second.nextRoundNumber).toBe(3)
     })
   })
+})
 
-  it('updateToken stores a freshly-rotated token and expiry', async () => {
-    const stub = getStub('organizer-update-token')
+describe('guildNiamosToken', () => {
+  it('linkToken creates, then replaces the token on a second call with the same guildId', async () => {
+    const stub = getStub('guild-niamos-token-link')
     await runInDurableObject(stub, async (instance: EscapePodDurableObject) => {
-      await instance.appStorage.organizer.linkOrganizer({
-        where: { discordId: 'organizer-1' },
-        create: { discordId: 'organizer-1', username: 'x', encryptedToken: 'stale-enc', expiresAt: new Date('2030-01-01') },
-        update: { username: 'x', encryptedToken: 'stale-enc', expiresAt: new Date('2030-01-01') },
+      const created = await instance.appStorage.guildNiamosToken.linkToken({
+        where: { guildId: 'guild-1' },
+        create: { guildId: 'guild-1', encryptedToken: 'enc-1', linkedByDiscordId: 'admin-1', displayName: 'Niamos' },
+        update: { encryptedToken: 'enc-1', linkedByDiscordId: 'admin-1', displayName: 'Niamos' },
       })
+      expect(created).toMatchObject({ guildId: 'guild-1', encryptedToken: 'enc-1', linkedByDiscordId: 'admin-1', displayName: 'Niamos' })
+      expect(created.linkedAt).toBeInstanceOf(Date)
 
-      const updated = await instance.appStorage.organizer.updateToken({
-        where: { discordId: 'organizer-1' },
-        data: { encryptedToken: 'fresh-enc', expiresAt: new Date('2030-02-01') },
+      const updated = await instance.appStorage.guildNiamosToken.linkToken({
+        where: { guildId: 'guild-1' },
+        create: { guildId: 'guild-1', encryptedToken: 'stale', linkedByDiscordId: 'admin-1', displayName: 'stale' },
+        update: { encryptedToken: 'enc-2', linkedByDiscordId: 'admin-2', displayName: 'NiamosRenamed' },
       })
-      expect(updated.encryptedToken).toBe('fresh-enc')
-      expect(updated.expiresAt).toEqual(new Date('2030-02-01'))
-    })
-  })
-
-  it('findExpiringBefore filters by expiresAt < cutoff', async () => {
-    const stub = getStub('organizer-findExpiringBefore')
-    await runInDurableObject(stub, async (instance: EscapePodDurableObject) => {
-      await instance.appStorage.organizer.linkOrganizer({
-        where: { discordId: 'expiring-soon' },
-        create: { discordId: 'expiring-soon', username: 'a', encryptedToken: 'enc', expiresAt: new Date('2030-01-01') },
-        update: { username: 'a', encryptedToken: 'enc', expiresAt: new Date('2030-01-01') },
-      })
-      await instance.appStorage.organizer.linkOrganizer({
-        where: { discordId: 'expiring-later' },
-        create: { discordId: 'expiring-later', username: 'b', encryptedToken: 'enc', expiresAt: new Date('2031-01-01') },
-        update: { username: 'b', encryptedToken: 'enc', expiresAt: new Date('2031-01-01') },
-      })
-
-      const expiring = await instance.appStorage.organizer.findExpiringBefore(new Date('2030-06-01'))
-      expect(expiring.map((o) => o.discordId)).toEqual(['expiring-soon'])
+      expect(updated).toMatchObject({ encryptedToken: 'enc-2', linkedByDiscordId: 'admin-2', displayName: 'NiamosRenamed' })
     })
   })
 })
@@ -254,13 +215,25 @@ describe('guildOrganizerAllowlist / guildOriginAllowlist', () => {
 
 describe('podRound', () => {
   async function seedOrganizerAndGuild(instance: EscapePodDurableObject) {
-    await instance.appStorage.organizer.linkOrganizer({
+    // Creates the organizer row as a side effect (no separate linking step
+    // exists anymore — see organizer.incrementNextRoundNumber's upsert)
+    // so pod_rounds' FK to organizers(discord_id) is satisfiable;
+    // increment: 0 is a test-only seeding trick, real callers always
+    // increment by 1.
+    await instance.appStorage.organizer.incrementNextRoundNumber({
       where: { discordId: 'organizer-1' },
-      create: { discordId: 'organizer-1', username: 'x', encryptedToken: 'enc', expiresAt: new Date('2030-01-01') },
-      update: { username: 'x', encryptedToken: 'enc', expiresAt: new Date('2030-01-01') },
+      data: { increment: 0 },
     })
     await instance.appStorage.guildSubscription.createSubscription({
       data: { guildId: 'guild-1', broadcastChannelId: 'channel-1', installedByDiscordId: 'admin-1' },
+    })
+  }
+
+  async function seedGuildNiamosToken(instance: EscapePodDurableObject, guildId = 'guild-1') {
+    await instance.appStorage.guildNiamosToken.linkToken({
+      where: { guildId },
+      create: { guildId, encryptedToken: 'enc-1', linkedByDiscordId: 'admin-1', displayName: 'Niamos' },
+      update: { encryptedToken: 'enc-1', linkedByDiscordId: 'admin-1', displayName: 'Niamos' },
     })
   }
 
@@ -285,19 +258,47 @@ describe('podRound', () => {
     })
   })
 
-  it('findRoundWithOrganizerById attaches the related organizer row; findRoundById does not', async () => {
+  it('findRoundWithGuildTokenById attaches the origin guild\'s linked Niamos token; findRoundById does not', async () => {
     const stub = getStub('podround-include')
     await runInDurableObject(stub, async (instance: EscapePodDurableObject) => {
       await seedOrganizerAndGuild(instance)
+      await seedGuildNiamosToken(instance)
       const round = await instance.appStorage.podRound.createRoundWithTargets({
-        data: { organizerDiscordId: 'organizer-1', organizerRoundNumber: 1, setCode: 'SOR', threshold: 6, targets: { create: [] } },
+        data: {
+          organizerDiscordId: 'organizer-1',
+          organizerRoundNumber: 1,
+          setCode: 'SOR',
+          threshold: 6,
+          originGuildId: 'guild-1',
+          targets: { create: [] },
+        },
       })
 
       const plain = await instance.appStorage.podRound.findRoundById(round.id)
-      expect(plain).not.toHaveProperty('organizer')
+      expect(plain).not.toHaveProperty('guildToken')
 
-      const withOrganizer = await instance.appStorage.podRound.findRoundWithOrganizerById(round.id)
-      expect(withOrganizer?.organizer.discordId).toBe('organizer-1')
+      const withGuildToken = await instance.appStorage.podRound.findRoundWithGuildTokenById(round.id)
+      expect(withGuildToken?.guildToken).toEqual({ encryptedToken: 'enc-1', displayName: 'Niamos' })
+    })
+  })
+
+  it('findRoundWithGuildTokenById returns guildToken: null when the origin guild has no linked token', async () => {
+    const stub = getStub('podround-include-no-token')
+    await runInDurableObject(stub, async (instance: EscapePodDurableObject) => {
+      await seedOrganizerAndGuild(instance)
+      const round = await instance.appStorage.podRound.createRoundWithTargets({
+        data: {
+          organizerDiscordId: 'organizer-1',
+          organizerRoundNumber: 1,
+          setCode: 'SOR',
+          threshold: 6,
+          originGuildId: 'guild-1',
+          targets: { create: [] },
+        },
+      })
+
+      const withGuildToken = await instance.appStorage.podRound.findRoundWithGuildTokenById(round.id)
+      expect(withGuildToken?.guildToken).toBeNull()
     })
   })
 
@@ -398,10 +399,11 @@ describe('podRound', () => {
     })
   })
 
-  it('findOverdueRounds attaches organizer to every returned row', async () => {
+  it("findOverdueRounds attaches the origin guild's linked Niamos token to every returned row", async () => {
     const stub = getStub('podround-findOverdueRounds')
     await runInDurableObject(stub, async (instance: EscapePodDurableObject) => {
       await seedOrganizerAndGuild(instance)
+      await seedGuildNiamosToken(instance)
       await instance.appStorage.podRound.createRoundWithTargets({
         data: {
           organizerDiscordId: 'organizer-1',
@@ -409,28 +411,37 @@ describe('podRound', () => {
           setCode: 'SOR',
           threshold: 6,
           scheduledFor: new Date('2020-01-01'),
+          originGuildId: 'guild-1',
           targets: { create: [] },
         },
       })
 
       const overdue = await instance.appStorage.podRound.findOverdueRounds(new Date())
       expect(overdue).toHaveLength(1)
-      expect(overdue[0].organizer.discordId).toBe('organizer-1')
+      expect(overdue[0].guildToken?.displayName).toBe('Niamos')
     })
   })
 
-  it('findStuckThresholdReachedRounds attaches organizer to every returned row', async () => {
+  it("findStuckThresholdReachedRounds attaches the origin guild's linked Niamos token to every returned row", async () => {
     const stub = getStub('podround-findStuckThresholdReachedRounds')
     await runInDurableObject(stub, async (instance: EscapePodDurableObject) => {
       await seedOrganizerAndGuild(instance)
+      await seedGuildNiamosToken(instance)
       const round = await instance.appStorage.podRound.createRoundWithTargets({
-        data: { organizerDiscordId: 'organizer-1', organizerRoundNumber: 1, setCode: 'SOR', threshold: 6, targets: { create: [] } },
+        data: {
+          organizerDiscordId: 'organizer-1',
+          organizerRoundNumber: 1,
+          setCode: 'SOR',
+          threshold: 6,
+          originGuildId: 'guild-1',
+          targets: { create: [] },
+        },
       })
       await instance.appStorage.podRound.claimForFiring(round.id, new Date())
 
       const stuck = await instance.appStorage.podRound.findStuckThresholdReachedRounds()
       expect(stuck).toHaveLength(1)
-      expect(stuck[0].organizer.discordId).toBe('organizer-1')
+      expect(stuck[0].guildToken?.displayName).toBe('Niamos')
     })
   })
 
@@ -482,10 +493,9 @@ describe('podRoundTarget', () => {
   it('setMessageId sets messageId, findByRoundAndGuild reads it back by the composite key', async () => {
     const stub = getStub('podroundtarget')
     await runInDurableObject(stub, async (instance: EscapePodDurableObject) => {
-      await instance.appStorage.organizer.linkOrganizer({
+      await instance.appStorage.organizer.incrementNextRoundNumber({
         where: { discordId: 'organizer-1' },
-        create: { discordId: 'organizer-1', username: 'x', encryptedToken: 'enc', expiresAt: new Date('2030-01-01') },
-        update: { username: 'x', encryptedToken: 'enc', expiresAt: new Date('2030-01-01') },
+        data: { increment: 0 },
       })
       await instance.appStorage.guildSubscription.createSubscription({
         data: { guildId: 'guild-1', broadcastChannelId: 'channel-1', installedByDiscordId: 'admin-1' },
@@ -510,10 +520,9 @@ describe('podRoundTarget', () => {
 
 describe('podRoundSignup', () => {
   async function seedRound(instance: EscapePodDurableObject) {
-    await instance.appStorage.organizer.linkOrganizer({
+    await instance.appStorage.organizer.incrementNextRoundNumber({
       where: { discordId: 'organizer-1' },
-      create: { discordId: 'organizer-1', username: 'x', encryptedToken: 'enc', expiresAt: new Date('2030-01-01') },
-      update: { username: 'x', encryptedToken: 'enc', expiresAt: new Date('2030-01-01') },
+      data: { increment: 0 },
     })
     return instance.appStorage.podRound.createRoundWithTargets({
       data: { organizerDiscordId: 'organizer-1', organizerRoundNumber: 1, setCode: 'SOR', threshold: 6, targets: { create: [] } },

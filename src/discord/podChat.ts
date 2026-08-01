@@ -7,17 +7,17 @@ const DENY_VIEW = PermissionFlagsBits.ViewChannel.toString()
 // Best-effort supplement to the "Starting!" broadcast message (see
 // discord/podMessage.ts) — a private text channel in the round's origin
 // guild, shared by the organizer and everyone who signed up (regardless of
-// which guild *they* joined from), created before the PTP pod itself so
-// everyone lands in a shared space first. Never throws: channel/invite
+// which guild *they* joined from), created before the Niamos draft itself
+// so everyone lands in a shared space first. Never throws: channel/invite
 // creation can fail for reasons entirely outside the bot's control (no
 // "Manage Channels" permission in that guild, the bot no longer being a
 // member of it, etc.), and none of that should ever block the pod creation
 // that follows in services/pods.ts's fireRound. On any failure this logs
 // via the passed callback and returns undefined — the caller just omits the
 // "Join the chat" button. Returns the created channel's ID alongside the
-// invite URL — the PTP share URL doesn't exist yet at this point (this runs
-// before ptp.createPod), so the caller needs the channel ID to come back
-// out through fireRound and post the welcome message (see
+// invite URL — the Niamos share URL doesn't exist yet at this point (this
+// runs before niamos.createDraft), so the caller needs the channel ID to
+// come back out through fireRound and post the welcome message (see
 // postPodChatWelcomeMessage below) once that URL is known.
 export async function createPodChatSpace(
   discordRest: DiscordRestClient,
@@ -62,9 +62,10 @@ export async function createPodChatSpace(
 
 // Best-effort welcome message posted into the chat channel createPodChatSpace
 // above just created — has to happen as a separate step, after fireRound
-// returns, because the PTP share URL doesn't exist until ptp.createPod runs,
-// which happens AFTER the channel is created (see services/pods.ts's
-// fireRound for why that ordering is deliberate and not being changed here).
+// returns, because the Niamos share URL doesn't exist until
+// niamos.createDraft runs, which happens AFTER the channel is created (see
+// services/pods.ts's fireRound for why that ordering is deliberate and not
+// being changed here).
 // Never throws, same one-big-try-catch shape as createPodChatSpace above and
 // discord/dmSignups.ts's notifyPlayersByDm — this is Discord-API-call
 // handling, not a business-rule Result. On failure this just logs via the

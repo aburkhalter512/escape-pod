@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { Prisma, PodRoundStatus } from '@prisma/client'
-import type { AppStorage } from '../storage/appStorage.js'
-import type { CreatePodParams } from '../ptp/client.js'
+import type { PodRoundStatus } from '@prisma/client'
+import type { AppStorage, RoundWithGuildToken } from '../storage/appStorage.js'
+import type { CreateDraftParams } from '../niamos/client.js'
 import { encryptToken } from '../crypto/tokenCrypto.js'
 import { createFakeAppSqlStorage, type FakeAppStorageOverrides } from '../testUtils/fakeAppSqlStorage.js'
-import { createFakePtpClient } from '../testUtils/fakePtpClient.js'
+import { createFakeNiamosClient } from '../testUtils/fakeNiamosClient.js'
 import { stub } from '../testUtils/stub.js'
 import { deepEqual } from '../testUtils/deepEqual.js'
 import {
@@ -27,7 +27,6 @@ const TOKEN_KEY = '00'.repeat(32)
 
 type PodRoundRow = Awaited<ReturnType<AppStorage['podRound']['createRoundWithTargets']>>
 type PodRoundCreateArgs = Parameters<AppStorage['podRound']['createRoundWithTargets']>[0]
-type PodRoundWithOrganizer = Prisma.PodRoundGetPayload<{ include: { organizer: true } }>
 type PodRoundSignupRecordArgs = Parameters<AppStorage['podRoundSignup']['recordSignup']>[0]
 type PodRoundSignupRow = Awaited<ReturnType<AppStorage['podRoundSignup']['recordSignup']>>
 
@@ -51,16 +50,12 @@ function fakePodRoundRow(overrides: Partial<PodRoundRow> = {}): PodRoundRow {
   }
 }
 
-function fakeRoundWithOrganizer(overrides: Partial<PodRoundWithOrganizer> = {}): PodRoundWithOrganizer {
+function fakeRoundWithGuildToken(overrides: Partial<RoundWithGuildToken> = {}): RoundWithGuildToken {
   return {
     ...fakePodRoundRow(),
-    organizer: {
-      discordId: 'organizer-1',
-      username: 'OrganizerOne',
+    guildToken: {
       encryptedToken: encryptToken('a-real-token', TOKEN_KEY),
-      expiresAt: new Date(),
-      linkedAt: new Date(),
-      nextRoundNumber: 2,
+      displayName: 'Niamos',
     },
     ...overrides,
   }
@@ -81,7 +76,7 @@ function fakePodRoundSignupRow(overrides: Partial<PodRoundSignupRow> = {}): PodR
 function buildDeps(overrides: FakeAppStorageOverrides = {}): PodServiceDeps {
   return {
     storage: createFakeAppSqlStorage(overrides),
-    ptp: createFakePtpClient(),
+    niamos: createFakeNiamosClient(),
     tokenEncryptionKey: TOKEN_KEY,
     logger: { error: () => {} },
   }
@@ -94,10 +89,6 @@ function buildDeps(overrides: FakeAppStorageOverrides = {}): PodServiceDeps {
 function stubOrganizerNextRoundNumber(nextRoundNumber = 2) {
   return stub(async () => ({
     discordId: 'organizer-1',
-    username: 'OrganizerOne',
-    encryptedToken: encryptToken('a-real-token', TOKEN_KEY),
-    expiresAt: new Date(),
-    linkedAt: new Date(),
     nextRoundNumber,
   }))
 }
@@ -115,8 +106,8 @@ describe('recordTargetMessage', () => {
 
 describe('recordSignup', () => {
   it('returns a not_found error when the round does not exist', async () => {
-    const findRoundWithOrganizerById = stub(async () => null)
-    const deps = buildDeps({ podRound: { findRoundWithOrganizerById } })
+    const findRoundWithGuildTokenById = stub(async () => null)
+    const deps = buildDeps({ podRound: { findRoundWithGuildTokenById } })
 
     const result = await recordSignup(deps, { podRoundId: 'round-1', discordId: 'p1', username: 'P1', sourceGuildId: 'g1', action: 'in' })
 
@@ -142,8 +133,8 @@ describe('recordSignup', () => {
 
   for (const { status, message } of terminalStatusCases) {
     it(`returns a validation error and does not record/list signups when the round is already ${status}`, async () => {
-      const round = fakeRoundWithOrganizer({ status })
-      const findRoundWithOrganizerById = stub(async () => round)
+      const round = fakeRoundWithGuildToken({ status })
+      const findRoundWithGuildTokenById = stub(async () => round)
       const recordSignupStub = stub(async () => {
         throw new Error('podRoundSignup.recordSignup should not have been called for a non-COLLECTING round')
       })
@@ -151,7 +142,7 @@ describe('recordSignup', () => {
         throw new Error('podRoundSignup.findSignedUp should not have been called for a non-COLLECTING round')
       })
       const deps = buildDeps({
-        podRound: { findRoundWithOrganizerById },
+        podRound: { findRoundWithGuildTokenById },
         podRoundSignup: { recordSignup: recordSignupStub, findSignedUp },
       })
 
@@ -169,9 +160,9 @@ describe('recordSignup', () => {
     })
   }
 
-  it('only calls PTP once when two signups race to push the round past threshold (tasks/001)', async () => {
-    const round = fakeRoundWithOrganizer()
-    const findRoundWithOrganizerById = stub(async () => round)
+  it('only calls Niamos once when two signups race to push the round past threshold (tasks/001)', async () => {
+    const round = fakeRoundWithGuildToken()
+    const findRoundWithGuildTokenById = stub(async () => round)
     let claimed = false
     const claimForFiring = stub(async (id: string, thresholdReachedAt: Date) => {
       const argsLookRight = id === 'round-1' && thresholdReachedAt instanceof Date
@@ -194,19 +185,17 @@ describe('recordSignup', () => {
       fakePodRoundSignupRow({ discordId: 'p7' }),
       fakePodRoundSignupRow({ discordId: 'p8' }),
     ])
-    const createPod = stub(async (_token: string, _params: CreatePodParams) => ({
-      id: 'ptp-pod-1',
-      shareId: 'share-1',
-      shareUrl: 'https://www.protectthepod.com/draft/share-1',
-      createdAt: '2026-01-01T00:00:00Z',
+    const createDraft = stub(async (_token: string, _params: CreateDraftParams) => ({
+      uuid: 'share-1',
+      shareUrl: 'https://niamos.net/drafts/share-1',
     }))
     const deps: PodServiceDeps = {
       storage: createFakeAppSqlStorage({
-        podRound: { findRoundWithOrganizerById, markPodCreated, claimForFiring },
+        podRound: { findRoundWithGuildTokenById, markPodCreated, claimForFiring },
         podRoundSignup: { recordSignup: recordSignupStub, findSignedUp },
         podRoundTarget: { findByRoundId: stub(async () => []) },
       }),
-      ptp: createFakePtpClient({ createPod }),
+      niamos: createFakeNiamosClient({ createDraft }),
       tokenEncryptionKey: TOKEN_KEY,
       logger: { error: () => {} },
     }
@@ -216,16 +205,16 @@ describe('recordSignup', () => {
       recordSignup(deps, { podRoundId: 'round-1', discordId: 'p8', username: 'P8', sourceGuildId: 'g1', action: 'in' }),
     ])
 
-    expect(createPod.calls).toHaveLength(1)
+    expect(createDraft.calls).toHaveLength(1)
     expect(resultA.ok && resultB.ok).toBe(true)
     const podCreatedFlags = [resultA, resultB].map((r) => r.ok && r.value.podCreated)
     expect(podCreatedFlags.filter(Boolean)).toHaveLength(1)
     expect(resultA.ok && resultA.value.signupDiscordIds).toEqual(['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'])
   })
 
-  it('logs (not throws) when PTP pod creation fails after threshold reached', async () => {
-    const round = fakeRoundWithOrganizer()
-    const findRoundWithOrganizerById = stub(async () => round)
+  it('logs (not throws) when Niamos draft creation fails after threshold reached', async () => {
+    const round = fakeRoundWithGuildToken()
+    const findRoundWithGuildTokenById = stub(async () => round)
     const claimForFiring = stub(async () => ({ count: 1 }))
     const recordSignupStub = stub(async () => fakePodRoundSignupRow())
     // A full table (POD_CAPACITY: 8) — count is derived from this
@@ -240,17 +229,17 @@ describe('recordSignup', () => {
       fakePodRoundSignupRow({ discordId: 'p7' }),
       fakePodRoundSignupRow({ discordId: 'p8' }),
     ])
-    const createPod = stub(async () => {
-      throw new Error('PTP pod creation failed: 401')
+    const createDraft = stub(async () => {
+      throw new Error('Niamos draft creation failed: 401')
     })
     const errors: unknown[] = []
     const deps: PodServiceDeps = {
       storage: createFakeAppSqlStorage({
-        podRound: { findRoundWithOrganizerById, claimForFiring },
+        podRound: { findRoundWithGuildTokenById, claimForFiring },
         podRoundSignup: { recordSignup: recordSignupStub, findSignedUp },
         podRoundTarget: { findByRoundId: stub(async () => []) },
       }),
-      ptp: createFakePtpClient({ createPod }),
+      niamos: createFakeNiamosClient({ createDraft }),
       tokenEncryptionKey: TOKEN_KEY,
       logger: { error: (obj) => errors.push(obj) },
     }
@@ -273,8 +262,8 @@ describe('recordSignup', () => {
   })
 
   it('does not fire early just because count reaches the round\'s (lower) threshold — only a full table triggers it', async () => {
-    const round = fakeRoundWithOrganizer({ threshold: 2 })
-    const findRoundWithOrganizerById = stub(async () => round)
+    const round = fakeRoundWithGuildToken({ threshold: 2 })
+    const findRoundWithGuildTokenById = stub(async () => round)
     const claimForFiring = stub(async () => {
       throw new Error('podRound.claimForFiring should not have been called below POD_CAPACITY')
     })
@@ -285,16 +274,16 @@ describe('recordSignup', () => {
       fakePodRoundSignupRow({ discordId: 'p2' }),
       fakePodRoundSignupRow({ discordId: 'p3' }),
     ])
-    const createPod = stub(async () => {
-      throw new Error('createPod should not have been called below POD_CAPACITY')
+    const createDraft = stub(async () => {
+      throw new Error('createDraft should not have been called below POD_CAPACITY')
     })
     const deps: PodServiceDeps = {
       storage: createFakeAppSqlStorage({
-        podRound: { findRoundWithOrganizerById, claimForFiring },
+        podRound: { findRoundWithGuildTokenById, claimForFiring },
         podRoundSignup: { recordSignup: recordSignupStub, findSignedUp },
         podRoundTarget: { findByRoundId: stub(async () => []) },
       }),
-      ptp: createFakePtpClient({ createPod }),
+      niamos: createFakeNiamosClient({ createDraft }),
       tokenEncryptionKey: TOKEN_KEY,
       logger: { error: () => {} },
     }
@@ -318,8 +307,8 @@ describe('recordSignup', () => {
   })
 
   it('sorts signupDiscordIds by usernameSnapshot, case-insensitively, not by insertion order', async () => {
-    const round = fakeRoundWithOrganizer()
-    const findRoundWithOrganizerById = stub(async () => round)
+    const round = fakeRoundWithGuildToken()
+    const findRoundWithGuildTokenById = stub(async () => round)
     const recordSignupStub = stub(async () => fakePodRoundSignupRow())
     const findSignedUp = stub(async () => [
       fakePodRoundSignupRow({ discordId: 'charlie-id', usernameSnapshot: 'charlie' }),
@@ -328,11 +317,11 @@ describe('recordSignup', () => {
     ])
     const deps: PodServiceDeps = {
       storage: createFakeAppSqlStorage({
-        podRound: { findRoundWithOrganizerById },
+        podRound: { findRoundWithGuildTokenById },
         podRoundSignup: { recordSignup: recordSignupStub, findSignedUp },
         podRoundTarget: { findByRoundId: stub(async () => []) },
       }),
-      ptp: createFakePtpClient(),
+      niamos: createFakeNiamosClient(),
       tokenEncryptionKey: TOKEN_KEY,
       logger: { error: () => {} },
     }
@@ -351,12 +340,12 @@ describe('recordSignup', () => {
 
   it("carries the round's scheduledFor through to the result (regression guard — this used to be dropped on every signup rebuild)", async () => {
     const scheduledFor = new Date('2026-01-01T12:00:00Z')
-    const round = fakeRoundWithOrganizer({ scheduledFor })
-    const findRoundWithOrganizerById = stub(async () => round)
+    const round = fakeRoundWithGuildToken({ scheduledFor })
+    const findRoundWithGuildTokenById = stub(async () => round)
     const recordSignupStub = stub(async () => fakePodRoundSignupRow())
     const findSignedUp = stub(async () => [fakePodRoundSignupRow({ discordId: 'p3' })])
     const deps = buildDeps({
-      podRound: { findRoundWithOrganizerById },
+      podRound: { findRoundWithGuildTokenById },
       podRoundSignup: { recordSignup: recordSignupStub, findSignedUp },
       podRoundTarget: { findByRoundId: stub(async () => []) },
     })
@@ -374,12 +363,12 @@ describe('recordSignup', () => {
   })
 
   it('returns scheduledFor: null when the round has no deadline set', async () => {
-    const round = fakeRoundWithOrganizer({ scheduledFor: null })
-    const findRoundWithOrganizerById = stub(async () => round)
+    const round = fakeRoundWithGuildToken({ scheduledFor: null })
+    const findRoundWithGuildTokenById = stub(async () => round)
     const recordSignupStub = stub(async () => fakePodRoundSignupRow())
     const findSignedUp = stub(async () => [fakePodRoundSignupRow({ discordId: 'p3' })])
     const deps = buildDeps({
-      podRound: { findRoundWithOrganizerById },
+      podRound: { findRoundWithGuildTokenById },
       podRoundSignup: { recordSignup: recordSignupStub, findSignedUp },
       podRoundTarget: { findByRoundId: stub(async () => []) },
     })
@@ -396,9 +385,9 @@ describe('recordSignup', () => {
     expect(result.ok && result.value.scheduledFor).toBeNull()
   })
 
-  it('invokes onFiring with the right ctx exactly once, before ptp.createPod, and threads its chatUrl through', async () => {
-    const round = fakeRoundWithOrganizer({ id: 'round-1', setCode: 'JTL', organizerDiscordId: 'organizer-1' })
-    const findRoundWithOrganizerById = stub(async () => round)
+  it('invokes onFiring with the right ctx exactly once, before niamos.createDraft, and threads its chatUrl through', async () => {
+    const round = fakeRoundWithGuildToken({ id: 'round-1', setCode: 'JTL', organizerDiscordId: 'organizer-1' })
+    const findRoundWithGuildTokenById = stub(async () => round)
     const claimForFiring = stub(async () => ({ count: 1 }))
     const markPodCreated = stub(async () => fakePodRoundRow())
     const recordSignupStub = stub(async () => fakePodRoundSignupRow())
@@ -429,22 +418,20 @@ describe('recordSignup', () => {
       })
       return { channelId: 'chat-channel-1', chatUrl: 'https://discord.com/invite/abc123' }
     })
-    const createPod = stub(async () => {
-      callOrder.push('createPod')
+    const createDraft = stub(async () => {
+      callOrder.push('createDraft')
       return {
-        id: 'ptp-pod-1',
-        shareId: 'share-1',
-        shareUrl: 'https://www.protectthepod.com/draft/share-1',
-        createdAt: '2026-01-01T00:00:00Z',
+        uuid: 'share-1',
+        shareUrl: 'https://niamos.net/drafts/share-1',
       }
     })
     const deps: PodServiceDeps = {
       storage: createFakeAppSqlStorage({
-        podRound: { findRoundWithOrganizerById, markPodCreated, claimForFiring },
+        podRound: { findRoundWithGuildTokenById, markPodCreated, claimForFiring },
         podRoundSignup: { recordSignup: recordSignupStub, findSignedUp },
         podRoundTarget: { findByRoundId: stub(async () => []) },
       }),
-      ptp: createFakePtpClient({ createPod }),
+      niamos: createFakeNiamosClient({ createDraft }),
       tokenEncryptionKey: TOKEN_KEY,
       logger: { error: () => {} },
     }
@@ -459,20 +446,20 @@ describe('recordSignup', () => {
     })
 
     expect(onFiring.calls).toHaveLength(1)
-    expect(callOrder).toEqual(['onFiring', 'createPod'])
+    expect(callOrder).toEqual(['onFiring', 'createDraft'])
     expect(result.ok).toBe(true)
     expect(result.ok && result.value).toMatchObject({
       podCreated: true,
-      shareUrl: 'https://www.protectthepod.com/draft/share-1',
+      shareUrl: 'https://niamos.net/drafts/share-1',
       chatUrl: 'https://discord.com/invite/abc123',
       chatChannelId: 'chat-channel-1',
       signupDiscordIds: ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'],
     })
   })
 
-  it('still runs onFiring before ptp.createPod even when createPod then rejects — the hook already ran and cannot be undone', async () => {
-    const round = fakeRoundWithOrganizer()
-    const findRoundWithOrganizerById = stub(async () => round)
+  it('still runs onFiring before niamos.createDraft even when createDraft then rejects — the hook already ran and cannot be undone', async () => {
+    const round = fakeRoundWithGuildToken()
+    const findRoundWithGuildTokenById = stub(async () => round)
     const claimForFiring = stub(async () => ({ count: 1 }))
     const recordSignupStub = stub(async () => fakePodRoundSignupRow())
     // A full table (POD_CAPACITY: 8) — count is derived from this
@@ -493,18 +480,18 @@ describe('recordSignup', () => {
       callOrder.push('onFiring')
       return { channelId: 'chat-channel-1', chatUrl: 'https://discord.com/invite/abc123' }
     })
-    const createPod = stub(async () => {
-      callOrder.push('createPod')
-      throw new Error('PTP pod creation failed: 401')
+    const createDraft = stub(async () => {
+      callOrder.push('createDraft')
+      throw new Error('Niamos draft creation failed: 401')
     })
     const errors: unknown[] = []
     const deps: PodServiceDeps = {
       storage: createFakeAppSqlStorage({
-        podRound: { findRoundWithOrganizerById, claimForFiring },
+        podRound: { findRoundWithGuildTokenById, claimForFiring },
         podRoundSignup: { recordSignup: recordSignupStub, findSignedUp },
         podRoundTarget: { findByRoundId: stub(async () => []) },
       }),
-      ptp: createFakePtpClient({ createPod }),
+      niamos: createFakeNiamosClient({ createDraft }),
       tokenEncryptionKey: TOKEN_KEY,
       logger: { error: (obj) => errors.push(obj) },
     }
@@ -518,11 +505,11 @@ describe('recordSignup', () => {
       onFiring,
     })
 
-    expect(callOrder).toEqual(['onFiring', 'createPod'])
+    expect(callOrder).toEqual(['onFiring', 'createDraft'])
     expect(result.ok).toBe(true)
     // The hook already ran and returned a chatUrl/chatChannelId by the time
-    // createPod rejected — podCreated correctly reflects only
-    // ptp.createPod's outcome, but chatUrl/chatChannelId/signupDiscordIds
+    // createDraft rejected — podCreated correctly reflects only
+    // niamos.createDraft's outcome, but chatUrl/chatChannelId/signupDiscordIds
     // still come back since onFiring itself succeeded before the failure.
     expect(result.ok && result.value).toMatchObject({
       podCreated: false,
@@ -533,8 +520,8 @@ describe('recordSignup', () => {
   })
 
   it('omitting onFiring entirely does not change podCreated/shareUrl outcomes (regression guard)', async () => {
-    const round = fakeRoundWithOrganizer()
-    const findRoundWithOrganizerById = stub(async () => round)
+    const round = fakeRoundWithGuildToken()
+    const findRoundWithGuildTokenById = stub(async () => round)
     const claimForFiring = stub(async () => ({ count: 1 }))
     const markPodCreated = stub(async () => fakePodRoundRow())
     const recordSignupStub = stub(async () => fakePodRoundSignupRow())
@@ -551,19 +538,17 @@ describe('recordSignup', () => {
       fakePodRoundSignupRow({ discordId: 'p8' }),
     ]
     const findSignedUp = stub(async () => eightSignups)
-    const createPod = stub(async () => ({
-      id: 'ptp-pod-1',
-      shareId: 'share-1',
-      shareUrl: 'https://www.protectthepod.com/draft/share-1',
-      createdAt: '2026-01-01T00:00:00Z',
+    const createDraft = stub(async () => ({
+      uuid: 'share-1',
+      shareUrl: 'https://niamos.net/drafts/share-1',
     }))
     const deps: PodServiceDeps = {
       storage: createFakeAppSqlStorage({
-        podRound: { findRoundWithOrganizerById, markPodCreated, claimForFiring },
+        podRound: { findRoundWithGuildTokenById, markPodCreated, claimForFiring },
         podRoundSignup: { recordSignup: recordSignupStub, findSignedUp },
         podRoundTarget: { findByRoundId: stub(async () => []) },
       }),
-      ptp: createFakePtpClient({ createPod }),
+      niamos: createFakeNiamosClient({ createDraft }),
       tokenEncryptionKey: TOKEN_KEY,
       logger: { error: () => {} },
     }
@@ -579,7 +564,7 @@ describe('recordSignup', () => {
     expect(result.ok).toBe(true)
     expect(result.ok && result.value).toMatchObject({
       podCreated: true,
-      shareUrl: 'https://www.protectthepod.com/draft/share-1',
+      shareUrl: 'https://niamos.net/drafts/share-1',
       chatUrl: undefined,
       chatChannelId: undefined,
       signupDiscordIds: ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'],
@@ -587,8 +572,8 @@ describe('recordSignup', () => {
   })
 
   it('onFiring resolving to undefined leaves chatUrl/chatChannelId undefined without affecting podCreated/shareUrl', async () => {
-    const round = fakeRoundWithOrganizer()
-    const findRoundWithOrganizerById = stub(async () => round)
+    const round = fakeRoundWithGuildToken()
+    const findRoundWithGuildTokenById = stub(async () => round)
     const claimForFiring = stub(async () => ({ count: 1 }))
     const markPodCreated = stub(async () => fakePodRoundRow())
     const recordSignupStub = stub(async () => fakePodRoundSignupRow())
@@ -605,19 +590,17 @@ describe('recordSignup', () => {
       fakePodRoundSignupRow({ discordId: 'p8' }),
     ])
     const onFiring: OnFiringHook = async () => undefined
-    const createPod = stub(async () => ({
-      id: 'ptp-pod-1',
-      shareId: 'share-1',
-      shareUrl: 'https://www.protectthepod.com/draft/share-1',
-      createdAt: '2026-01-01T00:00:00Z',
+    const createDraft = stub(async () => ({
+      uuid: 'share-1',
+      shareUrl: 'https://niamos.net/drafts/share-1',
     }))
     const deps: PodServiceDeps = {
       storage: createFakeAppSqlStorage({
-        podRound: { findRoundWithOrganizerById, markPodCreated, claimForFiring },
+        podRound: { findRoundWithGuildTokenById, markPodCreated, claimForFiring },
         podRoundSignup: { recordSignup: recordSignupStub, findSignedUp },
         podRoundTarget: { findByRoundId: stub(async () => []) },
       }),
-      ptp: createFakePtpClient({ createPod }),
+      niamos: createFakeNiamosClient({ createDraft }),
       tokenEncryptionKey: TOKEN_KEY,
       logger: { error: () => {} },
     }
@@ -634,7 +617,7 @@ describe('recordSignup', () => {
     expect(result.ok).toBe(true)
     expect(result.ok && result.value).toMatchObject({
       podCreated: true,
-      shareUrl: 'https://www.protectthepod.com/draft/share-1',
+      shareUrl: 'https://niamos.net/drafts/share-1',
       chatUrl: undefined,
       chatChannelId: undefined,
     })
@@ -1108,7 +1091,7 @@ describe('expireOverdueRounds', () => {
   })
 
   it('expires a round that never reached its own minimum threshold by the deadline', async () => {
-    const findOverdueRounds = stub(async () => [fakeRoundWithOrganizer({ id: 'round-1', setCode: 'JTL', threshold: 6 })])
+    const findOverdueRounds = stub(async () => [fakeRoundWithGuildToken({ id: 'round-1', setCode: 'JTL', threshold: 6 })])
     // below threshold: 6 — count is derived from this findSignedUp's
     // length, not a separate .count() call.
     const findSignedUp = stub(async () => [
@@ -1145,7 +1128,7 @@ describe('expireOverdueRounds', () => {
   })
 
   it('fires a round short of a full table if it reached its own minimum threshold by the deadline', async () => {
-    const round = fakeRoundWithOrganizer({ id: 'round-1', setCode: 'JTL', threshold: 2 })
+    const round = fakeRoundWithGuildToken({ id: 'round-1', setCode: 'JTL', threshold: 2 })
     const findOverdueRounds = stub(async () => [round])
     // >= threshold (2), short of POD_CAPACITY (8) — count is derived from
     // the findSignedUp below's length, not a separate .count() call.
@@ -1159,18 +1142,16 @@ describe('expireOverdueRounds', () => {
       if (!argsLookRight) throw new Error(`unexpected markPodCreated args: ${id} ${JSON.stringify(data)}`)
       return fakePodRoundRow()
     })
-    const createPod = stub(async (token: string, params: CreatePodParams) => {
-      // maxPlayers is always POD_CAPACITY (8), never the actual headcount
+    const createDraft = stub(async (token: string, params: CreateDraftParams) => {
+      // numSeats is always POD_CAPACITY (8), never the actual headcount
       // (5 here) — a round firing short of a full table at its deadline
       // still gets a full-size pod with open seats, not one capped at
       // whoever happened to have joined by then.
-      const validArgs = token === 'a-real-token' && deepEqual(params, { setCode: 'JTL', maxPlayers: 8 })
-      if (!validArgs) throw new Error(`unexpected createPod args: ${token} ${JSON.stringify(params)}`)
+      const validArgs = token === 'a-real-token' && deepEqual(params, { setName: 'JTL', numSeats: 8, seatCreator: false })
+      if (!validArgs) throw new Error(`unexpected createDraft args: ${token} ${JSON.stringify(params)}`)
       return {
-        id: 'ptp-pod-1',
-        shareId: 'share-1',
-        shareUrl: 'https://www.protectthepod.com/draft/share-1',
-        createdAt: '2026-01-01T00:00:00Z',
+        uuid: 'share-1',
+        shareUrl: 'https://niamos.net/drafts/share-1',
       }
     })
     const findSignedUp = stub(async () => [
@@ -1189,7 +1170,7 @@ describe('expireOverdueRounds', () => {
         podRoundSignup: { findSignedUp },
         podRoundTarget: { findByRoundId },
       }),
-      ptp: createFakePtpClient({ createPod }),
+      niamos: createFakeNiamosClient({ createDraft }),
       tokenEncryptionKey: TOKEN_KEY,
       logger: { error: () => {} },
     }
@@ -1204,7 +1185,7 @@ describe('expireOverdueRounds', () => {
         outcome: 'fired',
         count: 5,
         threshold: 2,
-        shareUrl: 'https://www.protectthepod.com/draft/share-1',
+        shareUrl: 'https://niamos.net/drafts/share-1',
         chatUrl: undefined,
         chatChannelId: undefined,
         signupDiscordIds: ['p1', 'p2', 'p3', 'p4', 'p5'],
@@ -1215,7 +1196,7 @@ describe('expireOverdueRounds', () => {
   })
 
   it('does not surface a result when firing at the deadline fails after the claim (logs instead)', async () => {
-    const round = fakeRoundWithOrganizer({ id: 'round-1', threshold: 2 })
+    const round = fakeRoundWithGuildToken({ id: 'round-1', threshold: 2 })
     const findOverdueRounds = stub(async () => [round])
     const findSignedUp = stub(async () => [
       fakePodRoundSignupRow({ discordId: 'p1' }),
@@ -1225,8 +1206,8 @@ describe('expireOverdueRounds', () => {
       fakePodRoundSignupRow({ discordId: 'p5' }),
     ])
     const claimForFiring = stub(async () => ({ count: 1 }))
-    const createPod = stub(async () => {
-      throw new Error('PTP pod creation failed: 401')
+    const createDraft = stub(async () => {
+      throw new Error('Niamos draft creation failed: 401')
     })
     const errors: unknown[] = []
     const deps: PodServiceDeps = {
@@ -1234,7 +1215,7 @@ describe('expireOverdueRounds', () => {
         podRound: { findOverdueRounds, claimForFiring },
         podRoundSignup: { findSignedUp },
       }),
-      ptp: createFakePtpClient({ createPod }),
+      niamos: createFakeNiamosClient({ createDraft }),
       tokenEncryptionKey: TOKEN_KEY,
       logger: { error: (obj) => errors.push(obj) },
     }
@@ -1245,8 +1226,8 @@ describe('expireOverdueRounds', () => {
     expect(errors).toHaveLength(1)
   })
 
-  it('invokes onFiring with the right ctx before ptp.createPod, and threads chatUrl into the fired result', async () => {
-    const round = fakeRoundWithOrganizer({ id: 'round-1', setCode: 'JTL', threshold: 2, organizerDiscordId: 'organizer-1' })
+  it('invokes onFiring with the right ctx before niamos.createDraft, and threads chatUrl into the fired result', async () => {
+    const round = fakeRoundWithGuildToken({ id: 'round-1', setCode: 'JTL', threshold: 2, organizerDiscordId: 'organizer-1' })
     const findOverdueRounds = stub(async () => [round])
     const claimForFiring = stub(async () => ({ count: 1 }))
     const markPodCreated = stub(async () => fakePodRoundRow())
@@ -1271,13 +1252,11 @@ describe('expireOverdueRounds', () => {
       })
       return { channelId: 'chat-channel-1', chatUrl: 'https://discord.com/invite/xyz789' }
     })
-    const createPod = stub(async () => {
-      callOrder.push('createPod')
+    const createDraft = stub(async () => {
+      callOrder.push('createDraft')
       return {
-        id: 'ptp-pod-1',
-        shareId: 'share-1',
-        shareUrl: 'https://www.protectthepod.com/draft/share-1',
-        createdAt: '2026-01-01T00:00:00Z',
+        uuid: 'share-1',
+        shareUrl: 'https://niamos.net/drafts/share-1',
       }
     })
     const findByRoundId = stub(async () => [
@@ -1289,7 +1268,7 @@ describe('expireOverdueRounds', () => {
         podRoundSignup: { findSignedUp },
         podRoundTarget: { findByRoundId },
       }),
-      ptp: createFakePtpClient({ createPod }),
+      niamos: createFakeNiamosClient({ createDraft }),
       tokenEncryptionKey: TOKEN_KEY,
       logger: { error: () => {} },
     }
@@ -1297,7 +1276,7 @@ describe('expireOverdueRounds', () => {
     const result = await expireOverdueRounds(deps, onFiring)
 
     expect(onFiring.calls).toHaveLength(1)
-    expect(callOrder).toEqual(['onFiring', 'createPod'])
+    expect(callOrder).toEqual(['onFiring', 'createDraft'])
     expect(result).toEqual([
       {
         podRoundId: 'round-1',
@@ -1306,7 +1285,7 @@ describe('expireOverdueRounds', () => {
         outcome: 'fired',
         count: 5,
         threshold: 2,
-        shareUrl: 'https://www.protectthepod.com/draft/share-1',
+        shareUrl: 'https://niamos.net/drafts/share-1',
         chatUrl: 'https://discord.com/invite/xyz789',
         chatChannelId: 'chat-channel-1',
         signupDiscordIds: ['p1', 'p2', 'p3', 'p4', 'p5'],
@@ -1317,7 +1296,7 @@ describe('expireOverdueRounds', () => {
   })
 
   it('omitting onFiring entirely does not change the fired outcome (regression guard)', async () => {
-    const round = fakeRoundWithOrganizer({ id: 'round-1', setCode: 'JTL', threshold: 2 })
+    const round = fakeRoundWithGuildToken({ id: 'round-1', setCode: 'JTL', threshold: 2 })
     const findOverdueRounds = stub(async () => [round])
     const claimForFiring = stub(async () => ({ count: 1 }))
     const markPodCreated = stub(async () => fakePodRoundRow())
@@ -1330,11 +1309,9 @@ describe('expireOverdueRounds', () => {
       fakePodRoundSignupRow({ discordId: 'p4' }),
       fakePodRoundSignupRow({ discordId: 'p5' }),
     ])
-    const createPod = stub(async () => ({
-      id: 'ptp-pod-1',
-      shareId: 'share-1',
-      shareUrl: 'https://www.protectthepod.com/draft/share-1',
-      createdAt: '2026-01-01T00:00:00Z',
+    const createDraft = stub(async () => ({
+      uuid: 'share-1',
+      shareUrl: 'https://niamos.net/drafts/share-1',
     }))
     const findByRoundId = stub(async () => [
       { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
@@ -1345,7 +1322,7 @@ describe('expireOverdueRounds', () => {
         podRoundSignup: { findSignedUp },
         podRoundTarget: { findByRoundId },
       }),
-      ptp: createFakePtpClient({ createPod }),
+      niamos: createFakeNiamosClient({ createDraft }),
       tokenEncryptionKey: TOKEN_KEY,
       logger: { error: () => {} },
     }
@@ -1360,7 +1337,7 @@ describe('expireOverdueRounds', () => {
         outcome: 'fired',
         count: 5,
         threshold: 2,
-        shareUrl: 'https://www.protectthepod.com/draft/share-1',
+        shareUrl: 'https://niamos.net/drafts/share-1',
         chatUrl: undefined,
         chatChannelId: undefined,
         signupDiscordIds: ['p1', 'p2', 'p3', 'p4', 'p5'],
@@ -1371,7 +1348,7 @@ describe('expireOverdueRounds', () => {
   })
 
   it('skips a round that another concurrent sweep (or a racing signup) already claimed', async () => {
-    const findOverdueRounds = stub(async () => [fakeRoundWithOrganizer({ id: 'round-1' })])
+    const findOverdueRounds = stub(async () => [fakeRoundWithGuildToken({ id: 'round-1' })])
     // below the default threshold (8) — takes the expire path; count is
     // derived from this findSignedUp's length, not a separate .count() call.
     const findSignedUp = stub(async () => [
@@ -1440,7 +1417,7 @@ describe('retryFailedFires', () => {
     vi.useFakeTimers()
     vi.setSystemTime(NOW)
     try {
-      const round = fakeRoundWithOrganizer({
+      const round = fakeRoundWithGuildToken({
         id: 'round-1',
         setCode: 'JTL',
         status: 'THRESHOLD_REACHED',
@@ -1461,11 +1438,9 @@ describe('retryFailedFires', () => {
       const findByRoundId = stub(async () => [
         { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
       ])
-      const createPod = stub(async () => ({
-        id: 'ptp-pod-1',
-        shareId: 'share-1',
-        shareUrl: 'https://www.protectthepod.com/draft/share-1',
-        createdAt: '2026-01-01T00:00:00Z',
+      const createDraft = stub(async () => ({
+        uuid: 'share-1',
+        shareUrl: 'https://niamos.net/drafts/share-1',
       }))
       const onRetrySuccess = stub(async (ctx: Parameters<OnRetrySuccessHook>[0]) => {
         expect(ctx).toEqual({ chatChannelId: 'chat-channel-1' })
@@ -1477,7 +1452,7 @@ describe('retryFailedFires', () => {
           podRoundSignup: { findSignedUp },
           podRoundTarget: { findByRoundId },
         }),
-        ptp: createFakePtpClient({ createPod }),
+        niamos: createFakeNiamosClient({ createDraft }),
         tokenEncryptionKey: TOKEN_KEY,
         logger: { error: () => {} },
       }
@@ -1492,7 +1467,7 @@ describe('retryFailedFires', () => {
           organizerRoundNumber: 1,
           outcome: 'succeeded',
           count: 2,
-          shareUrl: 'https://www.protectthepod.com/draft/share-1',
+          shareUrl: 'https://niamos.net/drafts/share-1',
           chatUrl: 'https://discord.com/invite/fresh123',
           chatChannelId: 'chat-channel-1',
           signupDiscordIds: ['p1', 'p2'],
@@ -1509,7 +1484,7 @@ describe('retryFailedFires', () => {
     vi.useFakeTimers()
     vi.setSystemTime(NOW)
     try {
-      const round = fakeRoundWithOrganizer({
+      const round = fakeRoundWithGuildToken({
         id: 'round-1',
         status: 'THRESHOLD_REACHED',
         thresholdReachedAt: WITHIN_WINDOW,
@@ -1520,11 +1495,9 @@ describe('retryFailedFires', () => {
       const markPodCreated = stub(async () => fakePodRoundRow())
       const findSignedUp = stub(async () => [fakePodRoundSignupRow({ discordId: 'p1' })])
       const findByRoundId = stub(async () => [])
-      const createPod = stub(async () => ({
-        id: 'ptp-pod-1',
-        shareId: 'share-1',
-        shareUrl: 'https://www.protectthepod.com/draft/share-1',
-        createdAt: '2026-01-01T00:00:00Z',
+      const createDraft = stub(async () => ({
+        uuid: 'share-1',
+        shareUrl: 'https://niamos.net/drafts/share-1',
       }))
       const onRetrySuccess = stub(async (_ctx: Parameters<OnRetrySuccessHook>[0]) => {
         throw new Error('onRetrySuccess should not have been called when chatChannelId is null')
@@ -1535,7 +1508,7 @@ describe('retryFailedFires', () => {
           podRoundSignup: { findSignedUp },
           podRoundTarget: { findByRoundId },
         }),
-        ptp: createFakePtpClient({ createPod }),
+        niamos: createFakeNiamosClient({ createDraft }),
         tokenEncryptionKey: TOKEN_KEY,
         logger: { error: () => {} },
       }
@@ -1553,7 +1526,7 @@ describe('retryFailedFires', () => {
     vi.useFakeTimers()
     vi.setSystemTime(NOW)
     try {
-      const round = fakeRoundWithOrganizer({
+      const round = fakeRoundWithGuildToken({
         id: 'round-1',
         status: 'THRESHOLD_REACHED',
         thresholdReachedAt: WITHIN_WINDOW,
@@ -1564,8 +1537,8 @@ describe('retryFailedFires', () => {
         throw new Error('podRound.markPodCreated should not have been called — still-failing retry changes nothing')
       })
       const findSignedUp = stub(async () => [fakePodRoundSignupRow({ discordId: 'p1' })])
-      const createPod = stub(async () => {
-        throw new Error('PTP pod creation failed: 401')
+      const createDraft = stub(async () => {
+        throw new Error('Niamos draft creation failed: 401')
       })
       const errors: unknown[] = []
       const deps: PodServiceDeps = {
@@ -1573,7 +1546,7 @@ describe('retryFailedFires', () => {
           podRound: { findStuckThresholdReachedRounds, markPodCreated },
           podRoundSignup: { findSignedUp },
         }),
-        ptp: createFakePtpClient({ createPod }),
+        niamos: createFakeNiamosClient({ createDraft }),
         tokenEncryptionKey: TOKEN_KEY,
         logger: { error: (obj) => errors.push(obj) },
       }
@@ -1591,7 +1564,7 @@ describe('retryFailedFires', () => {
     vi.useFakeTimers()
     vi.setSystemTime(NOW)
     try {
-      const round = fakeRoundWithOrganizer({
+      const round = fakeRoundWithGuildToken({
         id: 'round-1',
         setCode: 'JTL',
         status: 'THRESHOLD_REACHED',
@@ -1606,15 +1579,15 @@ describe('retryFailedFires', () => {
       const findByRoundId = stub(async () => [
         { podRoundId: 'round-1', guildId: 'g1', channelId: 'channel-1', messageId: 'msg-1', approvalStatus: null, postedAt: new Date() },
       ])
-      const createPod = stub(async () => {
-        throw new Error('createPod should not have been called past the retry window')
+      const createDraft = stub(async () => {
+        throw new Error('createDraft should not have been called past the retry window')
       })
       const deps: PodServiceDeps = {
         storage: createFakeAppSqlStorage({
           podRound: { findStuckThresholdReachedRounds, markFireFailureNotified },
           podRoundTarget: { findByRoundId },
         }),
-        ptp: createFakePtpClient({ createPod }),
+        niamos: createFakeNiamosClient({ createDraft }),
         tokenEncryptionKey: TOKEN_KEY,
         logger: { error: () => {} },
       }
@@ -1638,7 +1611,7 @@ describe('retryFailedFires', () => {
   })
 
   it('treats a null thresholdReachedAt as immediately give-up-eligible (pre-migration data) rather than crashing', async () => {
-    const round = fakeRoundWithOrganizer({
+    const round = fakeRoundWithGuildToken({
       id: 'round-1',
       setCode: 'JTL',
       status: 'THRESHOLD_REACHED',
@@ -1651,15 +1624,15 @@ describe('retryFailedFires', () => {
       return fakePodRoundRow({ fireFailureNotified: true })
     })
     const findByRoundId = stub(async () => [])
-    const createPod = stub(async () => {
-      throw new Error('createPod should not have been called for a null thresholdReachedAt')
+    const createDraft = stub(async () => {
+      throw new Error('createDraft should not have been called for a null thresholdReachedAt')
     })
     const deps: PodServiceDeps = {
       storage: createFakeAppSqlStorage({
         podRound: { findStuckThresholdReachedRounds, markFireFailureNotified },
         podRoundTarget: { findByRoundId },
       }),
-      ptp: createFakePtpClient({ createPod }),
+      niamos: createFakeNiamosClient({ createDraft }),
       tokenEncryptionKey: TOKEN_KEY,
       logger: { error: () => {} },
     }

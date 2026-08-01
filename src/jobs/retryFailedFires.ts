@@ -3,12 +3,12 @@ import { postPodChatWelcomeMessage, refreshPodChatInvite } from '../discord/podC
 import { notifyPlayersByDm } from '../discord/dmSignups.js'
 import type { DiscordRestClient } from '../discord/rest.js'
 import type { AppStorage } from '../storage/appStorage.js'
-import type { PtpClient } from '../ptp/client.js'
+import type { NiamosClient } from '../niamos/client.js'
 import type { Logger } from '../services/errors.js'
 import * as podsService from '../services/pods.js'
 import type { OnRetrySuccessHook } from '../services/pods.js'
 
-export type RetryFailedFiresDeps = { storage: AppStorage; ptp: PtpClient; tokenEncryptionKey: string; logger: Logger }
+export type RetryFailedFiresDeps = { storage: AppStorage; niamos: NiamosClient; tokenEncryptionKey: string; logger: Logger }
 
 // Intended to run on a periodic schedule, same as jobs/expirePodRounds.ts
 // — this is the job-orchestration half of issue #5's fix: services/pods.ts's
