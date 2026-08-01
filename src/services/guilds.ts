@@ -146,12 +146,24 @@ export interface AllowGuildParams {
 // approving individual organizers one at a time. Same upsert shape as
 // allowOrganizer: re-running for an already-trusted origin guild just
 // refreshes who approved it, not an error.
-export async function allowGuild(deps: GuildServiceDeps, params: AllowGuildParams): Promise<void> {
+//
+// Requires guildId (the server granting trust) to already have an
+// active GuildSubscription — guild_origin_allowlist.guild_id has a real
+// FK to guild_subscriptions(guild_id), so writing without checking first
+// surfaces as a raw SQLite FOREIGN KEY constraint failure instead of a
+// clear message (confirmed live in production).
+export async function allowGuild(deps: GuildServiceDeps, params: AllowGuildParams): Promise<Result<void>> {
   const { guildId, allowedOriginGuildId, approvedBy } = params
+
+  const subscription = await deps.storage.guildSubscription.findByGuildId(guildId)
+  if (!subscription) {
+    return err(validationError('This server needs to run /subscribe-guild before it can trust other servers.'))
+  }
 
   await deps.storage.guildOriginAllowlist.approveOriginGuild({
     where: { guildId_allowedOriginGuildId: { guildId, allowedOriginGuildId } },
     create: { guildId, allowedOriginGuildId, approvedBy },
     update: { approvedBy },
   })
+  return ok(undefined)
 }

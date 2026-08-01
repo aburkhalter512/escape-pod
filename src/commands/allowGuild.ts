@@ -45,7 +45,10 @@ export const allowGuild: CommandHandler = async ({ interaction, backend, discord
     )
   }
 
-  await backend.allowGuild(guildId, originGuildId, invokerId)
+  const result = await backend.allowGuild(guildId, originGuildId, invokerId)
+  if (!result.ok) {
+    return ephemeral(result.error.message)
+  }
 
   let originGuildName = originGuildId
   try {

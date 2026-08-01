@@ -43,8 +43,9 @@ export interface BackendClient {
   allowOrganizer(guildId: string, organizerDiscordId: string, approvedBy: string): Promise<void>
   // Replaces allowOrganizer above — trusts an entire origin guild
   // instead of one organizer at a time. See services/guilds.ts's
-  // allowGuild.
-  allowGuild(guildId: string, allowedOriginGuildId: string, approvedBy: string): Promise<void>
+  // allowGuild. Fails with a validation error if this guild hasn't run
+  // /subscribe-guild yet.
+  allowGuild(guildId: string, allowedOriginGuildId: string, approvedBy: string): Promise<Result<void>>
   // Eligibility is origin-guild-scoped, not organizer-scoped — see
   // services/organizers.ts's listEligibleGuilds.
   listEligibleGuilds(originGuildId: string): Promise<{ guilds: Array<{ guildId: string }>; anySubscribed: boolean }>
@@ -148,7 +149,7 @@ export class LocalBackendClient implements BackendClient {
 
   // §7.2: trust an entire origin guild for a guild with `allowlist`
   // policy — replaces allowOrganizer above.
-  allowGuild(guildId: string, allowedOriginGuildId: string, approvedBy: string): Promise<void> {
+  allowGuild(guildId: string, allowedOriginGuildId: string, approvedBy: string): Promise<Result<void>> {
     return guildsService.allowGuild(this.serviceDeps, { guildId, allowedOriginGuildId, approvedBy })
   }
 

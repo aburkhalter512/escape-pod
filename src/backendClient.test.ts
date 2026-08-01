@@ -92,9 +92,21 @@ describe('LocalBackendClient', () => {
       approvedBy: 'admin-1',
       approvedAt: new Date(),
     }))
+    const findByGuildId = stub(async (_guildId: string) => ({
+      guildId: 'g1',
+      installedByDiscordId: 'admin-1',
+      broadcastChannelId: 'channel-1',
+      postingPolicy: 'ALLOWLIST' as const,
+      unsubscribedAt: null,
+      installedAt: new Date(),
+    }))
 
-    await client({ guildOriginAllowlist: { approveOriginGuild } }).allowGuild('g1', 'origin-g1', 'admin-1')
+    const result = await client({
+      guildSubscription: { findByGuildId },
+      guildOriginAllowlist: { approveOriginGuild },
+    }).allowGuild('g1', 'origin-g1', 'admin-1')
 
+    expect(result).toEqual({ ok: true, value: undefined })
     expect(approveOriginGuild.calls).toHaveLength(1)
   })
 

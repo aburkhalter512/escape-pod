@@ -247,19 +247,38 @@ describe('allowGuild', () => {
       if (!deepEqual(args, expected)) throw new Error(`unexpected approveOriginGuild args: ${JSON.stringify(args)}`)
       return fakeOriginAllowlistRow()
     })
-    const deps = buildDeps({ guildOriginAllowlist: { approveOriginGuild } })
+    const findByGuildId = stub(async () => fakeGuildSubscriptionRow())
+    const deps = buildDeps({ guildSubscription: { findByGuildId }, guildOriginAllowlist: { approveOriginGuild } })
 
-    await allowGuild(deps, { guildId: 'guild-1', allowedOriginGuildId: 'origin-guild-1', approvedBy: 'admin-1' })
+    const result = await allowGuild(deps, { guildId: 'guild-1', allowedOriginGuildId: 'origin-guild-1', approvedBy: 'admin-1' })
 
+    expect(result).toEqual({ ok: true, value: undefined })
     expect(approveOriginGuild.calls).toHaveLength(1)
   })
 
   it('re-granting trust updates who approved it most recently, without changing the create shape', async () => {
     const approveOriginGuild = stub(async (_args: OriginAllowlistApproveArgs) => fakeOriginAllowlistRow())
-    const deps = buildDeps({ guildOriginAllowlist: { approveOriginGuild } })
+    const findByGuildId = stub(async () => fakeGuildSubscriptionRow())
+    const deps = buildDeps({ guildSubscription: { findByGuildId }, guildOriginAllowlist: { approveOriginGuild } })
 
     await allowGuild(deps, { guildId: 'guild-1', allowedOriginGuildId: 'origin-guild-1', approvedBy: 'admin-2' })
 
     expect(approveOriginGuild.calls[0][0].update).toEqual({ approvedBy: 'admin-2' })
+  })
+
+  it("returns a validation error (without writing anything) when this guild hasn't run /subscribe-guild", async () => {
+    const findByGuildId = stub(async () => null)
+    const approveOriginGuild = stub(async (_args: OriginAllowlistApproveArgs) => {
+      throw new Error('approveOriginGuild should not have been called')
+    })
+    const deps = buildDeps({ guildSubscription: { findByGuildId }, guildOriginAllowlist: { approveOriginGuild } })
+
+    const result = await allowGuild(deps, { guildId: 'guild-1', allowedOriginGuildId: 'origin-guild-1', approvedBy: 'admin-1' })
+
+    expect(result).toEqual({
+      ok: false,
+      error: { kind: 'validation', message: 'This server needs to run /subscribe-guild before it can trust other servers.' },
+    })
+    expect(approveOriginGuild.calls).toHaveLength(0)
   })
 })

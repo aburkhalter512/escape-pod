@@ -32,6 +32,7 @@ describe('allowGuild', () => {
       if (guildId !== 'guild-1' || allowedOriginGuildId !== '123456789012345678' || approvedBy !== 'user-1') {
         throw new Error(`unexpected allowGuild args: ${guildId} ${allowedOriginGuildId} ${approvedBy}`)
       }
+      return { ok: true as const, value: undefined }
     })
     const ctx: CommandContext = {
       interaction: interaction(),
@@ -51,7 +52,10 @@ describe('allowGuild', () => {
   })
 
   it('falls back to the raw ID when the bot cannot resolve the origin guild (not a member of it)', async () => {
-    const allowGuildMock = stub(async (_guildId: string, _allowedOriginGuildId: string, _approvedBy: string) => {})
+    const allowGuildMock = stub(async (_guildId: string, _allowedOriginGuildId: string, _approvedBy: string) => ({
+      ok: true as const,
+      value: undefined,
+    }))
     const ctx: CommandContext = {
       interaction: interaction(),
       backend: createFakeBackendClient({ allowGuild: allowGuildMock }),
@@ -153,6 +157,7 @@ describe('allowGuild', () => {
       if (allowedOriginGuildId !== '123456789012345678') {
         throw new Error(`unexpected allowedOriginGuildId: ${allowedOriginGuildId}`)
       }
+      return { ok: true as const, value: undefined }
     })
     const ctx: CommandContext = {
       interaction: interaction({
@@ -166,5 +171,25 @@ describe('allowGuild', () => {
 
     expect(responseData(response).content).toContain('can now post')
     expect(allowGuildMock.calls).toHaveLength(1)
+  })
+
+  it("surfaces the backend's validation error (e.g. this server hasn't run /subscribe-guild) without resolving the origin guild's name", async () => {
+    const allowGuildMock = stub(async (_guildId: string, _allowedOriginGuildId: string, _approvedBy: string) => ({
+      ok: false as const,
+      error: { kind: 'validation' as const, message: 'This server needs to run /subscribe-guild before it can trust other servers.' },
+    }))
+    const getGuild = stub(async (_guildId: string) => {
+      throw new Error('getGuild should not have been called when allowGuild fails')
+    })
+    const ctx: CommandContext = {
+      interaction: interaction(),
+      backend: createFakeBackendClient({ allowGuild: allowGuildMock }),
+      discordRest: createFakeDiscordRest({ getGuild }),
+    }
+
+    const response = await allowGuild(ctx)
+
+    expect(responseData(response).content).toBe('This server needs to run /subscribe-guild before it can trust other servers.')
+    expect(getGuild.calls).toHaveLength(0)
   })
 })
