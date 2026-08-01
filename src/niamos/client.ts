@@ -64,7 +64,14 @@ export class HttpNiamosClient implements NiamosClient {
   constructor(private readonly config: NiamosClientConfig) {}
 
   async whoami(token: string): Promise<WhoamiResult | null> {
-    const response = await this.config.fetch(`${this.config.apiBaseUrl}/api/bot/whoami`, {
+    // Captured to a local before calling — invoking native fetch via a
+    // property path (this.config.fetch(...)) runs it with `this` bound
+    // to `this.config`, which Workers' fetch implementation rejects as
+    // "Illegal invocation" (confirmed live). A bare local-variable call
+    // sidesteps that, same pattern discord/restWorkers.ts's injected
+    // fetchFn already uses.
+    const doFetch = this.config.fetch
+    const response = await doFetch(`${this.config.apiBaseUrl}/api/bot/whoami`, {
       headers: { Authorization: `Bearer ${token}` },
     })
     if (!response.ok) {
@@ -89,7 +96,9 @@ export class HttpNiamosClient implements NiamosClient {
   // {numSeats, setName, seatCreator: false} returns
   // {draft: {id, uuid, status, setName, createdAt, ...}, seats: []}.
   async createDraft(token: string, params: CreateDraftParams): Promise<CreateDraftResult> {
-    const response = await this.config.fetch(`${this.config.apiBaseUrl}/api/bot/drafts`, {
+    // Same local-capture requirement as whoami above — see its comment.
+    const doFetch = this.config.fetch
+    const response = await doFetch(`${this.config.apiBaseUrl}/api/bot/drafts`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
