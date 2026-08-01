@@ -61,7 +61,11 @@ export class EscapePodDurableObject extends DurableObject<Env> {
       runMigrations(ctx.storage)
     })
     this.appStorage = createAppSqlStorage(ctx.storage.sql)
-    this.niamos = new HttpNiamosClient({ apiBaseUrl: env.NIAMOS_API_BASE_URL, shareBaseUrl: env.NIAMOS_SHARE_BASE_URL })
+    this.niamos = new HttpNiamosClient({
+      apiBaseUrl: env.NIAMOS_API_BASE_URL,
+      shareBaseUrl: env.NIAMOS_SHARE_BASE_URL,
+      fetch,
+    })
     this.discordRest = createFetchDiscordRest({ botToken: env.DISCORD_BOT_TOKEN, botUserId: env.DISCORD_APPLICATION_ID, fetch })
     this.tokenEncryptionKey = env.TOKEN_ENCRYPTION_KEY
     this.logger = { error: (obj, msg) => console.error(msg, obj) }

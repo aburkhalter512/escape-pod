@@ -37,18 +37,10 @@ export async function linkNiamosGuildToken(
   }
 
   await deps.storage.guildNiamosToken.linkToken({
-    where: { guildId },
-    create: {
-      guildId,
-      encryptedToken: encryptToken(token, deps.tokenEncryptionKey),
-      linkedByDiscordId: linkedBy,
-      displayName: whoami.displayName,
-    },
-    update: {
-      encryptedToken: encryptToken(token, deps.tokenEncryptionKey),
-      linkedByDiscordId: linkedBy,
-      displayName: whoami.displayName,
-    },
+    guildId,
+    encryptedToken: encryptToken(token, deps.tokenEncryptionKey),
+    linkedByDiscordId: linkedBy,
+    displayName: whoami.displayName,
   })
 
   return ok({ displayName: whoami.displayName })

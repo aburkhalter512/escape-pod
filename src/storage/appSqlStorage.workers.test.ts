@@ -48,17 +48,19 @@ describe('guildNiamosToken', () => {
     const stub = getStub('guild-niamos-token-link')
     await runInDurableObject(stub, async (instance: EscapePodDurableObject) => {
       const created = await instance.appStorage.guildNiamosToken.linkToken({
-        where: { guildId: 'guild-1' },
-        create: { guildId: 'guild-1', encryptedToken: 'enc-1', linkedByDiscordId: 'admin-1', displayName: 'Niamos' },
-        update: { encryptedToken: 'enc-1', linkedByDiscordId: 'admin-1', displayName: 'Niamos' },
+        guildId: 'guild-1',
+        encryptedToken: 'enc-1',
+        linkedByDiscordId: 'admin-1',
+        displayName: 'Niamos',
       })
       expect(created).toMatchObject({ guildId: 'guild-1', encryptedToken: 'enc-1', linkedByDiscordId: 'admin-1', displayName: 'Niamos' })
       expect(created.linkedAt).toBeInstanceOf(Date)
 
       const updated = await instance.appStorage.guildNiamosToken.linkToken({
-        where: { guildId: 'guild-1' },
-        create: { guildId: 'guild-1', encryptedToken: 'stale', linkedByDiscordId: 'admin-1', displayName: 'stale' },
-        update: { encryptedToken: 'enc-2', linkedByDiscordId: 'admin-2', displayName: 'NiamosRenamed' },
+        guildId: 'guild-1',
+        encryptedToken: 'enc-2',
+        linkedByDiscordId: 'admin-2',
+        displayName: 'NiamosRenamed',
       })
       expect(updated).toMatchObject({ encryptedToken: 'enc-2', linkedByDiscordId: 'admin-2', displayName: 'NiamosRenamed' })
     })
@@ -231,9 +233,10 @@ describe('podRound', () => {
 
   async function seedGuildNiamosToken(instance: EscapePodDurableObject, guildId = 'guild-1') {
     await instance.appStorage.guildNiamosToken.linkToken({
-      where: { guildId },
-      create: { guildId, encryptedToken: 'enc-1', linkedByDiscordId: 'admin-1', displayName: 'Niamos' },
-      update: { encryptedToken: 'enc-1', linkedByDiscordId: 'admin-1', displayName: 'Niamos' },
+      guildId,
+      encryptedToken: 'enc-1',
+      linkedByDiscordId: 'admin-1',
+      displayName: 'Niamos',
     })
   }
 

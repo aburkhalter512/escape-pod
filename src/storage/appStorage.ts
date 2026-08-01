@@ -61,11 +61,17 @@ export interface AppStorage {
   guildNiamosToken: {
     // services/niamosTokens.ts's linkNiamosGuildToken (/connect-niamos)
     // — create the guild's token row the first time, or replace it on a
-    // re-link (only one token allowed per guild at a time).
+    // re-link (only one token allowed per guild at a time). Flat args,
+    // not a Prisma-style {where, create, update} — unlike this file's
+    // other upsert methods (approveOrganizer, approveOriginGuild), every
+    // real caller here always writes the exact same fields on both the
+    // insert and update paths, so splitting them apart is pure
+    // duplication with no real create-vs-update distinction to express.
     linkToken(args: {
-      where: { guildId: string }
-      create: { guildId: string; encryptedToken: string; linkedByDiscordId: string; displayName: string }
-      update: { encryptedToken: string; linkedByDiscordId: string; displayName: string }
+      guildId: string
+      encryptedToken: string
+      linkedByDiscordId: string
+      displayName: string
     }): Promise<GuildNiamosToken>
   }
   guildSubscription: {

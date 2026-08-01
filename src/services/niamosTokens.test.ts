@@ -23,12 +23,12 @@ describe('linkNiamosGuildToken', () => {
   })
 
   it('stores the encrypted token and linked-by user, returning the display name', async () => {
-    const linkToken = stub(async (args: { where: { guildId: string }; create: { guildId: string; encryptedToken: string; linkedByDiscordId: string; displayName: string }; update: unknown }) => ({
-      guildId: args.create.guildId,
-      encryptedToken: args.create.encryptedToken,
-      linkedByDiscordId: args.create.linkedByDiscordId,
+    const linkToken = stub(async (args: { guildId: string; encryptedToken: string; linkedByDiscordId: string; displayName: string }) => ({
+      guildId: args.guildId,
+      encryptedToken: args.encryptedToken,
+      linkedByDiscordId: args.linkedByDiscordId,
       linkedAt: new Date(),
-      displayName: args.create.displayName,
+      displayName: args.displayName,
     }))
     const deps: NiamosTokenServiceDeps = {
       storage: createFakeAppSqlStorage({ guildNiamosToken: { linkToken } }),
@@ -41,10 +41,9 @@ describe('linkNiamosGuildToken', () => {
     expect(result).toEqual({ ok: true, value: { displayName: 'Niamos' } })
     expect(linkToken.calls).toHaveLength(1)
     const [args] = linkToken.calls[0]
-    expect(args.where).toEqual({ guildId: 'guild-1' })
-    expect(args.create.guildId).toBe('guild-1')
-    expect(args.create.linkedByDiscordId).toBe('user-1')
-    expect(args.create.displayName).toBe('Niamos')
-    expect(args.create.encryptedToken).not.toBe('nms_good') // encrypted, not stored in plaintext
+    expect(args.guildId).toBe('guild-1')
+    expect(args.linkedByDiscordId).toBe('user-1')
+    expect(args.displayName).toBe('Niamos')
+    expect(args.encryptedToken).not.toBe('nms_good') // encrypted, not stored in plaintext
   })
 })

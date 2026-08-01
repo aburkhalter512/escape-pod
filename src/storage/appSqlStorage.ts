@@ -56,23 +56,25 @@ function createOrganizerStorage(sql: SqlStorage): AppStorage['organizer'] {
 function createGuildNiamosTokenStorage(sql: SqlStorage): AppStorage['guildNiamosToken'] {
   return {
     async linkToken(args) {
+      // ON CONFLICT SET reads back via excluded.* rather than re-binding
+      // args.* a second time — safe here (unlike this file's other
+      // upsert methods) because linkToken's flat args has no separate
+      // create/update value sets to keep apart; the row being inserted
+      // and the row replacing it on conflict are always the same values.
       const row = one(
         sql,
         `INSERT INTO guild_niamos_tokens (guild_id, encrypted_token, linked_by_discord_id, linked_at, display_name)
          VALUES (?, ?, ?, ?, ?)
          ON CONFLICT (guild_id) DO UPDATE SET
-           encrypted_token = ?,
-           linked_by_discord_id = ?,
-           display_name = ?
+           encrypted_token = excluded.encrypted_token,
+           linked_by_discord_id = excluded.linked_by_discord_id,
+           display_name = excluded.display_name
          RETURNING *`,
-        args.where.guildId,
-        args.create.encryptedToken,
-        args.create.linkedByDiscordId,
+        args.guildId,
+        args.encryptedToken,
+        args.linkedByDiscordId,
         toIso(new Date()),
-        args.create.displayName,
-        args.update.encryptedToken,
-        args.update.linkedByDiscordId,
-        args.update.displayName
+        args.displayName
       )
       return mapGuildNiamosTokenRow(row)
     },

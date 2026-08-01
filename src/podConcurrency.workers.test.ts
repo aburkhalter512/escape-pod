@@ -155,18 +155,10 @@ async function seedGuildNiamosToken(guildId: string): Promise<void> {
   const stub = getGlobalStub()
   await runInDurableObject(stub, async (instance: EscapePodDurableObject) => {
     await instance.appStorage.guildNiamosToken.linkToken({
-      where: { guildId },
-      create: {
-        guildId,
-        encryptedToken: encryptToken('fake-niamos-token', env.TOKEN_ENCRYPTION_KEY),
-        linkedByDiscordId: 'admin-1',
-        displayName: 'Niamos',
-      },
-      update: {
-        encryptedToken: encryptToken('fake-niamos-token', env.TOKEN_ENCRYPTION_KEY),
-        linkedByDiscordId: 'admin-1',
-        displayName: 'Niamos',
-      },
+      guildId,
+      encryptedToken: encryptToken('fake-niamos-token', env.TOKEN_ENCRYPTION_KEY),
+      linkedByDiscordId: 'admin-1',
+      displayName: 'Niamos',
     })
   })
 }

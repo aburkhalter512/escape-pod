@@ -13,6 +13,16 @@ export interface NiamosClientConfig {
   // domain than apiBaseUrl (niamos.net vs. niamos-backend.onrender.com),
   // unlike PTP where one baseUrl served both purposes.
   shareBaseUrl: string
+  // Injected rather than referencing the global fetch directly inside
+  // HttpNiamosClient's methods — per PR review, foundational IO
+  // functions (fetch, file I/O, etc.) should be defined once at the
+  // application's entry point and passed down, not referenced ad hoc
+  // wherever needed. Same pattern as discord/restWorkers.ts's
+  // createFetchDiscordRest. durableObject.ts (the one real caller)
+  // passes the ambient global `fetch` explicitly; tests can inject a
+  // stub function directly here instead of monkey-patching
+  // globalThis.fetch.
+  fetch: typeof fetch
 }
 
 export interface WhoamiResult {
@@ -54,7 +64,7 @@ export class HttpNiamosClient implements NiamosClient {
   constructor(private readonly config: NiamosClientConfig) {}
 
   async whoami(token: string): Promise<WhoamiResult | null> {
-    const response = await fetch(`${this.config.apiBaseUrl}/api/bot/whoami`, {
+    const response = await this.config.fetch(`${this.config.apiBaseUrl}/api/bot/whoami`, {
       headers: { Authorization: `Bearer ${token}` },
     })
     if (!response.ok) {
@@ -79,7 +89,7 @@ export class HttpNiamosClient implements NiamosClient {
   // {numSeats, setName, seatCreator: false} returns
   // {draft: {id, uuid, status, setName, createdAt, ...}, seats: []}.
   async createDraft(token: string, params: CreateDraftParams): Promise<CreateDraftResult> {
-    const response = await fetch(`${this.config.apiBaseUrl}/api/bot/drafts`, {
+    const response = await this.config.fetch(`${this.config.apiBaseUrl}/api/bot/drafts`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
