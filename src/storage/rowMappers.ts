@@ -3,6 +3,7 @@ import type {
   GuildSubscription,
   GuildOrganizerAllowlist,
   GuildOriginAllowlist,
+  GuildNiamosToken,
   PodRound,
   PodRoundTarget,
   PodRoundSignup,
@@ -52,11 +53,17 @@ export function fromIsoNullable(text: SqlStorageValue): Date | null {
 export function mapOrganizerRow(row: RawRow): Organizer {
   return {
     discordId: row.discord_id as string,
-    username: row.username as string,
-    encryptedToken: row.encrypted_token as string,
-    expiresAt: fromIso(row.expires_at),
-    linkedAt: fromIso(row.linked_at),
     nextRoundNumber: row.next_round_number as number,
+  }
+}
+
+export function mapGuildNiamosTokenRow(row: RawRow): GuildNiamosToken {
+  return {
+    guildId: row.guild_id as string,
+    encryptedToken: row.encrypted_token as string,
+    linkedByDiscordId: row.linked_by_discord_id as string,
+    linkedAt: fromIso(row.linked_at),
+    displayName: row.display_name as string,
   }
 }
 

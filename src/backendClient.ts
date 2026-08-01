@@ -1,5 +1,6 @@
-// The seam between Discord interaction handling and durable state/PTP
-// business logic (see INTEGRATIONS.md §7.3, §4.1, §8). This used to be an
+// The seam between Discord interaction handling and durable state/Niamos
+// business logic (see INTEGRATIONS.md §7.3, §4.1, §8 — written for PTP,
+// treat as historical design reasoning post-cutover). This used to be an
 // HTTP client to a separate backend service; the two are now one deployed
 // process, so LocalBackendClient below calls the extracted services/*
 // functions directly, in-process — no serialization, no network round
@@ -8,11 +9,12 @@
 
 import type { PostingPolicy } from '@prisma/client'
 import type { AppStorage } from './storage/appStorage.js'
-import type { PtpClient } from './ptp/client.js'
+import type { NiamosClient } from './niamos/client.js'
 import type { Logger, Result } from './services/errors.js'
 import type { ActiveRoundSummary, ConcludeActiveRoundResult, OnFiringHook } from './services/pods.js'
 import * as podsService from './services/pods.js'
 import * as organizersService from './services/organizers.js'
+import * as niamosTokensService from './services/niamosTokens.js'
 import * as guildsService from './services/guilds.js'
 
 // The RSVP button's two states (§7.3) — see discord/podMessage.ts for
@@ -25,7 +27,9 @@ export type SignupAction = 'in' | 'leave'
 // testUtils/fakeBackendClient.ts that fully satisfies this interface, no
 // `as unknown as` needed.
 export interface BackendClient {
-  linkOrganizer(discordId: string, token: string): Promise<Result<{ username: string }>>
+  // /connect-niamos: submit a pasted Niamos token for validation +
+  // guild-scoped storage. Replaces the old per-organizer linkOrganizer.
+  linkNiamosToken(guildId: string, token: string, linkedBy: string): Promise<Result<{ displayName: string }>>
   subscribeGuild(
     guildId: string,
     installedBy: string,
@@ -96,7 +100,7 @@ export interface BackendClient {
 
 interface ServiceDeps {
   storage: AppStorage
-  ptp: PtpClient
+  niamos: NiamosClient
   tokenEncryptionKey: string
   logger: Logger
 }
@@ -105,7 +109,7 @@ interface ServiceDeps {
 // this.appStorage, built once in durableObject.ts's constructor. See
 // storage/appStorage.ts for the shared AppStorage contract services/*.ts
 // depends on.
-export type LocalBackendClientDeps = { storage: AppStorage; ptp: PtpClient; tokenEncryptionKey: string; logger: Logger }
+export type LocalBackendClientDeps = { storage: AppStorage; niamos: NiamosClient; tokenEncryptionKey: string; logger: Logger }
 
 export class LocalBackendClient implements BackendClient {
   private readonly serviceDeps: ServiceDeps
@@ -114,9 +118,10 @@ export class LocalBackendClient implements BackendClient {
     this.serviceDeps = deps
   }
 
-  // §8.2: submit a pasted PTP token for validation + storage.
-  linkOrganizer(discordId: string, token: string): Promise<Result<{ username: string }>> {
-    return organizersService.linkOrganizer(this.serviceDeps, { discordId, token })
+  // /connect-niamos: submit a pasted Niamos token for validation +
+  // guild-scoped storage — see services/niamosTokens.ts.
+  linkNiamosToken(guildId: string, token: string, linkedBy: string): Promise<Result<{ displayName: string }>> {
+    return niamosTokensService.linkNiamosGuildToken(this.serviceDeps, { guildId, token, linkedBy })
   }
 
   // §7.2: register a guild's broadcast subscription, or reconfigure an

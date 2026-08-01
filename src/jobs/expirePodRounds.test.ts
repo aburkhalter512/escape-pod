@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createFakeAppSqlStorage } from '../testUtils/fakeAppSqlStorage.js'
-import { createFakePtpClient } from '../testUtils/fakePtpClient.js'
+import { createFakeNiamosClient } from '../testUtils/fakeNiamosClient.js'
 import { createFakeDiscordRest } from '../testUtils/fakeDiscordRest.js'
 import { stub } from '../testUtils/stub.js'
 import { encryptToken } from '../crypto/tokenCrypto.js'
@@ -9,10 +9,10 @@ import { expireOverduePodRounds } from './expirePodRounds.js'
 
 const TOKEN_KEY = '00'.repeat(32)
 
-// findOverdueRounds always includes the organizer (a round that reached
-// its threshold needs their token to fire) — so every fixture here
-// carries one, even though the expire-path tests below never actually
-// read it.
+// findOverdueRounds always includes the origin guild's linked Niamos
+// token (a round that reached its threshold needs it to fire) — so
+// every fixture here carries one, even though the expire-path tests
+// below never actually read it.
 function fakePodRoundRow(
   overrides: { threshold?: number; originGuildName?: string | null; originGuildId?: string | null } = {}
 ) {
@@ -31,17 +31,13 @@ function fakePodRoundRow(
     thresholdReachedAt: null,
     fireFailureNotified: false,
     createdAt: new Date(),
-    organizer: {
-      discordId: 'organizer-1',
-      username: 'OrganizerOne',
+    guildToken: {
       // Must be real ciphertext, not a placeholder — the fire-path test
       // actually decrypts this (fireRound -> decryptToken) before calling
-      // the stubbed createPod, so a fake string would throw and silently
+      // the stubbed createDraft, so a fake string would throw and silently
       // fail the fire (caught by fireRound's own try/catch).
       encryptedToken: encryptToken('a-real-token', TOKEN_KEY),
-      expiresAt: new Date(),
-      linkedAt: new Date(),
-      nextRoundNumber: 2,
+      displayName: 'Niamos',
     },
   }
 }
@@ -64,7 +60,7 @@ describe('expireOverduePodRounds', () => {
     })
     const deps: ExpirePodRoundsDeps = {
       storage: createFakeAppSqlStorage({ podRound: { findOverdueRounds: stub(async () => []) } }),
-      ptp: createFakePtpClient(),
+      niamos: createFakeNiamosClient(),
       tokenEncryptionKey: TOKEN_KEY,
       logger: { error: () => {} },
     }
@@ -98,7 +94,7 @@ describe('expireOverduePodRounds', () => {
           ]),
         },
       }),
-      ptp: createFakePtpClient(),
+      niamos: createFakeNiamosClient(),
       tokenEncryptionKey: TOKEN_KEY,
       logger: { error: () => {} },
     }
@@ -136,12 +132,10 @@ describe('expireOverduePodRounds', () => {
           ]),
         },
       }),
-      ptp: createFakePtpClient({
-        createPod: stub(async () => ({
-          id: 'ptp-pod-1',
-          shareId: 'share-1',
-          shareUrl: 'https://www.protectthepod.com/draft/share-1',
-          createdAt: '2026-01-01T00:00:00Z',
+      niamos: createFakeNiamosClient({
+        createDraft: stub(async () => ({
+          uuid: 'share-1',
+          shareUrl: 'https://niamos.net/drafts/share-1',
         })),
       }),
       tokenEncryptionKey: TOKEN_KEY,
@@ -179,7 +173,7 @@ describe('expireOverduePodRounds', () => {
           ]),
         },
       }),
-      ptp: createFakePtpClient(),
+      niamos: createFakeNiamosClient(),
       tokenEncryptionKey: TOKEN_KEY,
       logger: { error: () => {} },
     }
@@ -214,12 +208,10 @@ describe('expireOverduePodRounds', () => {
           ]),
         },
       }),
-      ptp: createFakePtpClient({
-        createPod: stub(async () => ({
-          id: 'ptp-pod-1',
-          shareId: 'share-1',
-          shareUrl: 'https://www.protectthepod.com/draft/share-1',
-          createdAt: '2026-01-01T00:00:00Z',
+      niamos: createFakeNiamosClient({
+        createDraft: stub(async () => ({
+          uuid: 'share-1',
+          shareUrl: 'https://niamos.net/drafts/share-1',
         })),
       }),
       tokenEncryptionKey: TOKEN_KEY,
@@ -256,12 +248,10 @@ describe('expireOverduePodRounds', () => {
           ]),
         },
       }),
-      ptp: createFakePtpClient({
-        createPod: stub(async () => ({
-          id: 'ptp-pod-1',
-          shareId: 'share-1',
-          shareUrl: 'https://www.protectthepod.com/draft/share-1',
-          createdAt: '2026-01-01T00:00:00Z',
+      niamos: createFakeNiamosClient({
+        createDraft: stub(async () => ({
+          uuid: 'share-1',
+          shareUrl: 'https://niamos.net/drafts/share-1',
         })),
       }),
       tokenEncryptionKey: TOKEN_KEY,
@@ -301,12 +291,10 @@ describe('expireOverduePodRounds', () => {
           ]),
         },
       }),
-      ptp: createFakePtpClient({
-        createPod: stub(async () => ({
-          id: 'ptp-pod-1',
-          shareId: 'share-1',
-          shareUrl: 'https://www.protectthepod.com/draft/share-1',
-          createdAt: '2026-01-01T00:00:00Z',
+      niamos: createFakeNiamosClient({
+        createDraft: stub(async () => ({
+          uuid: 'share-1',
+          shareUrl: 'https://niamos.net/drafts/share-1',
         })),
       }),
       tokenEncryptionKey: TOKEN_KEY,
@@ -330,15 +318,15 @@ describe('expireOverduePodRounds', () => {
     })
 
     // The welcome message lands in the newly created chat channel — not a
-    // DM channel — and mentions every signed-up player plus the real PTP
-    // share URL (only known once ptp.createPod ran, after the channel was
+    // DM channel — and mentions every signed-up player plus the real Niamos
+    // share URL (only known once niamos.createDraft ran, after the channel was
     // created).
     const welcomeCall = postMessage.calls.find((c) => c[0] === 'chat-channel-1')
     expect(welcomeCall).toBeDefined()
     const content = (welcomeCall?.[1] as { content: string }).content
     expect(content).toContain('<@p1>')
     expect(content).toContain('<@p2>')
-    expect(content).toContain('https://www.protectthepod.com/draft/share-1')
+    expect(content).toContain('https://niamos.net/drafts/share-1')
   })
 
   it('does not attempt a chat space for a round with no recorded origin guild, but still DMs signed-up players', async () => {
@@ -373,12 +361,10 @@ describe('expireOverduePodRounds', () => {
           ]),
         },
       }),
-      ptp: createFakePtpClient({
-        createPod: stub(async () => ({
-          id: 'ptp-pod-1',
-          shareId: 'share-1',
-          shareUrl: 'https://www.protectthepod.com/draft/share-1',
-          createdAt: '2026-01-01T00:00:00Z',
+      niamos: createFakeNiamosClient({
+        createDraft: stub(async () => ({
+          uuid: 'share-1',
+          shareUrl: 'https://niamos.net/drafts/share-1',
         })),
       }),
       tokenEncryptionKey: TOKEN_KEY,
@@ -421,7 +407,7 @@ describe('expireOverduePodRounds', () => {
           ]),
         },
       }),
-      ptp: createFakePtpClient(),
+      niamos: createFakeNiamosClient(),
       tokenEncryptionKey: TOKEN_KEY,
       logger: { error: (obj) => errors.push(obj) },
     }

@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import type { APIInteraction } from 'discord-api-types/v10'
 import type { AppStorage } from './storage/appStorage.js'
-import type { PtpClient } from './ptp/client.js'
+import type { NiamosClient } from './niamos/client.js'
 import type { DiscordRestClient } from './discord/rest.js'
 import type { Logger } from './services/errors.js'
 import type { PendingStartPodStore } from './pendingStartPods.js'
@@ -28,7 +28,7 @@ import { ephemeral } from './commands/helpers.js'
 // caller for the admin surface ever materializes on this platform.
 export interface HonoAppDeps {
   storage: AppStorage
-  ptp: PtpClient
+  niamos: NiamosClient
   discordRest: DiscordRestClient
   discordPublicKey: string
   tokenEncryptionKey: string
@@ -48,7 +48,7 @@ export interface HonoAppDeps {
 export function buildHonoApp(deps: HonoAppDeps) {
   const backend = new LocalBackendClient({
     storage: deps.storage,
-    ptp: deps.ptp,
+    niamos: deps.niamos,
     tokenEncryptionKey: deps.tokenEncryptionKey,
     logger: deps.logger,
   })

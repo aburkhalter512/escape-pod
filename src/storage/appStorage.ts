@@ -1,15 +1,28 @@
 import type {
-  Prisma,
   Organizer,
   GuildSubscription,
   GuildOrganizerAllowlist,
   GuildOriginAllowlist,
+  GuildNiamosToken,
   PodRound,
   PodRoundTarget,
   PodRoundSignup,
   PodRoundStatus,
   PostingPolicy,
 } from '@prisma/client'
+
+// Hand-written, not Prisma-sourced: no formal Prisma relation exists
+// between PodRound.originGuildId and GuildNiamosToken (no FK — a round's
+// origin guild need not have ever linked a Niamos token, or could have
+// been unlinked after the round started; see storage/schema.ts migration
+// 3). Replaces the old Prisma.PodRoundGetPayload<{include:{organizer:true}}>
+// join, which the schema guaranteed always resolved (organizer_discord_id
+// is NOT NULL + FK-enforced) — guildToken has no such guarantee, so
+// callers (services/pods.ts's attemptPodCreation) must treat null as a
+// normal, expected outcome, not an invariant violation.
+export interface RoundWithGuildToken extends PodRound {
+  guildToken: { encryptedToken: string; displayName: string } | null
+}
 
 // The shared data-access contract services/*.ts depends on — split out
 // from appSqlStorage.ts specifically so this pure type declaration (zero
@@ -36,25 +49,30 @@ import type {
 // all).
 export interface AppStorage {
   organizer: {
-    // jobs/refreshTokens.ts's sweep — organizers whose PTP token expires
-    // before the given cutoff.
-    findExpiringBefore(cutoff: Date): Promise<Organizer[]>
     // services/pods.ts's startPod — atomically claims this organizer's
-    // next sequential round number (see startPod's own doc comment on why
-    // this alone, not a transaction, guarantees distinct round numbers
-    // under concurrent callers).
+    // next sequential round number, creating the organizer row on first
+    // use (no separate linking step creates it anymore — see this
+    // method's implementation in appSqlStorage.ts for the upsert
+    // semantics). See startPod's own doc comment on why this alone, not
+    // a transaction, guarantees distinct round numbers under concurrent
+    // callers.
     incrementNextRoundNumber(args: { where: { discordId: string }; data: { increment: number } }): Promise<Organizer>
-    // jobs/refreshTokens.ts's only use — stores a freshly-rotated PTP
-    // token + its new expiry.
-    updateToken(args: { where: { discordId: string }; data: { encryptedToken: string; expiresAt: Date } }): Promise<Organizer>
-    // services/organizers.ts's linkOrganizer (/connect-ptp) — create the
-    // organizer row the first time, or refresh username/token/expiry on a
-    // re-link.
-    linkOrganizer(args: {
-      where: { discordId: string }
-      create: { discordId: string; username: string; encryptedToken: string; expiresAt: Date }
-      update: { username: string; encryptedToken: string; expiresAt: Date }
-    }): Promise<Organizer>
+  }
+  guildNiamosToken: {
+    // services/niamosTokens.ts's linkNiamosGuildToken (/connect-niamos)
+    // — create the guild's token row the first time, or replace it on a
+    // re-link (only one token allowed per guild at a time). Flat args,
+    // not a Prisma-style {where, create, update} — unlike this file's
+    // other upsert methods (approveOrganizer, approveOriginGuild), every
+    // real caller here always writes the exact same fields on both the
+    // insert and update paths, so splitting them apart is pure
+    // duplication with no real create-vs-update distinction to express.
+    linkToken(args: {
+      guildId: string
+      encryptedToken: string
+      linkedByDiscordId: string
+      displayName: string
+    }): Promise<GuildNiamosToken>
   }
   guildSubscription: {
     // services/pods.ts's startPod — of the target guilds requested, which
@@ -126,9 +144,9 @@ export interface AppStorage {
     // services/pods.ts's cancelPod/concludePod — plain lookup by id, no
     // organizer needed.
     findRoundById(id: string): Promise<PodRound | null>
-    // services/pods.ts's recordSignup — needs the organizer's encrypted
-    // PTP token if this signup ends up firing the round.
-    findRoundWithOrganizerById(id: string): Promise<Prisma.PodRoundGetPayload<{ include: { organizer: true } }> | null>
+    // services/pods.ts's recordSignup — needs the round's origin guild's
+    // encrypted Niamos token if this signup ends up firing the round.
+    findRoundWithGuildTokenById(id: string): Promise<RoundWithGuildToken | null>
     // services/pods.ts's cancelActiveRound/concludeActiveRound — resolve
     // an exact round when the caller specified organizerRoundNumber.
     findRoundByOrganizerAndNumber(organizerDiscordId: string, organizerRoundNumber: number): Promise<PodRound | null>
@@ -144,14 +162,14 @@ export interface AppStorage {
     // jobs/expirePodRounds.ts's expireOverdueRounds — every still-
     // COLLECTING round past its deadline (status is always 'COLLECTING'
     // for this query, so it's not a parameter).
-    findOverdueRounds(scheduledBefore: Date): Promise<Array<Prisma.PodRoundGetPayload<{ include: { organizer: true } }>>>
+    findOverdueRounds(scheduledBefore: Date): Promise<RoundWithGuildToken[]>
     // jobs/retryFailedFires.ts's retryFailedFires — every round stuck at
     // THRESHOLD_REACHED whose initial fireRound attempt failed and hasn't
     // been given up on yet (status/fireFailureNotified are always the
     // same two constants for this query, so neither is a parameter).
-    findStuckThresholdReachedRounds(): Promise<Array<Prisma.PodRoundGetPayload<{ include: { organizer: true } }>>>
+    findStuckThresholdReachedRounds(): Promise<RoundWithGuildToken[]>
     // services/pods.ts's attemptPodCreation — the round successfully got
-    // a PTP pod.
+    // a Niamos draft.
     markPodCreated(id: string, data: { ptpPodShareId: string; chatChannelId?: string }): Promise<PodRound>
     // services/pods.ts's cancelPod.
     markCancelled(id: string): Promise<PodRound>

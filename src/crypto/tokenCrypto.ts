@@ -1,9 +1,11 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
 
-// AES-256-GCM encryption at rest for PTP tokens (INTEGRATIONS.md §8.5) — the
-// tokens from /api/auth/token carry full account privilege, not just
-// pod-creation, so this is required v1 scope, not a later hardening pass
-// (§5 blocker 3).
+// AES-256-GCM encryption at rest for Niamos bot tokens (a guild's linked
+// draft-creation credential — see services/niamosTokens.ts) — required v1
+// scope, not a later hardening pass. Originally written for PTP's tokens
+// (INTEGRATIONS.md §8.5); reused unchanged for Niamos's, since it's a
+// generic string-in/ciphertext-out primitive with no PTP-specific
+// assumptions baked in.
 
 const ALGORITHM = 'aes-256-gcm'
 const IV_LENGTH = 12

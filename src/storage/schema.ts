@@ -138,4 +138,40 @@ export const MIGRATIONS: Migration[] = [
       )`,
     ],
   },
+  {
+    // PTP -> Niamos hard cutover (dropped entirely, no dual support —
+    // see the migration plan). Niamos tokens are scoped per-guild, not
+    // per-organizer like PTP's were, so organizers' PTP-specific
+    // columns become dead and a new guild-keyed token table replaces
+    // them. DROP COLUMN isn't just cosmetic here: the new
+    // incrementNextRoundNumber upsert (see appSqlStorage.ts) INSERTs
+    // only (discord_id, next_round_number) — these NOT NULL,
+    // no-default columns would otherwise reject that INSERT outright,
+    // and SQLite has no ALTER COLUMN to relax NOT NULL in place.
+    // organizers.next_round_number and every pod_rounds row are
+    // untouched — round-numbering continuity and full round history
+    // survive this migration unchanged.
+    id: 3,
+    statements: [
+      `ALTER TABLE organizers DROP COLUMN username`,
+      `ALTER TABLE organizers DROP COLUMN encrypted_token`,
+      `ALTER TABLE organizers DROP COLUMN expires_at`,
+      `ALTER TABLE organizers DROP COLUMN linked_at`,
+
+      // One Niamos bearer token per Discord guild (confirmed with
+      // Niamos's author) — linked once by any guild admin via
+      // /connect-niamos, then usable by any eligible organizer's
+      // /start-pod from that guild. No FK to guild_subscriptions: a
+      // guild can link a token independent of its broadcast-
+      // subscription status, same non-FK reasoning as
+      // pod_rounds.origin_guild_id below.
+      `CREATE TABLE IF NOT EXISTS guild_niamos_tokens (
+        guild_id TEXT PRIMARY KEY,
+        encrypted_token TEXT NOT NULL,
+        linked_by_discord_id TEXT NOT NULL,
+        linked_at TEXT NOT NULL,
+        display_name TEXT NOT NULL
+      )`,
+    ],
+  },
 ]

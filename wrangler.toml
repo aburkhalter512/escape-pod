@@ -5,14 +5,10 @@
 name = "escape-pod-cf"
 main = "src/worker.ts"
 compatibility_date = "2026-07-28"
-# Needed for src/util/jwt.ts's Buffer usage (reused unchanged from the
-# AWS side, per the migration plan). Also covers node:crypto's
-# createCipheriv/createDecipheriv (crypto/tokenCrypto.ts) — confirmed
-# empirically under real local workerd during Phase 4 (a Phase 0-era
-# comment here previously claimed these were NOT covered by this flag;
-# that was wrong, or at least stale — Cloudflare has since expanded
-# nodejs_compat's node:crypto coverage). Phase 6 (Web Crypto rewrite) may
-# turn out to be unnecessary as a result — revisit before starting it.
+# Needed for node:crypto's createCipheriv/createDecipheriv
+# (crypto/tokenCrypto.ts, used to encrypt/decrypt the Niamos token at
+# rest) — confirmed working under real local workerd via
+# podConcurrency.workers.test.ts.
 compatibility_flags = ["nodejs_compat"]
 
 # Phase 9: the SAME Discord Application the AWS deployment already uses
@@ -30,19 +26,23 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 DISCORD_APPLICATION_ID = "1524918902373744650"
 DISCORD_PUBLIC_KEY = "a886a9e18825b14110039efc4b33ce4a7e959a9fb320f45315dae461dc2da01c"
-PTP_BASE_URL = "https://www.protectthepod.com"
+# Two separate hosts (unlike PTP's single baseUrl) — the bot API lives on
+# a different domain than the public site drafts are joined through.
+NIAMOS_API_BASE_URL = "https://niamos-backend.onrender.com"
+NIAMOS_SHARE_BASE_URL = "https://niamos.net"
 
 [[durable_objects.bindings]]
 name = "ESCAPE_POD_DO"
 class_name = "EscapePodDurableObject"
 
-# Matches durableObject.ts's POD_SWEEP_CRON/TOKEN_REFRESH_CRON literals
-# exactly — worker.ts's scheduled() handler dispatches on event.cron, so
-# these two strings have to stay in sync with those constants. One-minute
-# covers expirePodRounds+retryFailedFires (they already share a 60s
-# interval on the AWS side); daily covers refreshTokens.
+# Matches durableObject.ts's POD_SWEEP_CRON literal exactly —
+# worker.ts's scheduled() handler dispatches on event.cron, so this
+# string has to stay in sync with that constant. Covers
+# expirePodRounds+retryFailedFires (they already share a 60s interval on
+# the AWS side). No daily token-refresh cron — Niamos tokens never
+# expire (unlike PTP's), so that job was deleted entirely.
 [triggers]
-crons = ["*/1 * * * *", "0 0 * * *"]
+crons = ["*/1 * * * *"]
 
 # Declares EscapePodDurableObject as SQLite-storage-backed. Cloudflare's
 # docs mark this classic `[[migrations]]` form as legacy in favor of a

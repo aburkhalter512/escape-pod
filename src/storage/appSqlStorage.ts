@@ -1,4 +1,4 @@
-import type { Organizer, PodRoundStatus } from '@prisma/client'
+import type { PodRoundStatus } from '@prisma/client'
 import type { AppStorage } from './appStorage.js'
 import {
   one,
@@ -9,6 +9,7 @@ import {
   mapGuildSubscriptionRow,
   mapGuildOrganizerAllowlistRow,
   mapGuildOriginAllowlistRow,
+  mapGuildNiamosTokenRow,
   mapPodRoundRow,
   mapPodRoundTargetRow,
   mapPodRoundSignupRow,
@@ -28,54 +29,60 @@ export type { AppStorage }
 
 function createOrganizerStorage(sql: SqlStorage): AppStorage['organizer'] {
   return {
-    async findExpiringBefore(cutoff) {
-      const rows = all(sql, 'SELECT * FROM organizers WHERE expires_at < ?', toIso(cutoff))
-      return rows.map(mapOrganizerRow)
-    },
     async incrementNextRoundNumber(args) {
+      // Upsert, not a plain UPDATE — no separate linking step creates the
+      // organizer row anymore (PTP's /connect-ptp used to; Niamos tokens
+      // are guild-scoped, not organizer-scoped — see
+      // storage/schema.ts migration 3). A brand-new organizer's first
+      // call inserts directly at 1 + increment (no ON CONFLICT fires),
+      // so organizerRoundNumber (= the returned value - increment)
+      // comes out to 1 for their first-ever round, matching an existing
+      // organizer's next_round_number = N -> returns N + increment ->
+      // organizerRoundNumber = N.
       const row = one(
         sql,
-        'UPDATE organizers SET next_round_number = next_round_number + ? WHERE discord_id = ? RETURNING *',
-        args.data.increment,
-        args.where.discordId
-      )
-      return mapOrganizerRow(row)
-    },
-    async updateToken(args) {
-      const row = one(
-        sql,
-        'UPDATE organizers SET encrypted_token = ?, expires_at = ? WHERE discord_id = ? RETURNING *',
-        args.data.encryptedToken,
-        toIso(args.data.expiresAt),
-        args.where.discordId
-      )
-      return mapOrganizerRow(row)
-    },
-    async linkOrganizer(args) {
-      // ON CONFLICT SET binds args.update.*'s own values explicitly
-      // rather than referencing excluded.* (which would silently reuse
-      // args.create.*'s values instead) — the two objects are allowed
-      // to differ per the interface's own contract, even though every
-      // real caller today happens to pass matching values for both.
-      const row = one(
-        sql,
-        `INSERT INTO organizers (discord_id, username, encrypted_token, expires_at, linked_at)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT (discord_id) DO UPDATE SET
-           username = ?,
-           encrypted_token = ?,
-           expires_at = ?
+        `INSERT INTO organizers (discord_id, next_round_number) VALUES (?, ? + 1)
+         ON CONFLICT (discord_id) DO UPDATE SET next_round_number = next_round_number + ?
          RETURNING *`,
         args.where.discordId,
-        args.create.username,
-        args.create.encryptedToken,
-        toIso(args.create.expiresAt),
-        toIso(new Date()),
-        args.update.username,
-        args.update.encryptedToken,
-        toIso(args.update.expiresAt)
+        args.data.increment,
+        args.data.increment
       )
       return mapOrganizerRow(row)
+    },
+  }
+}
+
+function createGuildNiamosTokenStorage(sql: SqlStorage): AppStorage['guildNiamosToken'] {
+  return {
+    async linkToken(args) {
+      // Re-binds args.* a second time for the ON CONFLICT SET, rather
+      // than reading back via excluded.* — per PR review, excluded.col
+      // doesn't reliably resolve to the proposed row's column here, so
+      // this sticks to plain `?` placeholders bound explicitly, same as
+      // this file's other upsert methods. linkToken's flat args (no
+      // separate create/update objects) still means the *same* values
+      // are just bound twice, not two different objects kept in sync by
+      // hand.
+      const row = one(
+        sql,
+        `INSERT INTO guild_niamos_tokens (guild_id, encrypted_token, linked_by_discord_id, linked_at, display_name)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (guild_id) DO UPDATE SET
+           encrypted_token = ?,
+           linked_by_discord_id = ?,
+           display_name = ?
+         RETURNING *`,
+        args.guildId,
+        args.encryptedToken,
+        args.linkedByDiscordId,
+        toIso(new Date()),
+        args.displayName,
+        args.encryptedToken,
+        args.linkedByDiscordId,
+        args.displayName
+      )
+      return mapGuildNiamosTokenRow(row)
     },
   }
 }
@@ -195,11 +202,17 @@ function createGuildOriginAllowlistStorage(sql: SqlStorage): AppStorage['guildOr
   }
 }
 
-// Shared by findRoundWithOrganizerById/findOverdueRounds/
-// findStuckThresholdReachedRounds below — one place for "fetch this
-// round's organizer row and fold it in."
-function findOrganizer(sql: SqlStorage, discordId: string): Organizer {
-  return mapOrganizerRow(one(sql, 'SELECT * FROM organizers WHERE discord_id = ?', discordId))
+// Shared by findRoundWithGuildTokenById/findOverdueRounds/
+// findStuckThresholdReachedRounds below — one place for "resolve a
+// round's origin guild's linked Niamos token, if any." Unlike the old
+// findOrganizer helper it replaces, null is a normal, expected result
+// (no origin guild, or that guild never linked/has since unlinked a
+// token) — not an invariant violation, since there's no FK guaranteeing
+// a match the way organizer_discord_id's FK used to.
+function findGuildToken(sql: SqlStorage, guildId: string | null): { encryptedToken: string; displayName: string } | null {
+  if (!guildId) return null
+  const row = maybeOne(sql, 'SELECT * FROM guild_niamos_tokens WHERE guild_id = ?', guildId)
+  return row ? { encryptedToken: row.encrypted_token as string, displayName: row.display_name as string } : null
 }
 
 function createPodRoundStorage(sql: SqlStorage): AppStorage['podRound'] {
@@ -239,11 +252,11 @@ function createPodRoundStorage(sql: SqlStorage): AppStorage['podRound'] {
       const row = maybeOne(sql, 'SELECT * FROM pod_rounds WHERE id = ?', id)
       return row ? mapPodRoundRow(row) : null
     },
-    async findRoundWithOrganizerById(id) {
+    async findRoundWithGuildTokenById(id) {
       const row = maybeOne(sql, 'SELECT * FROM pod_rounds WHERE id = ?', id)
       if (!row) return null
       const round = mapPodRoundRow(row)
-      return { ...round, organizer: findOrganizer(sql, round.organizerDiscordId) }
+      return { ...round, guildToken: findGuildToken(sql, round.originGuildId) }
     },
     async findRoundByOrganizerAndNumber(organizerDiscordId, organizerRoundNumber) {
       const row = maybeOne(
@@ -279,7 +292,7 @@ function createPodRoundStorage(sql: SqlStorage): AppStorage['podRound'] {
         'COLLECTING' satisfies PodRoundStatus,
         toIso(scheduledBefore)
       )
-      return rows.map(mapPodRoundRow).map((round) => ({ ...round, organizer: findOrganizer(sql, round.organizerDiscordId) }))
+      return rows.map(mapPodRoundRow).map((round) => ({ ...round, guildToken: findGuildToken(sql, round.originGuildId) }))
     },
     async findStuckThresholdReachedRounds() {
       const rows = all(
@@ -287,7 +300,7 @@ function createPodRoundStorage(sql: SqlStorage): AppStorage['podRound'] {
         'SELECT * FROM pod_rounds WHERE status = ? AND fire_failure_notified = 0',
         'THRESHOLD_REACHED' satisfies PodRoundStatus
       )
-      return rows.map(mapPodRoundRow).map((round) => ({ ...round, organizer: findOrganizer(sql, round.organizerDiscordId) }))
+      return rows.map(mapPodRoundRow).map((round) => ({ ...round, guildToken: findGuildToken(sql, round.originGuildId) }))
     },
     async markPodCreated(id, data) {
       // !== undefined, not truthy — chatChannelId is always either a real
@@ -402,6 +415,7 @@ function createPodRoundSignupStorage(sql: SqlStorage): AppStorage['podRoundSignu
 export function createAppSqlStorage(sql: SqlStorage): AppStorage {
   return {
     organizer: createOrganizerStorage(sql),
+    guildNiamosToken: createGuildNiamosTokenStorage(sql),
     guildSubscription: createGuildSubscriptionStorage(sql),
     guildOrganizerAllowlist: createGuildOrganizerAllowlistStorage(sql),
     guildOriginAllowlist: createGuildOriginAllowlistStorage(sql),

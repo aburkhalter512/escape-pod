@@ -3,25 +3,25 @@ import { createPodChatSpace, postPodChatWelcomeMessage } from '../discord/podCha
 import { notifyPlayersByDm } from '../discord/dmSignups.js'
 import type { DiscordRestClient } from '../discord/rest.js'
 import type { AppStorage } from '../storage/appStorage.js'
-import type { PtpClient } from '../ptp/client.js'
+import type { NiamosClient } from '../niamos/client.js'
 import type { Logger } from '../services/errors.js'
 import * as podsService from '../services/pods.js'
 import type { OnFiringHook } from '../services/pods.js'
 
-export type ExpirePodRoundsDeps = { storage: AppStorage; ptp: PtpClient; tokenEncryptionKey: string; logger: Logger }
+export type ExpirePodRoundsDeps = { storage: AppStorage; niamos: NiamosClient; tokenEncryptionKey: string; logger: Logger }
 
 // Intended to run on a periodic schedule — worker.ts's scheduled() handler
-// (Cron Triggers) calls this. Unlike jobs/refreshTokens.ts's job body,
-// this one needs Discord access (editing every target guild's RSVP
-// message once a round expires or fires at the deadline), so it also
-// mirrors commands/cancelPod.ts's service-call-then-edit-messages shape
-// rather than being a pure DB job.
+// (Cron Triggers) calls this. It needs Discord access (editing every
+// target guild's RSVP message once a round expires or fires at the
+// deadline), so it mirrors commands/cancelPod.ts's
+// service-call-then-edit-messages shape rather than being a pure DB job.
 export async function expireOverduePodRounds(
   deps: ExpirePodRoundsDeps,
   discordRest: DiscordRestClient
 ): Promise<{ expired: number; fired: number }> {
-  // Same "create the chat channel and invite everyone before the PTP pod"
-  // sequencing as interactions/components.ts's pod-signup: handler — see
+  // Same "create the chat channel and invite everyone before the Niamos
+  // draft" sequencing as interactions/components.ts's pod-signup:
+  // handler — see
   // services/pods.ts's fireRound for where this actually runs. Adapts
   // createPodChatSpace's { channelId, inviteUrl } into the hook's
   // { channelId, chatUrl } shape.
@@ -78,8 +78,8 @@ export async function expireOverduePodRounds(
 
     // Best-effort DM supplement, and a best-effort welcome message into the
     // chat channel onFiring created above, only once a round has actually
-    // fired (a stuck THRESHOLD_REACHED round from a failed PTP call never
-    // reaches 'fired' — see fireRound — so there's no "Starting!" state to
+    // fired (a stuck THRESHOLD_REACHED round from a failed Niamos call
+    // never reaches 'fired' — see fireRound — so there's no "Starting!" state to
     // DM out or channel to post into). Run concurrently — independent
     // fan-outs, same as elsewhere in this file.
     if (round.outcome === 'fired') {

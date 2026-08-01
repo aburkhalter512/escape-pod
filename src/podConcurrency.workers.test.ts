@@ -30,7 +30,7 @@ declare module 'cloudflare:test' {
 // router.ts has no hook to await that background work externally (by
 // design; it's fire-and-forget in production too, matching a real
 // Discord webhook's 3-second budget). So this polls on observable
-// side effects (a stubbed PTP call counter, and the DO's own persisted
+// side effects (a stubbed Niamos call counter, and the DO's own persisted
 // storage state) with a bounded timeout, rather than trying to await
 // anything directly.
 
@@ -70,26 +70,26 @@ function getGlobalStub() {
 }
 
 // Every outbound fetch() this test's requests trigger (Discord REST via
-// restWorkers.ts, PTP via ptp/client.ts's HttpPtpClient) gets intercepted
-// here — nothing makes a real network call. Matches by URL substring
-// rather than modeling every route precisely, since correctness of the
-// Discord/PTP REST clients themselves is restWorkers.test.ts's job, not
-// this file's.
-function stubGlobalFetch(options: { createPodDelayMs?: number } = {}) {
+// restWorkers.ts, Niamos via niamos/client.ts's HttpNiamosClient) gets
+// intercepted here — nothing makes a real network call. Matches by URL
+// substring rather than modeling every route precisely, since correctness
+// of the Discord/Niamos REST clients themselves is restWorkers.test.ts's/
+// niamos/client.test.ts's job, not this file's.
+function stubGlobalFetch(options: { createDraftDelayMs?: number } = {}) {
   const original = globalThis.fetch
-  const createPodCalls: unknown[] = []
+  const createDraftCalls: unknown[] = []
 
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
     const method = init?.method ?? 'GET'
 
-    if (url.includes('/api/draft') && method === 'POST') {
-      createPodCalls.push(init?.body)
-      if (options.createPodDelayMs) {
-        await new Promise((resolve) => setTimeout(resolve, options.createPodDelayMs))
+    if (url.includes('/api/bot/drafts') && method === 'POST') {
+      createDraftCalls.push(init?.body)
+      if (options.createDraftDelayMs) {
+        await new Promise((resolve) => setTimeout(resolve, options.createDraftDelayMs))
       }
       return new Response(
-        JSON.stringify({ success: true, data: { id: 'pod-1', shareId: 'share-1', createdAt: new Date().toISOString() } }),
+        JSON.stringify({ draft: { id: 1, uuid: 'draft-1', status: 'pending', createdAt: new Date().toISOString() }, seats: [] }),
         { status: 200 }
       )
     }
@@ -107,7 +107,7 @@ function stubGlobalFetch(options: { createPodDelayMs?: number } = {}) {
   }) as typeof fetch
 
   return {
-    createPodCalls,
+    createDraftCalls,
     restore: () => {
       globalThis.fetch = original
     },
@@ -123,22 +123,19 @@ async function waitUntil(check: () => Promise<boolean> | boolean, timeoutMs = 40
   if (!(await check())) throw new Error(`waitUntil: condition not met within ${timeoutMs}ms`)
 }
 
-async function seedOrganizer(discordId: string, username: string): Promise<void> {
+// Creates the organizer row as a side effect (no separate linking step
+// exists anymore — see organizer.incrementNextRoundNumber's upsert) so
+// pod_rounds' FK to organizers(discord_id) is satisfiable for tests that
+// seed a round directly; increment: 0 is a test-only seeding trick, real
+// callers always increment by 1. The username param is now unused (the
+// old organizer row carried it, the new one doesn't) but kept so call
+// sites reads the same as before.
+async function seedOrganizer(discordId: string, _username: string): Promise<void> {
   const stub = getGlobalStub()
   await runInDurableObject(stub, async (instance: EscapePodDurableObject) => {
-    await instance.appStorage.organizer.linkOrganizer({
+    await instance.appStorage.organizer.incrementNextRoundNumber({
       where: { discordId },
-      create: {
-        discordId,
-        username,
-        encryptedToken: encryptToken('fake-ptp-token', env.TOKEN_ENCRYPTION_KEY),
-        expiresAt: new Date('2030-01-01'),
-      },
-      update: {
-        username,
-        encryptedToken: encryptToken('fake-ptp-token', env.TOKEN_ENCRYPTION_KEY),
-        expiresAt: new Date('2030-01-01'),
-      },
+      data: { increment: 0 },
     })
   })
 }
@@ -152,7 +149,21 @@ async function seedGuildSubscription(guildId: string, installedBy: string): Prom
   })
 }
 
-async function seedCollectingRound(organizerDiscordId: string): Promise<string> {
+// Firing a round now resolves its Niamos token via originGuildId, not the
+// organizer — every guild a test's round(s) fire from needs one linked.
+async function seedGuildNiamosToken(guildId: string): Promise<void> {
+  const stub = getGlobalStub()
+  await runInDurableObject(stub, async (instance: EscapePodDurableObject) => {
+    await instance.appStorage.guildNiamosToken.linkToken({
+      guildId,
+      encryptedToken: encryptToken('fake-niamos-token', env.TOKEN_ENCRYPTION_KEY),
+      linkedByDiscordId: 'admin-1',
+      displayName: 'Niamos',
+    })
+  })
+}
+
+async function seedCollectingRound(organizerDiscordId: string, originGuildId?: string): Promise<string> {
   const stub = getGlobalStub()
   return runInDurableObject(stub, async (instance: EscapePodDurableObject) => {
     const round = await instance.appStorage.podRound.createRoundWithTargets({
@@ -161,6 +172,7 @@ async function seedCollectingRound(organizerDiscordId: string): Promise<string> 
         organizerRoundNumber: 1,
         setCode: 'JTL',
         threshold: POD_CAPACITY,
+        originGuildId,
         targets: { create: [] },
       },
     })
@@ -174,11 +186,12 @@ describe('signing up under real concurrent requests (Phase 4 go/no-go gate)', ()
     // Widens the race window so concurrent callers are still mid-flight
     // through fireRound's claim at the same moment — same technique as
     // podConcurrency.integration.test.ts's real-Postgres version.
-    const { createPodCalls, restore } = stubGlobalFetch({ createPodDelayMs: 25 })
+    const { createDraftCalls, restore } = stubGlobalFetch({ createDraftDelayMs: 25 })
 
     try {
       await seedOrganizer('organizer-1', 'OrganizerOne')
-      const podRoundId = await seedCollectingRound('organizer-1')
+      await seedGuildNiamosToken('guild-1')
+      const podRoundId = await seedCollectingRound('organizer-1', 'guild-1')
 
       const signupCount = POD_CAPACITY + 4
       const responses = await Promise.all(
@@ -212,14 +225,14 @@ describe('signing up under real concurrent requests (Phase 4 go/no-go gate)', ()
 
       // The real proof: exactly one of these concurrent requests' detached
       // background work won the compare-and-swap and actually created the
-      // PTP pod, no matter how many raced past POD_CAPACITY at once.
-      await waitUntil(() => createPodCalls.length >= 1)
+      // Niamos draft, no matter how many raced past POD_CAPACITY at once.
+      await waitUntil(() => createDraftCalls.length >= 1)
       // Give any (incorrect) second winner, and any still-settling
       // requests behind it, a little longer to show up before asserting —
       // a flaky "happened to only fire once" isn't the same as a proven
       // exactly-once guarantee.
       await new Promise((resolve) => setTimeout(resolve, 150))
-      expect(createPodCalls).toHaveLength(1)
+      expect(createDraftCalls).toHaveLength(1)
 
       // NOT asserting all signupCount signups landed — unlike
       // podConcurrency.integration.test.ts's real-Postgres version, this

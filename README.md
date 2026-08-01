@@ -36,9 +36,10 @@ needed, and it's scoped per-server.
   receive draft-pod broadcasts. `channel` (where rounds get posted) is
   required the first time; `policy` defaults to allow-list on first setup
   (only organizers approved via `/allow-guild` can post here) or set it
-  to open (any organizer with a linked PTP account can post). Re-run
-  anytime to change either — an omitted option is left unchanged. Also
-  reactivates a server that previously ran `/unsubscribe-guild`.
+  to open (any organizer can post, as long as this server has a Niamos
+  token linked via `/connect-niamos`). Re-run anytime to change either —
+  an omitted option is left unchanged. Also reactivates a server that
+  previously ran `/unsubscribe-guild`.
 - **`/unsubscribe-guild`** — stops this server from receiving broadcasts.
   A soft-delete, not a hard removal — round history is preserved, and
   running `/subscribe-guild` again reactivates it.
@@ -50,17 +51,24 @@ needed, and it's scoped per-server.
 - **`/request-trust`** — generates the exact `/allow-guild` invocation
   another server's admin needs to run to trust organizers from this one
   — saves hunting down this server's own ID.
+- **`/connect-niamos`** — links this server's Niamos bot token. One-time
+  setup (Manage Guild required), needed before any organizer here can
+  successfully run `/start-pod` — walks an admin through generating a
+  token at niamos.net/settings and pasting it back via a modal. Only one
+  token is allowed per server at a time; re-running replaces it. Unlike
+  the old Protect the Pod integration this replaced, the token is scoped
+  to the server, not to whichever admin happens to paste it in — any
+  eligible organizer can `/start-pod` here once it's linked, with no
+  individual account-linking step of their own.
 
 ### Organizer commands
 
-- **`/connect-ptp`** — links your Protect the Pod account. One-time
-  setup, required before you can start a round — walks you through
-  signing in on protectthepod.com, grabbing a token, and pasting it back
-  via a modal.
 - **`/start-pod set:<code> [threshold] [deadline]`** — starts a new RSVP
   round for the given set across every server you're eligible to post
   into (open-policy servers, plus any allow-list server that trusts the
-  server you ran this from). Pick which server(s) to post into from a
+  server you ran this from). Must be run from inside a server, not a DM
+  — the origin server is what resolves which linked Niamos token
+  actually creates the draft. Pick which server(s) to post into from a
   menu, review the summary, then confirm to actually post — nothing is
   created until you do. `threshold` (2-8, default 8) is the minimum
   signups still needed to fire at the deadline if the table isn't full by
@@ -76,7 +84,7 @@ needed, and it's scoped per-server.
   finished: updates its broadcast message and deletes the round's
   temporary chat channel (`src/discord/podChat.ts`). Works the instant
   you run it — there's no check that the draft itself actually finished
-  on PTP, this is fully organizer-trust by design. Same `round`
+  on Niamos, this is fully organizer-trust by design. Same `round`
   disambiguation as `/cancel-pod`.
 
 ## Setup
@@ -98,10 +106,10 @@ DISCORD_BOT_TOKEN=...
 TOKEN_ENCRYPTION_KEY=...   # generate: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-`DISCORD_APPLICATION_ID`, `DISCORD_PUBLIC_KEY`, and `PTP_BASE_URL` are
-already in `wrangler.toml`'s `[vars]` — meant to be public, safe to
-commit (`DISCORD_PUBLIC_KEY` only verifies webhook signatures, it doesn't
-authenticate as the bot).
+`DISCORD_APPLICATION_ID`, `DISCORD_PUBLIC_KEY`, `NIAMOS_API_BASE_URL`, and
+`NIAMOS_SHARE_BASE_URL` are already in `wrangler.toml`'s `[vars]` — meant
+to be public, safe to commit (`DISCORD_PUBLIC_KEY` only verifies webhook
+signatures, it doesn't authenticate as the bot).
 
 The interactions endpoint URL (`POST /interactions` on wherever this is
 deployed) needs to be registered in the Discord Developer Portal under
@@ -118,7 +126,7 @@ CI.
 `npm run test:workers` runs a separate suite (`*.workers.test.ts`)
 against a real local Durable Object via `@cloudflare/vitest-pool-workers`
 (real DO SQLite storage, real bindings, `cloudflare:test`), with
-Discord/PTP still faked. This exists to catch bugs fakes structurally
+Discord/Niamos still faked. This exists to catch bugs fakes structurally
 can't — real transactional/concurrency behavior (the atomic-claim
 compare-and-swap guarantees `services/pods.ts` relies on, re-proven under
 genuinely concurrent HTTP requests dispatched into the real DO) and real
@@ -189,8 +197,8 @@ subscribed guilds were added the same (commands-only) way.
 A single Worker: verifies and routes Discord interactions (slash
 commands, buttons, modals) over a stateless HTTP endpoint
 (`src/worker.ts` → the singleton Durable Object's `fetch()`), which hosts
-a Hono app (`src/honoApp.ts`) owning all durable state and the Protect
-the Pod (PTP) integration. Hosting the Hono app *inside* the DO (not just
+a Hono app (`src/honoApp.ts`) owning all durable state and the Niamos
+draft-creation integration. Hosting the Hono app *inside* the DO (not just
 storage) is what serializes each entire request — not just the final SQL
 write — through the one DO instance, which the atomic signup/round-
 numbering compare-and-swap guarantees actually need.
@@ -198,10 +206,13 @@ numbering compare-and-swap guarantees actually need.
 Design rationale lives in [`INTEGRATIONS.md`](https://github.com/aburkhalter512/escape-pod/blob/main/INTEGRATIONS.md) —
 start with the "Summary" section at the top, then §7 (bot install & RSVP
 flow), §7.3 (data model), §4.1/§4.1.1 (PTP's own API surface and its auth
-boundaries), and §8 (the account-linking flow). Written across this
-project's earlier history (including an AWS-hosted, Postgres-backed
-period before the Cloudflare migration) — treat it as a record of design
-reasoning, not a guarantee that every detail matches today's code.
+boundaries — PTP itself has since been dropped entirely in favor of
+Niamos, see `src/niamos/client.ts`), and §8 (the account-linking flow,
+also since replaced by guild-scoped linking — see `/connect-niamos`
+above). Written across this project's earlier history (including an
+AWS-hosted, Postgres-backed period before the Cloudflare migration, and
+the PTP integration before the Niamos cutover) — treat it as a record of
+design reasoning, not a guarantee that every detail matches today's code.
 
 `src/backendClient.ts`'s `BackendClient` interface is what's left of an
 even earlier two-service split (a thin Discord-facing edge plus a

@@ -29,7 +29,7 @@ export interface PodRoundMessageState {
    * isn't consulted for that state. */
   threshold: number
   count: number
-  /** Present once the round has created its PTP pod (§7.5 step 4). */
+  /** Present once the round has created its Niamos draft (§7.5 step 4). */
   shareUrl?: string
   /** If present, rendered via Discord's own <t:epoch:R> timestamp markup
    * (auto-localized per viewer) — see util/duration.ts for why the
@@ -267,7 +267,7 @@ export function buildConcludedPodMessage(
 
 // What every target guild's RSVP message gets edited to when the retry
 // sweep (services/pods.ts's retryFailedFires, jobs/retryFailedFires.ts)
-// gives up after RETRY_WINDOW_MS of failed PTP pod-creation attempts (issue
+// gives up after RETRY_WINDOW_MS of failed Niamos draft-creation attempts (issue
 // #5 — this round would otherwise sit at THRESHOLD_REACHED forever with no
 // visible signal to anyone). Same no-buttons shape as
 // buildCancelledPodMessage/buildExpiredPodMessage/buildConcludedPodMessage,

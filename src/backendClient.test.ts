@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { LocalBackendClient } from './backendClient.js'
 import { createFakeAppSqlStorage, type FakeAppStorageOverrides } from './testUtils/fakeAppSqlStorage.js'
-import { createFakePtpClient } from './testUtils/fakePtpClient.js'
+import { createFakeNiamosClient } from './testUtils/fakeNiamosClient.js'
 import { stub } from './testUtils/stub.js'
 import type { OnFiringHook } from './services/pods.js'
 
@@ -10,7 +10,7 @@ const TOKEN_KEY = '00'.repeat(32)
 function client(overrides: FakeAppStorageOverrides = {}) {
   return new LocalBackendClient({
     storage: createFakeAppSqlStorage(overrides),
-    ptp: createFakePtpClient(),
+    niamos: createFakeNiamosClient(),
     tokenEncryptionKey: TOKEN_KEY,
     logger: { error: () => {} },
   })
@@ -22,10 +22,6 @@ function client(overrides: FakeAppStorageOverrides = {}) {
 function stubOrganizerNextRoundNumber() {
   return stub(async (_args: unknown) => ({
     discordId: 'org-1',
-    username: 'OrganizerOne',
-    encryptedToken: 'unused-in-these-tests',
-    expiresAt: new Date(),
-    linkedAt: new Date(),
     nextRoundNumber: 2,
   }))
 }
@@ -206,7 +202,7 @@ describe('LocalBackendClient', () => {
   it('forwards onFiring through to podsService.recordSignup and threads chatUrl/signupDiscordIds back out', async () => {
     const { encryptToken } = await import('./crypto/tokenCrypto.js')
     const TOKEN_KEY_LOCAL = '00'.repeat(32)
-    const findRoundWithOrganizerById = stub(async (_id: string) => ({
+    const findRoundWithGuildTokenById = stub(async (_id: string) => ({
       id: 'round-1',
       organizerDiscordId: 'organizer-1',
       organizerRoundNumber: 1,
@@ -221,13 +217,9 @@ describe('LocalBackendClient', () => {
       thresholdReachedAt: null,
       fireFailureNotified: false,
       createdAt: new Date(),
-      organizer: {
-        discordId: 'organizer-1',
-        username: 'OrganizerOne',
+      guildToken: {
         encryptedToken: encryptToken('a-real-token', TOKEN_KEY_LOCAL),
-        expiresAt: new Date(),
-        linkedAt: new Date(),
-        nextRoundNumber: 2,
+        displayName: 'Niamos',
       },
     }))
     const recordSignup = stub(async (_args: unknown) => ({
@@ -268,11 +260,9 @@ describe('LocalBackendClient', () => {
       fireFailureNotified: false,
       createdAt: new Date(),
     }))
-    const createPod = stub(async (_token: string, _params: unknown) => ({
-      id: 'ptp-pod-1',
-      shareId: 'share-1',
-      shareUrl: 'https://www.protectthepod.com/draft/share-1',
-      createdAt: '2026-01-01T00:00:00Z',
+    const createDraft = stub(async (_token: string, _params: unknown) => ({
+      uuid: 'share-1',
+      shareUrl: 'https://niamos.net/drafts/share-1',
     }))
 
     const onFiring = stub(async (_ctx: Parameters<OnFiringHook>[0]) => ({
@@ -282,11 +272,11 @@ describe('LocalBackendClient', () => {
 
     const backendClient = new LocalBackendClient({
       storage: createFakeAppSqlStorage({
-        podRound: { findRoundWithOrganizerById, claimForFiring, markPodCreated },
+        podRound: { findRoundWithGuildTokenById, claimForFiring, markPodCreated },
         podRoundSignup: { recordSignup, findSignedUp },
         podRoundTarget: { findByRoundId },
       }),
-      ptp: createFakePtpClient({ createPod }),
+      niamos: createFakeNiamosClient({ createDraft }),
       tokenEncryptionKey: TOKEN_KEY_LOCAL,
       logger: { error: () => {} },
     })
@@ -297,7 +287,7 @@ describe('LocalBackendClient', () => {
     expect(result.ok).toBe(true)
     expect(result.ok && result.value).toMatchObject({
       podCreated: true,
-      shareUrl: 'https://www.protectthepod.com/draft/share-1',
+      shareUrl: 'https://niamos.net/drafts/share-1',
       chatUrl: 'https://discord.com/invite/abc123',
       chatChannelId: 'chat-channel-1',
       signupDiscordIds: ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'],
@@ -308,7 +298,7 @@ describe('LocalBackendClient', () => {
   it('recordSignup works with onFiring omitted entirely (regression guard)', async () => {
     const { encryptToken } = await import('./crypto/tokenCrypto.js')
     const TOKEN_KEY_LOCAL = '00'.repeat(32)
-    const findRoundWithOrganizerById = stub(async (_id: string) => ({
+    const findRoundWithGuildTokenById = stub(async (_id: string) => ({
       id: 'round-1',
       organizerDiscordId: 'organizer-1',
       organizerRoundNumber: 1,
@@ -323,13 +313,9 @@ describe('LocalBackendClient', () => {
       thresholdReachedAt: null,
       fireFailureNotified: false,
       createdAt: new Date(),
-      organizer: {
-        discordId: 'organizer-1',
-        username: 'OrganizerOne',
+      guildToken: {
         encryptedToken: encryptToken('a-real-token', TOKEN_KEY_LOCAL),
-        expiresAt: new Date(),
-        linkedAt: new Date(),
-        nextRoundNumber: 2,
+        displayName: 'Niamos',
       },
     }))
     const recordSignup = stub(async (_args: unknown) => ({
@@ -351,11 +337,11 @@ describe('LocalBackendClient', () => {
 
     const backendClient = new LocalBackendClient({
       storage: createFakeAppSqlStorage({
-        podRound: { findRoundWithOrganizerById },
+        podRound: { findRoundWithGuildTokenById },
         podRoundSignup: { recordSignup, findSignedUp },
         podRoundTarget: { findByRoundId },
       }),
-      ptp: createFakePtpClient(),
+      niamos: createFakeNiamosClient(),
       tokenEncryptionKey: TOKEN_KEY_LOCAL,
       logger: { error: () => {} },
     })
