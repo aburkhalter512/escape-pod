@@ -54,7 +54,7 @@ describe('subscribeGuild', () => {
     expect(createSubscription.calls).toHaveLength(0)
   })
 
-  it('creates a new subscription with the given channel, defaulting policy (schema default, not set explicitly)', async () => {
+  it('creates a new subscription with the given channel and reports isNewSubscription: true', async () => {
     const findByGuildId = stub(async () => null)
     const expected: GuildSubscriptionCreateArgs = {
       data: { guildId: 'guild-1', broadcastChannelId: 'channel-1', installedByDiscordId: 'admin-1' },
@@ -67,29 +67,14 @@ describe('subscribeGuild', () => {
 
     const result = await subscribeGuild(deps, { guildId: 'guild-1', installedBy: 'admin-1', channelId: 'channel-1' })
 
-    expect(result).toEqual({ ok: true, value: { subscribed: true, broadcastChannelId: 'channel-1', postingPolicy: 'ALLOWLIST' } })
+    expect(result).toEqual({
+      ok: true,
+      value: { subscribed: true, broadcastChannelId: 'channel-1', isNewSubscription: true },
+    })
   })
 
-  it('creates a new subscription with an explicit OPEN policy when given', async () => {
-    const findByGuildId = stub(async () => null)
-    const createSubscription = stub(async (args: GuildSubscriptionCreateArgs) => {
-      expect(args.data).toMatchObject({ postingPolicy: 'OPEN' })
-      return fakeGuildSubscriptionRow({ postingPolicy: 'OPEN' })
-    })
-    const deps = buildDeps({ guildSubscription: { findByGuildId, createSubscription } })
-
-    const result = await subscribeGuild(deps, {
-      guildId: 'guild-1',
-      installedBy: 'admin-1',
-      channelId: 'channel-1',
-      policy: 'OPEN',
-    })
-
-    expect(result.ok && result.value.postingPolicy).toBe('OPEN')
-  })
-
-  it('reads back current settings without writing anything when neither channel nor policy is given', async () => {
-    const findByGuildId = stub(async () => fakeGuildSubscriptionRow({ broadcastChannelId: 'channel-9', postingPolicy: 'OPEN' }))
+  it('reads back current settings (isNewSubscription: false) without writing anything when no channel is given', async () => {
+    const findByGuildId = stub(async () => fakeGuildSubscriptionRow({ broadcastChannelId: 'channel-9' }))
     const updateSettings = stub(async () => {
       throw new Error('updateSettings should not have been called')
     })
@@ -97,42 +82,31 @@ describe('subscribeGuild', () => {
 
     const result = await subscribeGuild(deps, { guildId: 'guild-1', installedBy: 'admin-1' })
 
-    expect(result).toEqual({ ok: true, value: { subscribed: true, broadcastChannelId: 'channel-9', postingPolicy: 'OPEN' } })
+    expect(result).toEqual({
+      ok: true,
+      value: { subscribed: true, broadcastChannelId: 'channel-9', isNewSubscription: false },
+    })
     expect(updateSettings.calls).toHaveLength(0)
   })
 
-  it('updates only the channel when only a channel is given, leaving policy alone', async () => {
-    const findByGuildId = stub(async () => fakeGuildSubscriptionRow({ postingPolicy: 'OPEN' }))
+  it('updates the channel (isNewSubscription: false) when a channel is given for an already-subscribed guild', async () => {
+    const findByGuildId = stub(async () => fakeGuildSubscriptionRow())
     const expected: GuildSubscriptionUpdateSettingsArgs = {
       where: { guildId: 'guild-1' },
       data: { broadcastChannelId: 'channel-2', unsubscribedAt: null },
     }
     const updateSettings = stub(async (args: GuildSubscriptionUpdateSettingsArgs) => {
       if (!deepEqual(args, expected)) throw new Error(`unexpected updateSettings args: ${JSON.stringify(args)}`)
-      return fakeGuildSubscriptionRow({ broadcastChannelId: 'channel-2', postingPolicy: 'OPEN' })
+      return fakeGuildSubscriptionRow({ broadcastChannelId: 'channel-2' })
     })
     const deps = buildDeps({ guildSubscription: { findByGuildId, updateSettings } })
 
     const result = await subscribeGuild(deps, { guildId: 'guild-1', installedBy: 'admin-1', channelId: 'channel-2' })
 
-    expect(result).toEqual({ ok: true, value: { subscribed: true, broadcastChannelId: 'channel-2', postingPolicy: 'OPEN' } })
-  })
-
-  it('updates only the policy when only a policy is given, leaving the channel alone', async () => {
-    const findByGuildId = stub(async () => fakeGuildSubscriptionRow({ broadcastChannelId: 'channel-1' }))
-    const expected: GuildSubscriptionUpdateSettingsArgs = {
-      where: { guildId: 'guild-1' },
-      data: { postingPolicy: 'OPEN' },
-    }
-    const updateSettings = stub(async (args: GuildSubscriptionUpdateSettingsArgs) => {
-      if (!deepEqual(args, expected)) throw new Error(`unexpected updateSettings args: ${JSON.stringify(args)}`)
-      return fakeGuildSubscriptionRow({ broadcastChannelId: 'channel-1', postingPolicy: 'OPEN' })
+    expect(result).toEqual({
+      ok: true,
+      value: { subscribed: true, broadcastChannelId: 'channel-2', isNewSubscription: false },
     })
-    const deps = buildDeps({ guildSubscription: { findByGuildId, updateSettings } })
-
-    const result = await subscribeGuild(deps, { guildId: 'guild-1', installedBy: 'admin-1', policy: 'OPEN' })
-
-    expect(result).toEqual({ ok: true, value: { subscribed: true, broadcastChannelId: 'channel-1', postingPolicy: 'OPEN' } })
   })
 
   it('never includes installedByDiscordId in an update — set once at creation, not reassigned on reconfigure', async () => {
@@ -150,7 +124,7 @@ describe('subscribeGuild', () => {
 
   it('reports last-known settings (subscribed: false), without writing anything, when unsubscribed and no channel is given', async () => {
     const findByGuildId = stub(async () =>
-      fakeGuildSubscriptionRow({ broadcastChannelId: 'channel-1', postingPolicy: 'OPEN', unsubscribedAt: new Date() })
+      fakeGuildSubscriptionRow({ broadcastChannelId: 'channel-1', unsubscribedAt: new Date() })
     )
     const updateSettings = stub(async () => {
       throw new Error('updateSettings should not have been called')
@@ -159,11 +133,14 @@ describe('subscribeGuild', () => {
 
     const result = await subscribeGuild(deps, { guildId: 'guild-1', installedBy: 'admin-1' })
 
-    expect(result).toEqual({ ok: true, value: { subscribed: false, broadcastChannelId: 'channel-1', postingPolicy: 'OPEN' } })
+    expect(result).toEqual({
+      ok: true,
+      value: { subscribed: false, broadcastChannelId: 'channel-1', isNewSubscription: false },
+    })
     expect(updateSettings.calls).toHaveLength(0)
   })
 
-  it('reactivates (clears unsubscribedAt) when a channel is given for a currently-unsubscribed guild', async () => {
+  it('reactivates (clears unsubscribedAt, isNewSubscription: false) when a channel is given for a currently-unsubscribed guild', async () => {
     const findByGuildId = stub(async () => fakeGuildSubscriptionRow({ unsubscribedAt: new Date() }))
     const expected: GuildSubscriptionUpdateSettingsArgs = {
       where: { guildId: 'guild-1' },
@@ -177,20 +154,10 @@ describe('subscribeGuild', () => {
 
     const result = await subscribeGuild(deps, { guildId: 'guild-1', installedBy: 'admin-1', channelId: 'channel-3' })
 
-    expect(result).toEqual({ ok: true, value: { subscribed: true, broadcastChannelId: 'channel-3', postingPolicy: 'ALLOWLIST' } })
-  })
-
-  it('does not reactivate on a policy-only call while unsubscribed (still reports subscribed: false)', async () => {
-    const findByGuildId = stub(async () => fakeGuildSubscriptionRow({ unsubscribedAt: new Date() }))
-    const updateSettings = stub(async () => {
-      throw new Error('updateSettings should not have been called — policy alone must not reactivate')
+    expect(result).toEqual({
+      ok: true,
+      value: { subscribed: true, broadcastChannelId: 'channel-3', isNewSubscription: false },
     })
-    const deps = buildDeps({ guildSubscription: { findByGuildId, updateSettings } })
-
-    const result = await subscribeGuild(deps, { guildId: 'guild-1', installedBy: 'admin-1', policy: 'OPEN' })
-
-    expect(result.ok && result.value.subscribed).toBe(false)
-    expect(updateSettings.calls).toHaveLength(0)
   })
 })
 
@@ -266,7 +233,7 @@ describe('allowGuild', () => {
     expect(approveOriginGuild.calls[0][0].update).toEqual({ approvedBy: 'admin-2' })
   })
 
-  it("returns a validation error (without writing anything) when this guild hasn't run /subscribe-guild", async () => {
+  it("returns a validation error (without writing anything) when this guild hasn't run /escape-pod-setup", async () => {
     const findByGuildId = stub(async () => null)
     const approveOriginGuild = stub(async (_args: OriginAllowlistApproveArgs) => {
       throw new Error('approveOriginGuild should not have been called')
@@ -277,7 +244,7 @@ describe('allowGuild', () => {
 
     expect(result).toEqual({
       ok: false,
-      error: { kind: 'validation', message: 'This server needs to run /subscribe-guild before it can trust other servers.' },
+      error: { kind: 'validation', message: 'This server needs to run /escape-pod-setup before it can trust other servers.' },
     })
     expect(approveOriginGuild.calls).toHaveLength(0)
   })

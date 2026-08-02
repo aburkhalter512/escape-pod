@@ -10,9 +10,13 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// OPEN removed (hard cutover — see storage/schema.ts migration 4).
+// ALLOWLIST is now the only legal value; kept as an enum (not a plain
+// string) so the type system reflects "nothing else is constructible"
+// going forward, even though the underlying column and its CHECK
+// constraint (still technically permitting 'OPEN') are untouched.
 enum PostingPolicy {
   ALLOWLIST
-  OPEN
 }
 
 enum PodRoundStatus {
@@ -103,8 +107,10 @@ model GuildSubscription {
   // code references this relation anymore.
   allowlist GuildOrganizerAllowlist[]
   // Which origin guilds this guild trusts — /allow-guild's data,
-  // consulted by listEligibleGuilds when this guild's postingPolicy is
-  // ALLOWLIST. Replaces the per-organizer allowlist above.
+  // consulted by listEligibleGuilds for any origin guild other than
+  // this one (a guild always trusts itself automatically — see
+  // listEligibleGuilds's self-trust check). Replaces the per-organizer
+  // allowlist above.
   originAllowlist GuildOriginAllowlist[]
   targets         PodRoundTarget[]
 

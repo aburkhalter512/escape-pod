@@ -4,6 +4,7 @@ import {
   InteractionResponseType,
   TextInputStyle,
   type APIInteractionGuildMember,
+  type RESTGetAPIGuildResult,
   type RESTPatchAPIChannelMessageJSONBody,
   type RESTPatchAPIChannelMessageResult,
   type RESTPatchAPIWebhookWithTokenMessageJSONBody,
@@ -1079,6 +1080,104 @@ describe('handleMessageComponent', () => {
       createInMemoryPendingStartPodStore()
     )
     expect(responseData(response).content).toMatch(/unrecognized interaction/i)
+  })
+
+  describe('allow-guild:select-channel:', () => {
+    function interaction(overrides: { values?: string[]; member?: APIInteractionGuildMember; guild_id?: string } = {}) {
+      return fakeMessageComponentInteraction({
+        data: {
+          custom_id: 'allow-guild:select-channel:123456789012345678',
+          component_type: ComponentType.ChannelSelect,
+          values: overrides.values ?? ['channel-1'],
+          resolved: { channels: {} },
+        },
+        member: 'member' in overrides ? overrides.member : fakeMember({ user: fakeUser({ id: 'admin-1' }) }),
+        ...('guild_id' in overrides ? { guild_id: overrides.guild_id } : {}),
+      })
+    }
+
+    it('subscribes the guild with the picked channel, then grants trust, in one interaction', async () => {
+      const subscribeGuild = stub(async (guildId: string, installedBy: string, params: { channelId?: string }) => {
+        if (guildId !== 'guild-1' || installedBy !== 'admin-1' || params.channelId !== 'channel-1') {
+          throw new Error(`unexpected subscribeGuild args: ${guildId} ${installedBy} ${JSON.stringify(params)}`)
+        }
+        return { ok: true as const, value: { subscribed: true, broadcastChannelId: 'channel-1', isNewSubscription: true } }
+      })
+      const allowGuild = stub(async (guildId: string, allowedOriginGuildId: string, approvedBy: string) => {
+        if (guildId !== 'guild-1' || allowedOriginGuildId !== '123456789012345678' || approvedBy !== 'admin-1') {
+          throw new Error(`unexpected allowGuild args: ${guildId} ${allowedOriginGuildId} ${approvedBy}`)
+        }
+        return { ok: true as const, value: undefined }
+      })
+      const getGuild = stub(async (guildId: string) => {
+        if (guildId !== '123456789012345678') throw new Error(`unexpected getGuild id: ${guildId}`)
+        return { name: 'The Other Server' } as RESTGetAPIGuildResult
+      })
+
+      const response = await handleMessageComponent(
+        interaction(),
+        createFakeBackendClient({ subscribeGuild, allowGuild }),
+        createFakeDiscordRest({ getGuild }),
+        createInMemoryPendingStartPodStore()
+      )
+
+      expect(response.type).toBe(InteractionResponseType.UpdateMessage)
+      expect(subscribeGuild.calls).toHaveLength(1)
+      expect(allowGuild.calls).toHaveLength(1)
+      expect(responseData(response).content).toContain('<#channel-1>')
+      expect(responseData(response).content).toContain('**The Other Server**')
+      expect(responseData(response).components).toEqual([])
+    })
+
+    it('surfaces a subscribeGuild validation error without attempting the trust grant', async () => {
+      const subscribeGuild = stub(async () => ({
+        ok: false as const,
+        error: { kind: 'validation' as const, message: 'A channel is required the first time this server subscribes.' },
+      }))
+      const allowGuild = stub(async () => {
+        throw new Error('allowGuild should not have been called when subscribeGuild fails')
+      })
+
+      const response = await handleMessageComponent(
+        interaction(),
+        createFakeBackendClient({ subscribeGuild, allowGuild }),
+        createFakeDiscordRest(),
+        createInMemoryPendingStartPodStore()
+      )
+
+      expect(response.type).toBe(InteractionResponseType.UpdateMessage)
+      expect(responseData(response).content).toMatch(/channel is required/i)
+    })
+
+    it('rejects when run outside a server (no guild_id)', async () => {
+      const subscribeGuild = stub(async () => {
+        throw new Error('subscribeGuild should not have been called')
+      })
+
+      const response = await handleMessageComponent(
+        interaction({ guild_id: undefined }),
+        createFakeBackendClient({ subscribeGuild }),
+        createFakeDiscordRest(),
+        createInMemoryPendingStartPodStore()
+      )
+
+      expect(responseData(response).content).toMatch(/must be run in a server/i)
+    })
+
+    it('rejects when the invoking member is missing', async () => {
+      const subscribeGuild = stub(async () => {
+        throw new Error('subscribeGuild should not have been called')
+      })
+
+      const response = await handleMessageComponent(
+        interaction({ member: undefined }),
+        createFakeBackendClient({ subscribeGuild }),
+        createFakeDiscordRest(),
+        createInMemoryPendingStartPodStore()
+      )
+
+      expect(responseData(response).content).toMatch(/must be run in a server/i)
+    })
   })
 })
 

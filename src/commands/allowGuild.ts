@@ -1,4 +1,10 @@
-import { ApplicationCommandOptionType } from 'discord-api-types/v10'
+import {
+  ApplicationCommandOptionType,
+  ChannelType,
+  ComponentType,
+  InteractionResponseType,
+  MessageFlags,
+} from 'discord-api-types/v10'
 import { ephemeral, getOption } from './helpers.js'
 import type { CommandHandler } from './types.js'
 
@@ -47,7 +53,36 @@ export const allowGuild: CommandHandler = async ({ interaction, backend, discord
 
   const result = await backend.allowGuild(guildId, originGuildId, invokerId)
   if (!result.ok) {
-    return ephemeral(result.error.message)
+    // The only validation failure allowGuild produces today is "this
+    // server isn't subscribed yet" (services/guilds.ts) — rather than a
+    // dead-end error, offer a live channel picker right here so setting
+    // this server up and granting trust happens in one interaction
+    // instead of sending the admin off to run /escape-pod-setup
+    // separately. Picking a channel is handled by
+    // interactions/components.ts's allow-guild:select-channel: branch,
+    // which carries originGuildId in the custom_id (a single snowflake
+    // fits well within Discord's 100-char limit — no pending-state
+    // storage needed, unlike /start-pod's multi-guild selection).
+    return {
+      type: InteractionResponseType.ChannelMessageWithSource,
+      data: {
+        flags: MessageFlags.Ephemeral,
+        content: `${result.error.message} Pick a channel below to finish setup and grant trust in one step.`,
+        components: [
+          {
+            type: ComponentType.ActionRow,
+            components: [
+              {
+                type: ComponentType.ChannelSelect,
+                custom_id: `allow-guild:select-channel:${originGuildId}`,
+                channel_types: [ChannelType.GuildText],
+                placeholder: 'Select a channel for draft pod broadcasts',
+              },
+            ],
+          },
+        ],
+      },
+    }
   }
 
   let originGuildName = originGuildId

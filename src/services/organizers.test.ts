@@ -6,7 +6,7 @@ import { listEligibleGuilds, type OrganizerServiceDeps } from './organizers.js'
 describe('listEligibleGuilds', () => {
   it('returns anySubscribed: true (without a count query) when eligible guilds are found', async () => {
     const findEligibleForOrigin = stub(async () => [
-      { guildId: 'g1', installedByDiscordId: 'admin-1', broadcastChannelId: 'channel-1', postingPolicy: 'OPEN' as const, unsubscribedAt: null, installedAt: new Date() },
+      { guildId: 'g1', installedByDiscordId: 'admin-1', broadcastChannelId: 'channel-1', postingPolicy: 'ALLOWLIST' as const, unsubscribedAt: null, installedAt: new Date() },
     ])
     const countActiveSubscriptions = stub(async () => {
       throw new Error('countActiveSubscriptions should not have been called when eligible guilds were already found')
@@ -47,8 +47,11 @@ describe('listEligibleGuilds', () => {
   // None of the tests above actually verify the query filters on the
   // right field; this proves eligibility is checked against
   // GuildOriginAllowlist.allowedOriginGuildId (the guild /start-pod was
-  // invoked FROM), not any organizer identity.
-  it('queries for OPEN-policy guilds plus guilds that trust this origin guild specifically', async () => {
+  // invoked FROM), not any organizer identity. Self-trust and the exact
+  // eligibility SQL itself are proven for real against a live DO in
+  // storage/appSqlStorage.workers.test.ts — this only checks
+  // listEligibleGuilds passes originGuildId through correctly.
+  it('queries for the origin guild itself (self-trust) plus guilds that trust this origin guild specifically', async () => {
     const findEligibleForOrigin = stub(async (originGuildId: string) => {
       if (originGuildId !== 'origin-guild-1') throw new Error(`unexpected originGuildId: ${originGuildId}`)
       return []

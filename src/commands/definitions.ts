@@ -16,8 +16,8 @@ export const commandDefinitions: RESTPostAPIChatInputApplicationCommandsJSONBody
     default_member_permissions: PermissionFlagsBits.ManageGuild.toString(),
   },
   {
-    name: 'subscribe-guild',
-    description: 'Opt this server in to receive draft pod LFG broadcasts, or reconfigure it',
+    name: 'escape-pod-setup',
+    description: 'Opt this server in to receive draft pod LFG broadcasts and link its Niamos token',
     type: ApplicationCommandType.ChatInput,
     default_member_permissions: PermissionFlagsBits.ManageGuild.toString(),
     options: [
@@ -26,16 +26,6 @@ export const commandDefinitions: RESTPostAPIChatInputApplicationCommandsJSONBody
         description: 'Channel to post LFG rounds into (required the first time; omit to leave unchanged)',
         type: ApplicationCommandOptionType.Channel,
         required: false,
-      },
-      {
-        name: 'policy',
-        description: 'Who can post rounds here (omit to leave unchanged; default on first setup: allow-list)',
-        type: ApplicationCommandOptionType.String,
-        required: false,
-        choices: [
-          { name: 'Allow-list — only organizers you approve', value: 'ALLOWLIST' },
-          { name: 'Open — any linked organizer can post', value: 'OPEN' },
-        ],
       },
     ],
   },

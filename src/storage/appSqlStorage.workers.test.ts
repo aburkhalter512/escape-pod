@@ -89,24 +89,18 @@ describe('guildSubscription', () => {
     })
   })
 
-  it('updateSettings supports partial field sets (channel-only, policy-only) without clobbering the other', async () => {
+  it('updateSettings updates the channel without clobbering other fields', async () => {
     const stub = getStub('guild-update')
     await runInDurableObject(stub, async (instance: EscapePodDurableObject) => {
       await instance.appStorage.guildSubscription.createSubscription({
         data: { guildId: 'guild-1', broadcastChannelId: 'channel-1', installedByDiscordId: 'admin-1' },
       })
 
-      const channelOnly = await instance.appStorage.guildSubscription.updateSettings({
+      const updated = await instance.appStorage.guildSubscription.updateSettings({
         where: { guildId: 'guild-1' },
         data: { broadcastChannelId: 'channel-2' },
       })
-      expect(channelOnly).toMatchObject({ broadcastChannelId: 'channel-2', postingPolicy: 'ALLOWLIST' })
-
-      const policyOnly = await instance.appStorage.guildSubscription.updateSettings({
-        where: { guildId: 'guild-1' },
-        data: { postingPolicy: 'OPEN' },
-      })
-      expect(policyOnly).toMatchObject({ broadcastChannelId: 'channel-2', postingPolicy: 'OPEN' })
+      expect(updated).toMatchObject({ broadcastChannelId: 'channel-2', postingPolicy: 'ALLOWLIST', installedByDiscordId: 'admin-1' })
     })
   })
 
@@ -145,11 +139,13 @@ describe('guildSubscription', () => {
     })
   })
 
-  it('findEligibleForOrigin matches OPEN policy or a specific origin-guild trust grant', async () => {
+  it('findEligibleForOrigin matches the origin guild itself (self-trust) or a specific origin-guild trust grant', async () => {
     const stub = getStub('guild-findEligibleForOrigin')
     await runInDurableObject(stub, async (instance: EscapePodDurableObject) => {
+      // The origin guild itself — eligible automatically, no allowlist
+      // entry needed at all.
       await instance.appStorage.guildSubscription.createSubscription({
-        data: { guildId: 'open-guild', broadcastChannelId: 'c1', installedByDiscordId: 'admin-1', postingPolicy: 'OPEN' },
+        data: { guildId: 'origin-1', broadcastChannelId: 'c0', installedByDiscordId: 'admin-1' },
       })
       await instance.appStorage.guildSubscription.createSubscription({
         data: { guildId: 'trusting-guild', broadcastChannelId: 'c2', installedByDiscordId: 'admin-1' },
@@ -164,7 +160,7 @@ describe('guildSubscription', () => {
       })
 
       const eligible = await instance.appStorage.guildSubscription.findEligibleForOrigin('origin-1')
-      expect(new Set(eligible.map((g) => g.guildId))).toEqual(new Set(['open-guild', 'trusting-guild']))
+      expect(new Set(eligible.map((g) => g.guildId))).toEqual(new Set(['origin-1', 'trusting-guild']))
     })
   })
 

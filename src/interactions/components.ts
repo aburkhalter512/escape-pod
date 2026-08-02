@@ -423,6 +423,55 @@ export async function handleMessageComponent(
     return { type: InteractionResponseType.DeferredMessageUpdate }
   }
 
+  if (customId.startsWith('allow-guild:select-channel:') && interaction.data.component_type === ComponentType.ChannelSelect) {
+    // Follow-up to commands/allowGuild.ts's channel-picker offer — see
+    // its own comment for why originGuildId travels in the custom_id
+    // rather than pending-state storage.
+    const allowedOriginGuildId = customId.slice('allow-guild:select-channel:'.length)
+    const guildId = interaction.guild_id
+    const invokerId = interaction.member?.user?.id
+    const channelId = interaction.data.values[0]
+
+    if (!guildId || !invokerId) {
+      return { type: InteractionResponseType.UpdateMessage, data: { content: 'This command must be run in a server.', components: [] } }
+    }
+    if (!channelId) {
+      return { type: InteractionResponseType.UpdateMessage, data: { content: 'No channel was selected.', components: [] } }
+    }
+
+    const subscribeResult = await backend.subscribeGuild(guildId, invokerId, { channelId })
+    if (!subscribeResult.ok) {
+      return { type: InteractionResponseType.UpdateMessage, data: { content: subscribeResult.error.message, components: [] } }
+    }
+
+    const allowResult = await backend.allowGuild(guildId, allowedOriginGuildId, invokerId)
+    if (!allowResult.ok) {
+      // Shouldn't happen — the subscribe call just above guarantees this
+      // server is now subscribed — but surface it plainly rather than
+      // silently dropping the failure if it ever does.
+      return { type: InteractionResponseType.UpdateMessage, data: { content: allowResult.error.message, components: [] } }
+    }
+
+    let originGuildName = allowedOriginGuildId
+    try {
+      originGuildName = (await discordRest.getGuild(allowedOriginGuildId)).name
+    } catch {
+      // Best-effort, same fallback as commands/allowGuild.ts's own
+      // origin-guild name lookup — the bot doesn't need to be a member
+      // of that guild for trust to take effect.
+    }
+
+    return {
+      type: InteractionResponseType.UpdateMessage,
+      data: {
+        content:
+          `Subscribed with <#${channelId}> as the broadcast channel. ` +
+          `Organizers posting from **${originGuildName}** can now post draft pod rounds into this server.`,
+        components: [],
+      },
+    }
+  }
+
   return ephemeral('Unrecognized interaction.')
 }
 

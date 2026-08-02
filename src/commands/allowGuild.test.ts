@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   ApplicationCommandOptionType,
+  ChannelType,
+  ComponentType,
   type APIInteractionGuildMember,
   type RESTGetAPIGuildResult,
 } from 'discord-api-types/v10'
@@ -173,10 +175,10 @@ describe('allowGuild', () => {
     expect(allowGuildMock.calls).toHaveLength(1)
   })
 
-  it("surfaces the backend's validation error (e.g. this server hasn't run /subscribe-guild) without resolving the origin guild's name", async () => {
+  it("offers a live channel picker instead of a dead-end error when this server hasn't run /escape-pod-setup, without resolving the origin guild's name yet", async () => {
     const allowGuildMock = stub(async (_guildId: string, _allowedOriginGuildId: string, _approvedBy: string) => ({
       ok: false as const,
-      error: { kind: 'validation' as const, message: 'This server needs to run /subscribe-guild before it can trust other servers.' },
+      error: { kind: 'validation' as const, message: 'This server needs to run /escape-pod-setup before it can trust other servers.' },
     }))
     const getGuild = stub(async (_guildId: string) => {
       throw new Error('getGuild should not have been called when allowGuild fails')
@@ -189,7 +191,20 @@ describe('allowGuild', () => {
 
     const response = await allowGuild(ctx)
 
-    expect(responseData(response).content).toBe('This server needs to run /subscribe-guild before it can trust other servers.')
+    expect(responseData(response).content).toContain('This server needs to run /escape-pod-setup before it can trust other servers.')
     expect(getGuild.calls).toHaveLength(0)
+    expect(responseData(response).components).toEqual([
+      {
+        type: ComponentType.ActionRow,
+        components: [
+          {
+            type: ComponentType.ChannelSelect,
+            custom_id: 'allow-guild:select-channel:123456789012345678',
+            channel_types: [ChannelType.GuildText],
+            placeholder: expect.any(String),
+          },
+        ],
+      },
+    ])
   })
 })

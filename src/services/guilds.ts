@@ -1,4 +1,3 @@
-import type { PostingPolicy } from '@prisma/client'
 import type { AppStorage } from '../storage/appStorage.js'
 import { ok, err, validationError, type Result } from './errors.js'
 
@@ -9,36 +8,41 @@ export interface GuildServiceDeps {
 export interface SubscribeGuildParams {
   guildId: string
   installedBy: string
-  // Both optional so this same call doubles as "reconfigure whatever was
-  // given, leave the rest alone" — a guild that's already subscribed can
-  // change just its channel, just its policy, or (with neither) simply
-  // read back its current settings without writing anything. Only
-  // required — and enforced below, not by the type — the first time a
-  // guild subscribes, since there's no existing channel to fall back to.
+  // Optional so this same call doubles as "reconfigure the channel, or
+  // (if omitted) simply read back current settings without writing
+  // anything." Only required — and enforced below, not by the type —
+  // the first time a guild subscribes, since there's no existing
+  // channel to fall back to.
   channelId?: string
-  policy?: PostingPolicy
 }
 
 export interface SubscribeGuildResult {
   // False when the guild is currently unsubscribed and no channel was
-  // given to reactivate it — broadcastChannelId/postingPolicy still
-  // reflect its last-known settings (the row is soft-deleted, not gone).
+  // given to reactivate it — broadcastChannelId still reflects its
+  // last-known setting (the row is soft-deleted, not gone).
   subscribed: boolean
   broadcastChannelId: string
-  postingPolicy: PostingPolicy
+  // True only when this call created the GuildSubscription row for the
+  // first time ever (vs. reconfiguring, reactivating, or a no-op
+  // readback of an existing one) — lets a caller (commands/
+  // escapePodSetup.ts) show first-time-only onboarding content (the
+  // Niamos-token-linking prompt) without repeating it on every routine
+  // reconfigure.
+  isNewSubscription: boolean
 }
 
 // INTEGRATIONS.md §7.2/§7.4 — a guild's own admin opts their server in,
-// independent of any organizer, and can reconfigure it afterward (channel
-// and/or posting policy) through this same entry point. Defaults to
-// ALLOWLIST per §7.2's safer-default reasoning — the schema's own default,
-// applied by omitting postingPolicy from `create` below when no policy was
-// given.
+// independent of any organizer, and can reconfigure its channel
+// afterward through this same entry point. ALLOWLIST is the only
+// posting policy (see storage/schema.ts migration 4) — a guild's own
+// organizers trust it automatically (self-trust, see
+// services/organizers.ts's listEligibleGuilds), other origin guilds
+// need an explicit /allow-guild grant.
 export async function subscribeGuild(
   deps: GuildServiceDeps,
   params: SubscribeGuildParams
 ): Promise<Result<SubscribeGuildResult>> {
-  const { guildId, installedBy, channelId, policy } = params
+  const { guildId, installedBy, channelId } = params
 
   const existing = await deps.storage.guildSubscription.findByGuildId(guildId)
   const isActive = !!existing && existing.unsubscribedAt === null
@@ -50,42 +54,33 @@ export async function subscribeGuild(
     // Previously unsubscribed and no channel given to reactivate — report
     // its last-known settings rather than writing anything or erroring;
     // the command layer tells the admin how to resume.
-    return ok({ subscribed: false, broadcastChannelId: existing.broadcastChannelId, postingPolicy: existing.postingPolicy })
+    return ok({ subscribed: false, broadcastChannelId: existing.broadcastChannelId, isNewSubscription: false })
   }
 
   if (!existing) {
     const created = await deps.storage.guildSubscription.createSubscription({
-      data: {
-        guildId,
-        broadcastChannelId: channelId!,
-        installedByDiscordId: installedBy,
-        ...(policy ? { postingPolicy: policy } : {}),
-      },
+      data: { guildId, broadcastChannelId: channelId!, installedByDiscordId: installedBy },
     })
-    return ok({ subscribed: true, broadcastChannelId: created.broadcastChannelId, postingPolicy: created.postingPolicy })
+    return ok({ subscribed: true, broadcastChannelId: created.broadcastChannelId, isNewSubscription: true })
   }
 
-  if (isActive && !channelId && !policy) {
+  if (isActive && !channelId) {
     // Nothing to change — e.g. an admin running the command bare just to
     // see current settings. No write, so installedAt/installedBy are
     // untouched too.
-    return ok({ subscribed: true, broadcastChannelId: existing.broadcastChannelId, postingPolicy: existing.postingPolicy })
+    return ok({ subscribed: true, broadcastChannelId: existing.broadcastChannelId, isNewSubscription: false })
   }
 
   // installedByDiscordId is deliberately never part of this update —
   // §7.2 wants it set once, at creation, not silently reassigned to
-  // whoever last reconfigured the subscription. unsubscribedAt is only
-  // cleared when a channel is given (reactivating) — this branch is only
-  // reachable with a channel unless already active, so a policy-only call
-  // on an inactive subscription can't silently resurrect it.
+  // whoever last reconfigured the subscription. unsubscribedAt is
+  // cleared here since this branch is only reachable with a channel
+  // given (reactivating or just changing it).
   const updated = await deps.storage.guildSubscription.updateSettings({
     where: { guildId },
-    data: {
-      ...(channelId ? { broadcastChannelId: channelId, unsubscribedAt: null } : {}),
-      ...(policy ? { postingPolicy: policy } : {}),
-    },
+    data: { broadcastChannelId: channelId, unsubscribedAt: null },
   })
-  return ok({ subscribed: true, broadcastChannelId: updated.broadcastChannelId, postingPolicy: updated.postingPolicy })
+  return ok({ subscribed: true, broadcastChannelId: updated.broadcastChannelId, isNewSubscription: false })
 }
 
 export interface UnsubscribeGuildResult {
@@ -157,7 +152,7 @@ export async function allowGuild(deps: GuildServiceDeps, params: AllowGuildParam
 
   const subscription = await deps.storage.guildSubscription.findByGuildId(guildId)
   if (!subscription) {
-    return err(validationError('This server needs to run /subscribe-guild before it can trust other servers.'))
+    return err(validationError('This server needs to run /escape-pod-setup before it can trust other servers.'))
   }
 
   await deps.storage.guildOriginAllowlist.approveOriginGuild({
