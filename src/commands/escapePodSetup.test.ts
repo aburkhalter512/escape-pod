@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { ApplicationCommandOptionType, type APIInteractionGuildMember } from 'discord-api-types/v10'
-import { subscribeGuild } from './subscribeGuild.js'
+import { ApplicationCommandOptionType, ComponentType, type APIInteractionGuildMember } from 'discord-api-types/v10'
+import { escapePodSetup } from './escapePodSetup.js'
 import type { CommandContext } from './types.js'
 import { createFakeBackendClient } from '../testUtils/fakeBackendClient.js'
 import { createFakeDiscordRest } from '../testUtils/fakeDiscordRest.js'
@@ -9,9 +9,8 @@ import { responseData } from '../testUtils/responseData.js'
 import { stub } from '../testUtils/stub.js'
 
 // Discord's own type guarantees member.user is always present — this
-// simulates the malformed payload that guarantee rules out, to prove the
-// `?.` in subscribeGuild.ts actually degrades gracefully instead of
-// throwing a TypeError (tasks/004).
+// simulates the malformed payload that guarantee rules out, mirroring
+// the old subscribeGuild.test.ts's same check.
 function memberWithoutUser(): APIInteractionGuildMember {
   return { ...fakeMember(), user: undefined } as unknown as APIInteractionGuildMember
 }
@@ -23,15 +22,20 @@ function interaction(overrides: Parameters<typeof fakeChatInputInteraction>[0] =
   })
 }
 
-type SubscribeGuildParams = { channelId?: string; policy?: 'OPEN' | 'ALLOWLIST' }
+type SubscribeGuildParams = { channelId?: string }
 
-describe('subscribeGuild', () => {
-  it('subscribes the guild and confirms the channel and policy', async () => {
+function findButtonComponent(response: Awaited<ReturnType<typeof escapePodSetup>>) {
+  const row = responseData(response).components?.[0] as { components: Array<{ custom_id: string; label: string }> } | undefined
+  return row?.components[0]
+}
+
+describe('escapePodSetup', () => {
+  it('subscribes a brand-new guild, confirms the channel, and includes the Niamos-link button', async () => {
     const subscribeGuildMock = stub(async (guildId: string, installedBy: string, params: SubscribeGuildParams) => {
       if (guildId !== 'guild-1' || params.channelId !== 'channel-1' || installedBy !== 'user-1') {
         throw new Error(`unexpected subscribeGuild args: ${guildId} ${JSON.stringify(params)} ${installedBy}`)
       }
-      return { ok: true as const, value: { subscribed: true, broadcastChannelId: 'channel-1', postingPolicy: 'ALLOWLIST' as const } }
+      return { ok: true as const, value: { subscribed: true, broadcastChannelId: 'channel-1', isNewSubscription: true } }
     })
     const ctx: CommandContext = {
       interaction: interaction(),
@@ -39,40 +43,37 @@ describe('subscribeGuild', () => {
       discordRest: createFakeDiscordRest(),
     }
 
-    const response = await subscribeGuild(ctx)
+    const response = await escapePodSetup(ctx)
 
     expect(responseData(response).content).toContain('<#channel-1>')
-    expect(responseData(response).content).toMatch(/allow-list/i)
+    expect(responseData(response).content).toMatch(/link this server's niamos token/i)
+    const button = findButtonComponent(response)
+    expect(button).toMatchObject({ custom_id: 'connect-niamos:open-modal', label: 'Paste your token' })
   })
 
-  it('passes the policy option through when provided', async () => {
+  it('does not include the Niamos-link button when reconfiguring an already-subscribed guild', async () => {
     const subscribeGuildMock = stub(async (_guildId: string, _installedBy: string, params: SubscribeGuildParams) => {
-      expect(params.policy).toBe('OPEN')
-      return { ok: true as const, value: { subscribed: true, broadcastChannelId: 'channel-1', postingPolicy: 'OPEN' as const } }
+      expect(params.channelId).toBe('channel-1')
+      return { ok: true as const, value: { subscribed: true, broadcastChannelId: 'channel-1', isNewSubscription: false } }
     })
     const ctx: CommandContext = {
-      interaction: interaction({
-        options: [
-          { name: 'channel', type: ApplicationCommandOptionType.Channel, value: 'channel-1' },
-          { name: 'policy', type: ApplicationCommandOptionType.String, value: 'OPEN' },
-        ],
-      }),
+      interaction: interaction(),
       backend: createFakeBackendClient({ subscribeGuild: subscribeGuildMock }),
       discordRest: createFakeDiscordRest(),
     }
 
-    const response = await subscribeGuild(ctx)
+    const response = await escapePodSetup(ctx)
 
-    expect(subscribeGuildMock.calls).toHaveLength(1)
-    expect(responseData(response).content).toMatch(/open/i)
-    // Open policy has no origin-guild allow-list to manage, unlike ALLOWLIST.
-    expect(responseData(response).content).not.toMatch(/allow-guild/i)
+    expect(responseData(response).content).toMatch(/^updated/i)
+    expect(responseData(response).content).toContain('<#channel-1>')
+    expect(responseData(response).content).not.toMatch(/niamos/i)
+    expect(responseData(response).components).toBeUndefined()
   })
 
-  it('shows current settings without claiming anything changed when no options are given', async () => {
+  it('shows current settings without a button when no options are given', async () => {
     const subscribeGuildMock = stub(async (_guildId: string, _installedBy: string, params: SubscribeGuildParams) => {
-      expect(params).toEqual({ channelId: undefined, policy: undefined })
-      return { ok: true as const, value: { subscribed: true, broadcastChannelId: 'channel-1', postingPolicy: 'ALLOWLIST' as const } }
+      expect(params).toEqual({ channelId: undefined })
+      return { ok: true as const, value: { subscribed: true, broadcastChannelId: 'channel-1', isNewSubscription: false } }
     })
     const ctx: CommandContext = {
       interaction: interaction({ options: [] }),
@@ -80,16 +81,17 @@ describe('subscribeGuild', () => {
       discordRest: createFakeDiscordRest(),
     }
 
-    const response = await subscribeGuild(ctx)
+    const response = await escapePodSetup(ctx)
 
     expect(responseData(response).content).toMatch(/current settings/i)
     expect(responseData(response).content).not.toMatch(/^updated/i)
+    expect(responseData(response).components).toBeUndefined()
   })
 
-  it('tells the admin how to resume when the guild is currently unsubscribed and no channel is given', async () => {
+  it('tells the admin how to resume (no button) when the guild is currently unsubscribed and no channel is given', async () => {
     const subscribeGuildMock = stub(async (_guildId: string, _installedBy: string, _params: SubscribeGuildParams) => ({
       ok: true as const,
-      value: { subscribed: false, broadcastChannelId: 'channel-1', postingPolicy: 'ALLOWLIST' as const },
+      value: { subscribed: false, broadcastChannelId: 'channel-1', isNewSubscription: false },
     }))
     const ctx: CommandContext = {
       interaction: interaction({ options: [] }),
@@ -97,16 +99,17 @@ describe('subscribeGuild', () => {
       discordRest: createFakeDiscordRest(),
     }
 
-    const response = await subscribeGuild(ctx)
+    const response = await escapePodSetup(ctx)
 
     expect(responseData(response).content).toMatch(/isn't currently subscribed/i)
     expect(responseData(response).content).toMatch(/run this command again with a channel/i)
+    expect(responseData(response).components).toBeUndefined()
   })
 
-  it('reactivates a previously-unsubscribed guild when a channel is given', async () => {
+  it('reactivates a previously-unsubscribed guild when a channel is given (no button — not a new subscription)', async () => {
     const subscribeGuildMock = stub(async (_guildId: string, _installedBy: string, params: SubscribeGuildParams) => {
       expect(params.channelId).toBe('channel-1')
-      return { ok: true as const, value: { subscribed: true, broadcastChannelId: 'channel-1', postingPolicy: 'ALLOWLIST' as const } }
+      return { ok: true as const, value: { subscribed: true, broadcastChannelId: 'channel-1', isNewSubscription: false } }
     })
     const ctx: CommandContext = {
       interaction: interaction(),
@@ -114,13 +117,14 @@ describe('subscribeGuild', () => {
       discordRest: createFakeDiscordRest(),
     }
 
-    const response = await subscribeGuild(ctx)
+    const response = await escapePodSetup(ctx)
 
     expect(responseData(response).content).toMatch(/^updated/i)
     expect(responseData(response).content).toContain('<#channel-1>')
+    expect(responseData(response).components).toBeUndefined()
   })
 
-  it("surfaces the service's validation error (e.g. first-time subscribe with no channel) as an ephemeral message", async () => {
+  it("surfaces the service's validation error (e.g. first-time subscribe with no channel) as an ephemeral message, no button", async () => {
     const subscribeGuildMock = stub(async (_guildId: string, _installedBy: string, _params: SubscribeGuildParams) => ({
       ok: false as const,
       error: { kind: 'validation' as const, message: 'A channel is required the first time this server subscribes.' },
@@ -131,9 +135,10 @@ describe('subscribeGuild', () => {
       discordRest: createFakeDiscordRest(),
     }
 
-    const response = await subscribeGuild(ctx)
+    const response = await escapePodSetup(ctx)
 
     expect(responseData(response).content).toMatch(/channel is required/i)
+    expect(responseData(response).components).toBeUndefined()
   })
 
   it('rejects when run outside a server (no guild_id)', async () => {
@@ -146,7 +151,7 @@ describe('subscribeGuild', () => {
       discordRest: createFakeDiscordRest(),
     }
 
-    const response = await subscribeGuild(ctx)
+    const response = await escapePodSetup(ctx)
 
     expect(responseData(response).content).toMatch(/must be run in a server/i)
   })
@@ -161,7 +166,7 @@ describe('subscribeGuild', () => {
       discordRest: createFakeDiscordRest(),
     }
 
-    const response = await subscribeGuild(ctx)
+    const response = await escapePodSetup(ctx)
 
     expect(responseData(response).content).toMatch(/must be run in a server/i)
   })
@@ -176,7 +181,7 @@ describe('subscribeGuild', () => {
       discordRest: createFakeDiscordRest(),
     }
 
-    const response = await subscribeGuild(ctx)
+    const response = await escapePodSetup(ctx)
 
     expect(responseData(response).content).toMatch(/must be run in a server/i)
   })
@@ -184,7 +189,7 @@ describe('subscribeGuild', () => {
   it('treats a channel option with an unexpected type the same as no channel at all', async () => {
     const subscribeGuildMock = stub(async (_guildId: string, _installedBy: string, params: SubscribeGuildParams) => {
       expect(params.channelId).toBeUndefined()
-      return { ok: true as const, value: { subscribed: true, broadcastChannelId: 'channel-1', postingPolicy: 'ALLOWLIST' as const } }
+      return { ok: true as const, value: { subscribed: true, broadcastChannelId: 'channel-1', isNewSubscription: false } }
     })
     const ctx: CommandContext = {
       interaction: interaction({
@@ -194,8 +199,36 @@ describe('subscribeGuild', () => {
       discordRest: createFakeDiscordRest(),
     }
 
-    await subscribeGuild(ctx)
+    await escapePodSetup(ctx)
 
     expect(subscribeGuildMock.calls).toHaveLength(1)
+  })
+
+  it('the button component is a single-item ActionRow, matching connect-niamos\'s own shape', async () => {
+    const subscribeGuildMock = stub(async () => ({
+      ok: true as const,
+      value: { subscribed: true, broadcastChannelId: 'channel-1', isNewSubscription: true },
+    }))
+    const ctx: CommandContext = {
+      interaction: interaction(),
+      backend: createFakeBackendClient({ subscribeGuild: subscribeGuildMock }),
+      discordRest: createFakeDiscordRest(),
+    }
+
+    const response = await escapePodSetup(ctx)
+
+    expect(responseData(response).components).toEqual([
+      {
+        type: ComponentType.ActionRow,
+        components: [
+          {
+            type: ComponentType.Button,
+            style: expect.any(Number),
+            custom_id: 'connect-niamos:open-modal',
+            label: 'Paste your token',
+          },
+        ],
+      },
+    ])
   })
 })

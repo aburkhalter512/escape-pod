@@ -7,7 +7,6 @@
 // trip. commands/* and interactions/* only depend on the BackendClient
 // interface, so none of them needed to change for that merge.
 
-import type { PostingPolicy } from '@prisma/client'
 import type { AppStorage } from './storage/appStorage.js'
 import type { NiamosClient } from './niamos/client.js'
 import type { Logger, Result } from './services/errors.js'
@@ -33,8 +32,8 @@ export interface BackendClient {
   subscribeGuild(
     guildId: string,
     installedBy: string,
-    params: { channelId?: string; policy?: PostingPolicy }
-  ): Promise<Result<{ subscribed: boolean; broadcastChannelId: string; postingPolicy: PostingPolicy }>>
+    params: { channelId?: string }
+  ): Promise<Result<{ subscribed: boolean; broadcastChannelId: string; isNewSubscription: boolean }>>
   unsubscribeGuild(guildId: string): Promise<{ wasSubscribed: boolean }>
   // Deprecated — no longer has any effect on eligibility, see
   // services/guilds.ts's allowOrganizer. Kept only so the deprecated
@@ -44,7 +43,7 @@ export interface BackendClient {
   // Replaces allowOrganizer above — trusts an entire origin guild
   // instead of one organizer at a time. See services/guilds.ts's
   // allowGuild. Fails with a validation error if this guild hasn't run
-  // /subscribe-guild yet.
+  // /escape-pod-setup yet.
   allowGuild(guildId: string, allowedOriginGuildId: string, approvedBy: string): Promise<Result<void>>
   // Eligibility is origin-guild-scoped, not organizer-scoped — see
   // services/organizers.ts's listEligibleGuilds.
@@ -126,13 +125,13 @@ export class LocalBackendClient implements BackendClient {
   }
 
   // §7.2: register a guild's broadcast subscription, or reconfigure an
-  // existing one's channel/policy (or neither, to just read current
-  // settings back) — see services/guilds.ts's subscribeGuild.
+  // existing one's channel (or omit it, to just read current settings
+  // back) — see services/guilds.ts's subscribeGuild.
   subscribeGuild(
     guildId: string,
     installedBy: string,
-    params: { channelId?: string; policy?: PostingPolicy }
-  ): Promise<Result<{ subscribed: boolean; broadcastChannelId: string; postingPolicy: PostingPolicy }>> {
+    params: { channelId?: string }
+  ): Promise<Result<{ subscribed: boolean; broadcastChannelId: string; isNewSubscription: boolean }>> {
     return guildsService.subscribeGuild(this.serviceDeps, { guildId, installedBy, ...params })
   }
 

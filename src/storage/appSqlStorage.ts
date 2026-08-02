@@ -100,11 +100,17 @@ function createGuildSubscriptionStorage(sql: SqlStorage): AppStorage['guildSubsc
       return rows.map(mapGuildSubscriptionRow)
     },
     async findEligibleForOrigin(originGuildId) {
+      // A guild always trusts itself (self-trust — no /allow-guild
+      // needed for a guild's own organizers to post into it), plus any
+      // other guild that's specifically granted this origin trust via
+      // guild_origin_allowlist. originGuildId is bound twice: once for
+      // the self-trust check, once for the allowlist JOIN.
       const rows = all(
         sql,
         `SELECT DISTINCT gs.* FROM guild_subscriptions gs
          LEFT JOIN guild_origin_allowlist goa ON goa.guild_id = gs.guild_id AND goa.allowed_origin_guild_id = ?
-         WHERE gs.unsubscribed_at IS NULL AND (gs.posting_policy = 'OPEN' OR goa.guild_id IS NOT NULL)`,
+         WHERE gs.unsubscribed_at IS NULL AND (gs.guild_id = ? OR goa.guild_id IS NOT NULL)`,
+        originGuildId,
         originGuildId
       )
       return rows.map(mapGuildSubscriptionRow)
@@ -114,15 +120,16 @@ function createGuildSubscriptionStorage(sql: SqlStorage): AppStorage['guildSubsc
       return row ? mapGuildSubscriptionRow(row) : null
     },
     async createSubscription(args) {
+      // posting_policy isn't passed — the schema default ('ALLOWLIST')
+      // applies, which is now the only value the app ever writes.
       const row = one(
         sql,
-        `INSERT INTO guild_subscriptions (guild_id, installed_by_discord_id, broadcast_channel_id, posting_policy, installed_at)
-         VALUES (?, ?, ?, ?, ?)
+        `INSERT INTO guild_subscriptions (guild_id, installed_by_discord_id, broadcast_channel_id, installed_at)
+         VALUES (?, ?, ?, ?)
          RETURNING *`,
         args.data.guildId,
         args.data.installedByDiscordId,
         args.data.broadcastChannelId,
-        args.data.postingPolicy ?? 'ALLOWLIST',
         toIso(new Date())
       )
       return mapGuildSubscriptionRow(row)
@@ -133,10 +140,6 @@ function createGuildSubscriptionStorage(sql: SqlStorage): AppStorage['guildSubsc
       if (args.data.broadcastChannelId !== undefined) {
         sets.push('broadcast_channel_id = ?')
         values.push(args.data.broadcastChannelId)
-      }
-      if (args.data.postingPolicy !== undefined) {
-        sets.push('posting_policy = ?')
-        values.push(args.data.postingPolicy)
       }
       if ('unsubscribedAt' in args.data) {
         sets.push('unsubscribed_at = ?')

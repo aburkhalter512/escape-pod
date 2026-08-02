@@ -8,7 +8,6 @@ import type {
   PodRoundTarget,
   PodRoundSignup,
   PodRoundStatus,
-  PostingPolicy,
 } from '@prisma/client'
 
 // Hand-written, not Prisma-sourced: no formal Prisma relation exists
@@ -80,8 +79,9 @@ export interface AppStorage {
     // between /start-pod's eligibility check and this call).
     findActiveByGuildIds(guildIds: string[]): Promise<GuildSubscription[]>
     // services/organizers.ts's listEligibleGuilds — guilds a round
-    // starting from originGuildId may fan out to: OPEN-policy guilds,
-    // plus guilds that specifically trust this origin guild.
+    // starting from originGuildId may fan out to: the origin guild
+    // itself (self-trust, no grant needed), plus guilds that
+    // specifically trust this origin guild.
     findEligibleForOrigin(originGuildId: string): Promise<GuildSubscription[]>
     // services/guilds.ts's subscribeGuild/unsubscribeGuild — look up a
     // guild's current subscription state (active, inactive, or never
@@ -89,14 +89,14 @@ export interface AppStorage {
     findByGuildId(guildId: string): Promise<GuildSubscription | null>
     // services/guilds.ts's subscribeGuild — first-time subscribe.
     createSubscription(args: {
-      data: { guildId: string; broadcastChannelId: string; installedByDiscordId: string; postingPolicy?: PostingPolicy }
+      data: { guildId: string; broadcastChannelId: string; installedByDiscordId: string }
     }): Promise<GuildSubscription>
     // services/guilds.ts's subscribeGuild — reconfigure an existing
-    // subscription's channel and/or posting policy, optionally
-    // reactivating it (unsubscribedAt: null) when a channel is given.
+    // subscription's channel, optionally reactivating it
+    // (unsubscribedAt: null) when a channel is given.
     updateSettings(args: {
       where: { guildId: string }
-      data: Partial<{ broadcastChannelId: string; postingPolicy: PostingPolicy; unsubscribedAt: Date | null }>
+      data: Partial<{ broadcastChannelId: string; unsubscribedAt: Date | null }>
     }): Promise<GuildSubscription>
     // services/guilds.ts's unsubscribeGuild — soft-delete by stamping
     // unsubscribedAt, distinct from updateSettings above since it's a

@@ -16,9 +16,8 @@ and the minimum permissions it actually uses: View Channels, Send
 Messages, Create Instant Invite, and Manage Channels (the last one for
 the temporary per-round chat channel, `src/discord/podChat.ts`) —
 `permissions=3089` in the link above. After inviting, a server admin
-still needs to run `/subscribe-guild` there (§7.2 in `INTEGRATIONS.md`
-covers open-posting vs. allowlist policy) before organizers can actually
-post draft rounds into it.
+still needs to run `/escape-pod-setup` there (§7.2 in `INTEGRATIONS.md`)
+before organizers can actually post draft rounds into it.
 
 ## Commands
 
@@ -32,28 +31,35 @@ needed, and it's scoped per-server.
 
 ### Server setup
 
-- **`/subscribe-guild [channel] [policy]`** — opts this server in to
-  receive draft-pod broadcasts. `channel` (where rounds get posted) is
-  required the first time; `policy` defaults to allow-list on first setup
-  (only organizers approved via `/allow-guild` can post here) or set it
-  to open (any organizer can post, as long as this server has a Niamos
-  token linked via `/connect-niamos`). Re-run anytime to change either —
-  an omitted option is left unchanged. Also reactivates a server that
-  previously ran `/unsubscribe-guild`.
+- **`/escape-pod-setup [channel]`** — one-stop setup: opts this server in
+  to receive draft-pod broadcasts (`channel`, where rounds get posted, is
+  required the first time; omit it on a re-run to just leave it
+  unchanged) and, the first time only, offers a button to link this
+  server's Niamos token (see `/connect-niamos` below — same flow, shown
+  inline so setup is one command instead of two). Re-run anytime to
+  change the channel; also reactivates a server that previously ran
+  `/unsubscribe-guild`. There's no posting-policy choice — every server
+  trusts its own organizers automatically (self-trust), and trusting
+  organizers from another server is always explicit, via `/allow-guild`.
 - **`/unsubscribe-guild`** — stops this server from receiving broadcasts.
   A soft-delete, not a hard removal — round history is preserved, and
-  running `/subscribe-guild` again reactivates it.
+  running `/escape-pod-setup` again reactivates it.
 - **`/allow-guild <origin-server-id>`** — trusts an entire other server's
-  organizers to post draft-pod rounds here (only consulted when this
-  server's policy is allow-list). Replaces the older per-organizer
-  `/allow-organizer` (deprecated, now a no-op — kept registered only so
-  it still resolves gracefully for anyone who runs it out of habit).
+  organizers to post draft-pod rounds here. If this server hasn't run
+  `/escape-pod-setup` yet, this offers a live channel picker right in the
+  response — picking a channel subscribes the server and grants the
+  trust in one step, no separate `/escape-pod-setup` call needed.
+  Replaces the older per-organizer `/allow-organizer` (deprecated, now a
+  no-op — kept registered only so it still resolves gracefully for
+  anyone who runs it out of habit).
 - **`/request-trust`** — generates the exact `/allow-guild` invocation
   another server's admin needs to run to trust organizers from this one
   — saves hunting down this server's own ID.
-- **`/connect-niamos`** — links this server's Niamos bot token. One-time
-  setup (Manage Guild required), needed before any organizer here can
-  successfully run `/start-pod` — walks an admin through generating a
+- **`/connect-niamos`** — links (or re-links) this server's Niamos bot
+  token on its own, without touching the broadcast subscription — useful
+  if a token needs to be regenerated later. `/escape-pod-setup` already
+  offers this inline the first time a server is set up; this command
+  exists for every time after that. Walks an admin through generating a
   token at niamos.net/settings and pasting it back via a modal. Only one
   token is allowed per server at a time; re-running replaces it. Unlike
   the old Protect the Pod integration this replaced, the token is scoped
@@ -65,8 +71,9 @@ needed, and it's scoped per-server.
 
 - **`/start-pod set:<code> [threshold] [deadline]`** — starts a new RSVP
   round for the given set across every server you're eligible to post
-  into (open-policy servers, plus any allow-list server that trusts the
-  server you ran this from). Must be run from inside a server, not a DM
+  into (the server you ran this from, automatically, plus any other
+  server that's specifically trusted it via `/allow-guild`). Must be run
+  from inside a server, not a DM
   — the origin server is what resolves which linked Niamos token
   actually creates the draft. Pick which server(s) to post into from a
   menu, review the summary, then confirm to actually post — nothing is
@@ -171,14 +178,14 @@ start-pod post failed for guild <guildId>: DiscordAPIError[50001]: Missing Acces
 Root cause: that guild's `GuildSubscription` row is stale — the bot was
 only ever authorized there with the `applications.commands` OAuth scope
 (enough to receive slash-command interactions, which is why
-`/subscribe-guild` and `/unsubscribe-guild` still work fine — neither
-calls `discordRest`, see `src/commands/subscribeGuild.ts` /
+`/escape-pod-setup` and `/unsubscribe-guild` still work fine — neither
+calls `discordRest`, see `src/commands/escapePodSetup.ts` /
 `unsubscribeGuild.ts`), but never with the `bot` scope, so it has no
 actual membership in that server. Anything that needs real presence —
 `getGuild`, `postMessage`, and creating the round's chat channel
 (`src/discord/podChat.ts`) — fails, while the slash commands themselves
 keep working. This is why running `/unsubscribe-guild` then
-`/subscribe-guild` again does **not** fix it: both are pure storage
+`/escape-pod-setup` again does **not** fix it: both are pure storage
 writes, neither touches Discord's REST API.
 
 There's no automatic detection for this — the bot is REST-only with no

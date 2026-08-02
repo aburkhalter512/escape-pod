@@ -441,16 +441,13 @@ rather than requiring them to personally hold Manage Server everywhere they
 want to post.
 
 That decoupling needs a trust guardrail, since it otherwise lets a stranger
-post into a server they don't run. Each guild subscription carries a
-**posting policy**:
-
-- **`allowlist` (default)** — the guild's admin explicitly approves specific
-  organizers (via `/allow-organizer`) before their rounds can post there.
-  Safer default for a niche community where most guilds won't want
-  unmoderated third parties posting on day one.
-- **`open`** — any organizer with a linked PTP account may target this
-  guild. An opt-in for high-trust hub servers (e.g. a general SWU-community
-  server that explicitly wants to maximize reach).
+post into a server they don't run. A guild always trusts its own
+organizers automatically (self-trust) — trusting organizers from any
+*other* guild needs an explicit grant, via `/allow-guild`, from that
+guild's own admin. (Historical note: this used to be a per-guild
+`allowlist`/`open` posting-policy choice, with `open` letting any
+organizer post unconditionally — that choice was removed; self-trust
+plus explicit `/allow-guild` grants replaced both states.)
 
 ### 7.3 Data model
 
@@ -459,10 +456,13 @@ post into a server they don't run. Each guild subscription carries a
 - **GuildSubscription** — one row per guild that has installed the bot and
   opted in: `guild_id`, `installed_by_discord_id` (the guild's own admin who
   ran setup — not necessarily an organizer), `broadcast_channel_id`,
-  `posting_policy` (`allowlist` default, or `open`), `installed_at`.
+  `posting_policy` (single-valued now, `allowlist` only — the column and
+  its old `open` option are kept in the schema for migration-safety
+  reasons, not because `open` is reachable; see `src/storage/schema.ts`),
+  `installed_at`.
 - **GuildOrganizerAllowlist** — `guild_id`, `organizer_discord_id`,
-  `approved_by`, `approved_at`. Only consulted when the guild's policy is
-  `allowlist`.
+  `approved_by`, `approved_at`. Deprecated, superseded by
+  GuildOriginAllowlist below — no longer consulted at all.
 - **PodRound** — one RSVP round: `id`, `organizer_discord_id`, `set_code`,
   `threshold`, `status` (`collecting` / `threshold_reached` / `pod_created`
   / `cancelled` / `expired`), `ptp_pod_share_id` (set once created),
@@ -487,7 +487,7 @@ actually work as described in §1.
 | Command | Run by | Effect |
 |---|---|---|
 | `/connect-ptp` | Any organizer | Option B account-link flow (§3.1) |
-| `/subscribe-guild` | A guild's own admin, in their guild | Installs this guild as a broadcast target: picks channel, sets `posting_policy` (default `allowlist`) |
+| `/escape-pod-setup` | A guild's own admin, in their guild | Installs this guild as a broadcast target (picks channel) and, first time only, offers to link its Niamos token inline |
 | `/allow-organizer <user>` | A guild's own admin | Adds an organizer to this guild's allowlist |
 | `/start-pod <set> [threshold]` | A linked organizer | Presents a select menu of guilds this organizer is eligible to target (open-policy guilds + guilds where they're allow-listed), then fans the round out to the chosen guilds |
 | `/cancel-pod` | The round's organizer | Cancels an in-progress round across every target guild's message |
@@ -520,7 +520,7 @@ menu.
 
 - Waitlist/overflow handling once threshold is hit but more people click.
 - Guild discovery UX beyond a flat eligible-guilds list (e.g. browsing
-  `open`-policy guilds before being allow-listed anywhere).
+  for other guilds worth requesting `/allow-guild` trust from).
 - Anything requiring the DM/user-install interaction context — the design
   above works entirely within standard per-guild interaction context, so it
   doesn't depend on that surface at all.

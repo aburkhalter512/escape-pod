@@ -3,15 +3,15 @@ import { allowOrganizer } from './allowOrganizer.js'
 import { cancelPod } from './cancelPod.js'
 import { concludePod } from './concludePod.js'
 import { connectNiamos } from './connectNiamos.js'
+import { escapePodSetup } from './escapePodSetup.js'
 import { requestTrust } from './requestTrust.js'
 import { startPod } from './startPod.js'
-import { subscribeGuild } from './subscribeGuild.js'
 import { unsubscribeGuild } from './unsubscribeGuild.js'
 import type { CommandHandler } from './types.js'
 
 export const commandHandlers: Record<string, CommandHandler> = {
   'connect-niamos': connectNiamos,
-  'subscribe-guild': subscribeGuild,
+  'escape-pod-setup': escapePodSetup,
   'unsubscribe-guild': unsubscribeGuild,
   'allow-organizer': allowOrganizer,
   'allow-guild': allowGuild,

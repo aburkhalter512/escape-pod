@@ -73,12 +73,12 @@ export const startPod: CommandHandler = async ({ interaction, backend, discordRe
   if (eligibleGuilds.length === 0) {
     return ephemeral(
       anySubscribed
-        ? "No subscribed server trusts this server yet. Ask a server admin there to run `/allow-guild` for this server, or find one with an open posting policy."
-        : 'No servers are currently subscribed to receive draft pod broadcasts yet. Ask a server admin to run `/subscribe-guild` there first.'
+        ? "No subscribed server trusts this server yet. Ask a server admin there to run `/allow-guild` for this server, or run `/escape-pod-setup` here to post into this server directly."
+        : 'No servers are currently subscribed to receive draft pod broadcasts yet. Ask a server admin to run `/escape-pod-setup` there first.'
     )
   }
 
-  // Resolved live, not stored — a name cached at /subscribe-guild time
+  // Resolved live, not stored — a name cached at /escape-pod-setup time
   // would go stale the moment a guild renamed itself. §7.4's 25-option
   // select-menu cap bounds this to at most 25 concurrent lookups; slicing
   // before resolving (not after) avoids wasting calls on guilds that

@@ -35,6 +35,15 @@ export const MIGRATIONS: Migration[] = [
         next_round_number INTEGER NOT NULL DEFAULT 1
       )`,
 
+      // 'OPEN' stays in this CHECK list forever, even though the app
+      // dropped it entirely (migration 4 below, and see services/
+      // guilds.ts) — SQLite's ALTER TABLE DROP COLUMN refuses to drop a
+      // column referenced by a CHECK constraint on itself, so removing
+      // it here would require a full table-rebuild migration against
+      // live data for a purely cosmetic win. Leaving a CHECK value the
+      // app never writes again is harmless (same precedent as
+      // guild_organizer_allowlist, kept unused after /allow-organizer
+      // was deprecated) — do not "clean this up" without that rebuild.
       `CREATE TABLE IF NOT EXISTS guild_subscriptions (
         guild_id TEXT PRIMARY KEY,
         installed_by_discord_id TEXT NOT NULL,
@@ -173,5 +182,17 @@ export const MIGRATIONS: Migration[] = [
         display_name TEXT NOT NULL
       )`,
     ],
+  },
+  {
+    // Removes the OPEN posting policy — ALLOWLIST (explicit trust via
+    // /allow-guild, plus automatic self-trust for a guild's own
+    // organizers, see services/organizers.ts's listEligibleGuilds) is
+    // now the only policy. Data-only migration: the column and its
+    // CHECK constraint are deliberately left untouched (see migration
+    // 1's own comment on guild_subscriptions) — this just flips any
+    // existing OPEN row so nothing in storage still claims a policy the
+    // app no longer understands or offers.
+    id: 4,
+    statements: [`UPDATE guild_subscriptions SET posting_policy = 'ALLOWLIST' WHERE posting_policy = 'OPEN'`],
   },
 ]
